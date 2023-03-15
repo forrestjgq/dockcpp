@@ -1,0 +1,85 @@
+
+# IDE and temp files
+.cproject
+.project
+*~
+*.swp
+.vscode
+.idea
+*.log
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+*.d
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Folders
+build*
+thirdparty
+!thirdparty_source
+release
+Release
+debug
+Debug
+bin
+lib
+build
+#data
+src/imodel/src/
+
+# MacOS finder files
+*.DS_Store
+
+# data files
+*.raw
+*.*~
+#*.zip
+*.tar
+*.tar.gz
+*.db
+*.bak
+*.db.bak
+
+#self define
+face/bin
+face/build
+ci/.cache_models
+ci/case_result
+ci/model_file
+ci2/.cache_models
+ci2/case_result
+ci2/model_file
+common/rpc/rpc.pb.*
+common/*.pb.*
+
+#third_party
+3rd_party/build
+3rd_party/install
+
+#idea clion
+cmake-build-*
