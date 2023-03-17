@@ -1,14 +1,73 @@
 #include <algorithm>
+#include <iostream>
+#include <assert.h>
 
 #include <cuda_runtime.h>
 
 #include "math.h"
 
 namespace dock {
+#define DOCKDBG 0
+#if DOCKDBG
+#define SDBG(x1, y1, ...) \
+ do { \
+  if (threadIdx.x == x1 && threadIdx.y == y1) { \
+   printf(__VA_ARGS__); \
+  } \
+ } while (0)
+#define DBG(...) printf(__VA_ARGS__)
+#else
+#define SDBG(x1, y1, ...) 
+#define DBG(...)
+#endif
 
 #include "svd3_cuda.h"
 // calc 1/x in round-to-nearest-even mode
 #define reciprocal(x) __frcp_rn(x)
+#define FOR_LOOP(i, end) for (int i = threadIdx.x; i < end; i += blockDim.x)
+#define IS_THREAD(n)     (threadIdx.x == (n))
+#define IS_MAIN_THREAD() IS_THREAD(0)
+#define PI               3.141592653589793
+
+__device__ void dumparr(int m, int n, uint8_t *p) {
+    printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
+    for (int i = 0; i < m; i++) {
+        printf("%d: ", i);
+        uint8_t *p1 = p + i * n;
+        for (int j = 0; j < n; j++) {
+            printf("%d ", int(p1[j]));
+        }
+        printf("\n");
+    }
+}
+__device__ void dumparr(int m, int n, float *p) {
+    printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
+    for (int i = 0; i < m; i++) {
+        printf("%d: ", i);
+        float *p1 = p + i * n;
+        for (int j = 0; j < n; j++) {
+            printf("%f ", p1[j]);
+        }
+        printf("\n");
+    }
+}
+#if DOCKDBG
+#define DUMP(hdr, m, n, p) \
+ do { \
+  printf(hdr); \
+  dumparr(m, n, p); \
+ } while (0)
+#define DUMPARR(x1, y1, hdr, m, n, p) \
+ do { \
+  if (threadIdx.x == x1 && threadIdx.y == y1) { \
+   printf(hdr); \
+   dumparr(m, n, p); \
+  } \
+ } while (0)
+#else
+#define DUMP(hdr, m, n, p) 
+#define DUMPARR(x1, y1, hdr, m, n, p) 
+#endif
 
 __device__ __forceinline__ float3 sub3(float3 a, float3 b) {
     return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
@@ -88,17 +147,20 @@ def axis_angle_to_quaternion(axis_angle):
 __device__ __forceinline__ float4 axis_angle_to_quaternion(float3 axis) {
     float angle = norm3df(axis.x, axis.y, axis.z);  // sqrt(x^2 + y^2 + z^2)
     float half  = angle * 0.5f;
+    DBG("axis %f %f %f angle %f half %f\n", axis.x, axis.y, axis.z, angle, half);
     float sins;
     if (angle < 1e-6) {
         sins = 0.5f - (angle * angle) * 0.020833333333333332;  // 1/48 = 0.020833333333333332
     } else {
-        sins = sinf(angle) * reciprocal(angle);
+        sins = sinf(half) * reciprocal(angle);
     }
+    DBG("sins %f \n", sins);
     float4 ret;
     ret.x = cosf(half);
     ret.y = axis.x * sins;
     ret.z = axis.y * sins;
     ret.w = axis.z * sins;
+    DBG("qu %f %f %f %f\n", ret.x, ret.y, ret.z, ret.w);
     return ret;
 }
 #if 0
@@ -152,7 +214,7 @@ template <int m, int n, int k, bool trans>
 __device__ __forceinline__ void matmul(float *m1, float *m2, float *out) {
     int s = 0;
     for (int r = 0; r < m; r++) {  // rows
-        int row = r * m;
+        int row = r * n;
         for (int c = 0; c < k; c++) {  // columns
             float *rp, *cp;
             if (trans) {
@@ -169,7 +231,7 @@ __device__ __forceinline__ void matmul(float *m1, float *m2, float *out) {
                 cp        = &m2[c];
                 float sum = 0.;
                 for (int i = 0; i < n; i++) {
-                    sum += rp[i] * cp[i * n];
+                    sum += rp[i] * cp[i * k];
                 }
                 out[s++] = sum;
             }
@@ -180,7 +242,7 @@ template <bool trans>
 __device__ __forceinline__ void matmul1(float *m1, float *m2, float *out, int m, int n, int k) {
     int s = 0;
     for (int r = 0; r < m; r++) {  // rows
-        int row = r * m;
+        int row = r * n;
         for (int c = 0; c < k; c++) {  // columns
             float *rp, *cp;
             if (trans) {
@@ -197,7 +259,7 @@ __device__ __forceinline__ void matmul1(float *m1, float *m2, float *out, int m,
                 cp        = &m2[c];
                 float sum = 0.;
                 for (int i = 0; i < n; i++) {
-                    sum += rp[i] * cp[i * n];
+                    sum += rp[i] * cp[i * k];
                 }
                 out[s++] = sum;
             }
@@ -216,8 +278,12 @@ def gen_matrix_from_rot_vec(k, theta):
 template <int n>
 __device__ __forceinline__ void gen_matrix_from_rot_vec(float *k, float *out, float theta) {
     float sin = sinf(theta);
-    float cos = cosf(theta);
+    float cos = 1.0 - cosf(theta);
+    DUMPARR(1, 0, "K", 3, 3, k);
     matmul<n, n, n, false>(k, k, out);
+    DUMPARR(1, 0, "sin", 1, 1, &sin);
+    DUMPARR(1, 0, "cos", 1, 1, &cos);
+    DUMPARR(1, 0, "KK", 3, 3, out);
     int idx = 0;
     for (int r = 0; r < n; r++) {
         for (int c = 0; c < n; c++) {
@@ -225,11 +291,13 @@ __device__ __forceinline__ void gen_matrix_from_rot_vec(float *k, float *out, fl
             idx++;
         }
     }
+    DUMPARR(1, 0, "R", 3, 3, out);
 }
 __device__ __forceinline__ void gen_matrix_from_rot_vec3(float *k, float *out, float theta) {
     float K[3][3] = { { 0., -k[2], k[1] }, { k[2], 0., -k[0] }, { -k[1], k[0], 0. } };
     gen_matrix_from_rot_vec<3>((float *)K, out, theta);
 }
+#if 0
 __device__ __forceinline__ void modify_conformer_torsion_angles_single(float *pos,
                                                                        float *out,
                                                                        uint8_t *mask,
@@ -241,14 +309,17 @@ __device__ __forceinline__ void modify_conformer_torsion_angles_single(float *po
     float *pu  = pos + 3 * u;
     float *pv  = pos + 3 * v;
     float *rot = tmp;
-    if (threadIdx.x == 0 && threadIdx.y == 0) {
+    if (threadIdx.x == 0) {
         float rot_vec[3];
         sub3p(pu, pv, rot_vec);
+        DUMP("rot vec", 1, 3, rot_vec);
         float norm = rnorm3df(rot_vec[0], rot_vec[1], rot_vec[2]);
         rot_vec[0] *= norm;
         rot_vec[1] *= norm;
         rot_vec[2] *= norm;
+        DUMP("rot vec norm", 1, 3, rot_vec);
         gen_matrix_from_rot_vec3(rot_vec, rot, theta);
+        DUMP("rot mat", 3, 3, rot);
     }
     __syncthreads();
     for (int i = threadIdx.x; i < n; i += blockDim.x) {
@@ -262,12 +333,13 @@ __device__ __forceinline__ void modify_conformer_torsion_angles_single(float *po
         }
     }
 }
+#endif
 // nedge: edge_index should be 2D array of <edge_size>*2
 // pos: n x 3 2D array
 // out: output, nx3
 // mask_rotate: edge_size * n bool mask
 // torsion_updates: 1D array, size <edge_size>
-// require tmp: 3 * nedge floats
+// require tmp: 9 * nedge floats
 __device__ __forceinline__ void modify_conformer_torsion_angles(float *pos,
                                                                 float *out,
                                                                 float *tmp,
@@ -276,13 +348,54 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(float *pos,
                                                                 float *torsion_updates,
                                                                 int n,
                                                                 int nedge) {
-    for (int idx_edge = threadIdx.y; idx_edge < nedge; idx_edge += blockDim.y) {
-        int u = edge_index[idx_edge * 2];
-        int v = edge_index[idx_edge * 2 + 1];
-        modify_conformer_torsion_angles_single(
-          pos, out, mask_rotate + n * idx_edge, u, v, torsion_updates[idx_edge], n, tmp + idx_edge);
+    float *rot_mats = tmp;
+    tmp += nedge * 9;
+    FOR_LOOP(i, n) {
+        int seq  = i * 3;
+        out[seq] = pos[seq], out[seq + 1] = pos[seq + 1], out[seq + 2] = pos[seq + 2];
+        if (i < nedge) {
+            int idx_edge = i;
+            int u        = edge_index[idx_edge * 2];
+            int v        = edge_index[idx_edge * 2 + 1];
+
+            float theta   = torsion_updates[idx_edge];
+            float *pu     = pos + 3 * u;
+            float *pv     = pos + 3 * v;
+            float *rot    = rot_mats + idx_edge * 9;
+            float rot_vec[3];
+            sub3p(pu, pv, rot_vec);
+            DUMPARR(1, 0, "rot vec", 1, 3, rot_vec);
+            float norm = rnorm3df(rot_vec[0], rot_vec[1], rot_vec[2]);
+            rot_vec[0] *= norm, rot_vec[1] *= norm, rot_vec[2] *= norm;
+            DUMPARR(1, 0, "rot vec norm", 1, 3, rot_vec);
+            gen_matrix_from_rot_vec3(rot_vec, rot, theta);
+            DUMPARR(1, 0, "rot mat", 3, 3, rot);
+        }
+    }
+
+    __syncthreads();
+    DUMPARR(0, 0, "mask 0",  1, 20, mask_rotate);
+    DUMPARR(0, 0, "mask 1",  1, 20, mask_rotate+n);
+    FOR_LOOP(i, n) {
+        float *p    = pos + 3 * i;
+        float *outp = out + 3 * i;
+        for (int k = 0; k < nedge; k++) {
+            uint8_t *mask = mask_rotate + n * k;
+            if (mask[i] != 0) {
+                int u      = edge_index[k * 2];
+                int v      = edge_index[k * 2 + 1];
+                float *pu  = pos + 3 * u;
+                float *pv  = pos + 3 * v;
+                float *rot = rot_mats + k * 9;
+                float tp[3];
+                sub3p(p, pv, tp);
+                matmul<1, 3, 3, true>(tp, rot, outp);
+                add3p(outp, pv);
+            }
+        }
     }
     __syncthreads();
+    DUMPARR(0, 0, "modify conformer ret pos", n, 3, out);
 }
 #if 0
 // pos: (.., 3)
@@ -369,54 +482,70 @@ def rigid_transform_Kabsch_3D_torch(A, B):
 // r: 3x3 output
 // t: 3x1 output
 // n: num of input coords a and b
+// called in main thread, require memory 2xnx3
 __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(float *a,
                                                                 float *b,
-                                                                float *at,
-                                                                float *bt,
+                                                                float *tmp,
                                                                 float *r,
                                                                 float *t,
                                                                 int n) {
     // mean of a, b
+
+    float *at, *bt;
+    at = tmp, tmp += n * 3;
+    bt = tmp, tmp += n * 3;
+    DUMP("A", n, 3, a);
+    DUMP("B", n, 3, b);
     float ca[3] = { 0., 0., 0. };
     float cb[3] = { 0., 0., 0. };
     float *tpa = a, *tpb = b;
-    for (int i = 0; i < n * 3;) {
-        ca[0] += *tpa++;
-        ca[1] += *tpa++;
-        ca[2] += *tpa++;
-        cb[0] += *tpb++;
-        cb[1] += *tpb++;
-        cb[2] += *tpb++;
+    for (int i = 0; i < n * 3; i += 3) {
+        add3p(ca, tpa + i);
+        add3p(cb, tpb + i);
     }
+    float re = reciprocal((float)n);
     for (int i = 0; i < 3; i++) {
-        float r = reciprocal((float)n);
-        ca[i] *= r;
-        cb[i] *= r;
+        ca[i] *= re;
+        cb[i] *= re;
     }
+    DUMP("Center A", 1, 3, ca);
+    DUMP("Center B", 1, 3, cb);
     // substract mean and turn nx3 -> 3xn
     for (int i = 0; i < 3; i++) {
-        tpa = at + i * n, tpb = bt + i * n;
+        tpa = at + i * n;
         for (int j = 0; j < n; j++) {
             // at[i, j] = a[j, i] - ca[i];
             tpa[j] = a[j * 3 + i] - ca[i];
-            tpb[j] = b[j * 3 + i] - cb[i];
         }
     }
+    for (int i = 0; i < n; i++) {
+        sub3p(b + i * 3, cb, bt + i * 3);
+    }
+    DUMP("Am", 3, n, at);
+    DUMP("Bm", n, 3, bt);
 
     float h[9];
-    matmul1<true>(at, bt, h, 3, n, 3);
+    matmul1<false>(at, bt, h, 3, n, 3);
 
     float u[9], s[3], v[9], vt[9];
+    DUMP("H", 3, 3, h);
     svd(h, u, s, v);
-    trans<float>(v, vt, 3, 3);
+    DUMP("U", 3, 3, u);
+    DUMP("S", 1, 3, s);
+    DUMP("V", 3, 3, v);
+    // svd already output torch svd Vt.T
+    // trans<float>(v, v, 3, 3);
+    DUMP("Vt", 3, 3, v);
 
-    matmul<3, 3, 3, true>(vt, u, r);
+    matmul<3, 3, 3, true>(v, u, r);
+    DUMP("r", 3, 3, r);
 
     float dt = det3x3<float>(r);
+    DUMP("det", 1, 1, &dt);
     if (dt < 0) {
         float ss[9] = { 1, 0, 0, 0, 1, 0, 0, 0, -1 };
         float st[9];
-        matmul<3, 3, 3, false>(vt, ss, st);
+        matmul<3, 3, 3, false>(v, ss, st);
         matmul<3, 3, 3, true>(st, u, r);
     }
     float r1[9];
@@ -427,16 +556,16 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(float *a,
     t[0] += cb[0];
     t[1] += cb[1];
     t[2] += cb[2];
+    DUMP("R", 3, 3, r);
+    DUMP("t", 3, 3, t);
 }
-
-#define PI 3.141592653589793
 
 // pos: npos x 3
 // newpos: npos x 3, output
 // values: size nval
 // edge_index: nedge x 2
 // mask_rotate: npos
-// tmp: tmp memory, at least 12 + npos * 3 * 3 + nedge * 3 floats
+// tmp: tmp memory, 18 + max(9*nedge, 6 * npos) floats
 __device__ __forceinline__ void modify_conformer(float *pos,
                                                  float *newpos,
                                                  float *values,
@@ -451,25 +580,23 @@ __device__ __forceinline__ void modify_conformer(float *pos,
     rot_mat        = tmp, tmp += 9;
     tr             = tmp, tmp += 3;
     rot            = tmp, tmp += 3;
-    bool exec_main = threadIdx.x == 0 && threadIdx.y == 0;
+    DUMPARR(0, 0, "coords", 20, 3, pos);
+    DUMPARR(0, 0, "values", 1, 8, values);
 
-    int start = threadIdx.x, block = blockDim.x;
-    bool run = threadIdx.y == 0;
-    if (blockDim.y > blockDim.x) {
-        start = threadIdx.y, block = blockDim.y;
-        bool run = threadIdx.x == 0;
-    }
-
-    for (int i = start; i < 3 && run; i += block) {
+    FOR_LOOP(i, 3) {
         tr[i]  = (SigmoidForward<float>(values[i]) - 0.5) * 10;
         rot[i] = (SigmoidForward<float>(values[3 + i]) - 0.5) * 2 * PI;
     }
     __syncthreads();
+    DUMPARR(0, 0, "tr update", 1, 3, tr);
+    DUMPARR(0, 0, "rot update", 1, 3, rot);
 
-    if (exec_main) {
+    if (IS_MAIN_THREAD()) {
         float3 rot1 = make_float3(rot[0], rot[1], rot[2]);
         float4 qu   = axis_angle_to_quaternion(rot1);
         quaternion_to_matrix(qu, rot_mat);
+        DUMPARR(0, 0, "rot mat", 3, 3, rot_mat);
+        center[0] = center[1] = center[2] = 0;
         for (int i = 0; i < npos; i++) {
             center[0] += pos[i * 3];
             center[1] += pos[i * 3 + 1];
@@ -478,12 +605,14 @@ __device__ __forceinline__ void modify_conformer(float *pos,
         float renpos = reciprocal(((float)npos));
         center[0] *= renpos, center[1] *= renpos, center[2] *= renpos;
         tr[0] += center[0], tr[1] += center[1], tr[2] += center[2];
+        DUMPARR(0, 0, "center", 1, 3, center);
+        DUMPARR(0, 0, "tr update + center", 1, 3, tr);
     }
     // todo: should we sync?
     __syncthreads();
 
     // calc new pos
-    for (int n = start; n < npos && run; n += block) {
+    FOR_LOOP(n, npos) {
         float *p    = pos + 3 * n;
         float *newp = newpos + 3 * n;
         float np[3];
@@ -493,28 +622,28 @@ __device__ __forceinline__ void modify_conformer(float *pos,
         add3p(rotp, tr, newp);
     }
     __syncthreads();
+    DUMPARR(0, 0, "new pos", npos, 3, newpos);
 
+    // require max(9*nedge, 6 * npos)
     if (nval > 6) {
-        float *flexpos, *ctmp, *at, *bt, *r, *t;
+        float *flexpos, *ctmp, *r, *t;
         flexpos = tmp, tmp += npos * 3;
-        ctmp    = tmp, tmp += nedge * 3;
-        at      = tmp, tmp += npos * 3;
-        bt      = tmp, tmp += npos * 3;
         r       = tmp, tmp += 9;
         t       = tmp, tmp += 3;
-        // require nedge * 3 floats
+        // require nedge * 9 floats
         modify_conformer_torsion_angles(
-          newpos, flexpos, ctmp, mask_rotate, edge_index, values + 6, npos, nedge);
-        if (exec_main) {
-            rigid_transform_Kabsch_3D_torch(flexpos, newpos, at, bt, r, t, npos);
+          newpos, flexpos, tmp, mask_rotate, edge_index, values + 6, npos, nedge);
+        if (IS_MAIN_THREAD()) {
+            // require 2 x npos x 3 floats
+            rigid_transform_Kabsch_3D_torch(flexpos, newpos,  tmp, r, t, npos);
+            matmul1<true>(flexpos, r, newpos, npos, 3, 3);
+            FOR_LOOP(n, npos) {
+                float *outp = newpos + n * 3;
+                add3p(outp, t);
+            }
+            DUMP("aligned", npos, 3, newpos);
         }
         __syncthreads();
-        for (int n = start; n < npos; n += block) {
-            float *p    = flexpos + n * 3;
-            float *outp = newpos + n * 3;
-            matmul<1, 3, 3, true>(p, r, outp);
-            add3p(outp, t);
-        }
     }
 }
 #if 0
@@ -567,16 +696,14 @@ __device__ __forceinline__ void smooth_l1_loss(float *a,
                                                uint8_t *flags,
                                                float *out) {
     float rebeta = reciprocal(beta);
-    for (int i = threadIdx.x; i < m; i += blockDim.x) {
-        for (int j = threadIdx.y; j < n; j += blockDim.y) {
-            int seq = i * m + j;
-            if (flags == nullptr || flags[seq] != 0) {
-                tmp[seq] = smooth_l1_loss(a[seq], b[seq], beta, rebeta);
-            }
+    FOR_LOOP(i, m * n) {
+        if (flags == nullptr || flags[i] != 0) {
+            tmp[i] = smooth_l1_loss(a[i], b[i], beta, rebeta);
+            // DBG("%d: %f %f beta %f %f -> %f\n", i, a[i], b[i], beta, rebeta, tmp[i]);
         }
     }
     __syncthreads();
-    if (threadIdx.x == 0) {
+    if (IS_MAIN_THREAD()) {
         float sum = 0;
         int total = 0;
         for (int i = 0; i < m * n; i++) {
@@ -585,7 +712,9 @@ __device__ __forceinline__ void smooth_l1_loss(float *a,
                 total++;
             }
         }
+        DBG("sum %f total %d mean %f\n", sum, total, sum / total);
         if (mean) {
+            // todo: total == 0
             sum *= reciprocal(total);
         }
         *out = sum;
@@ -613,7 +742,9 @@ def single_SF_loss(
     loss = cross_dist_score * 1.0 + dist_score * 5.0
     return loss
 #endif
-// require tmp npred *(npocket + npred + max(npred, npocket) + 2) * float + npred*npocket
+// require tmp :
+//   npred * ncross + npred * npred + 2 + ((npred * ncross + 3) >> 2)
+//    + npred * max(npred, ncross)
 __device__ __forceinline__ void single_SF_loss(float *predict,            // npredx3
                                                float *pocket,             // npocketx3
                                                float *dist_predict,       // npred x npocket
@@ -624,39 +755,59 @@ __device__ __forceinline__ void single_SF_loss(float *predict,            // npr
                                                float *tmp,
                                                float *out) {
     int ncross = npred * npocket;
+    int nsq    = npred * npred;
     float *dist, *holo_dist, *cross_dist_score, *dist_score;
+    uint8_t *flags;
+    // tmp mem: ncross + nsq + 2 + ((ncross + 3) >> 2)
     dist             = tmp, tmp += ncross;
-    holo_dist        = tmp, tmp += npred * npred;
+    holo_dist        = tmp, tmp += nsq;
     cross_dist_score = tmp, tmp++;
     dist_score       = tmp, tmp++;
+    flags            = (uint8_t *)tmp, tmp += ((ncross + 3) >> 2);
 
-    for (int i = threadIdx.x; i < npred; i += blockDim.x) {
-        float *p1 = predict + 3 * i;
-        for (int j = threadIdx.y; j < npocket; j += blockDim.y) {
-            float *p2           = pocket + 3 * j;
-            dist[i * npred + j] = norm3df(p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]);
-        }
-        for (int j = threadIdx.y; j < npred; j += blockDim.y) {
-            float *p2                = predict + 3 * j;
-            holo_dist[i * npred + j] = norm3df(p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]);
+    float divpocket = reciprocal((float)npocket);
+    float divpred = reciprocal((float)npred);
+    FOR_LOOP(i, ncross) {
+        // i / npred
+        int idxpred = floor(i * divpocket);
+        int idxpocket  = i - idxpred * npocket;
+        float *p1   = predict + 3 * idxpred;
+        float *p2   = pocket + 3 * idxpocket;
+        dist[i]     = norm3df(p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]);
+        flags[i]       = dist_predict[i] < dist_threshold ? 1 : 0;
+    }
+    FOR_LOOP(i, nsq) {
+        // i / npred
+        int idxpred = floor(i * divpred);
+        int remain  = i - idxpred * npred;
+        if (remain < npred) {
+            float *p1   = predict + 3 * idxpred;
+            float *p2   = predict + 3 * remain;
+            holo_dist[i] = norm3df(p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]);
         }
     }
     __syncthreads();
-    uint8_t *flags = (uint8_t *)(tmp + max(ncross, npred * npred));
-    for (int i = threadIdx.x; i < npred; i += blockDim.x) {
-        for (int j = threadIdx.y; j < npocket; j += blockDim.y) {
-            int seq    = i * npred + j;
-            flags[seq] = dist_predict[seq] < dist_threshold ? 1 : 0;
-        }
-    }
-    smooth_l1_loss<true>(dist_predict, dist, tmp, 0.5, npred, npocket, flags, cross_dist_score);
-    smooth_l1_loss<true>(holo_dist_predict, holo_dist, tmp, 0.5, npred, npred, nullptr, dist_score);
+    DUMPARR(0, 0, "dist", 80,  8, dist);
 
-    if (threadIdx.x == 0) {
+    // require npred x npocket floats
+    smooth_l1_loss<true>(dist_predict, dist, tmp, 1.0, npred, npocket, flags, cross_dist_score);
+    // require npred x npred floats
+    smooth_l1_loss<true>(holo_dist_predict, holo_dist, tmp, 1.0, npred, npred, nullptr, dist_score);
+
+    __syncthreads();
+
+    if (IS_MAIN_THREAD()) {
         *out = *cross_dist_score + *dist_score * 5.0;
+        DUMPARR(0, 0, "cross dist score", 1, 1, cross_dist_score);
+        DUMPARR(0, 0, "dist score", 1, 1, dist_score);
+        DUMPARR(0, 0, "loss", 1, 1, out);
     }
 }
-
+// mem req:
+//    npred * 3 + max(
+//          18 + max(9*nedge, 6 * npos),
+//          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred * max(npred, npocket)
+//    )
 __global__ void dock_kernel(float *init_coord,
                             float *pocket,
                             float *pred_cross_dist,
@@ -668,16 +819,75 @@ __global__ void dock_kernel(float *init_coord,
                             int npocket,
                             int nval,
                             int ntorsion,
-                            float *loss) {
+                            float *loss, 
+                            float *dev) {
     extern __shared__ float sm[];
-    float *new_pos = sm;  // require float * npred * 3
-    float *tmp     = &sm[npred * 3];
-    // require: tmp memory, at least 12 + npos * 3 * 3 + nedge * 3 floats
+
+    float *new_pos, *tmp;
+    if (dev == nullptr) {
+        new_pos = sm;  // require float * npred * 3
+        tmp     = &sm[npred * 3];
+    } else {
+        new_pos = dev;  // require float * npred * 3
+        tmp     = &dev[npred * 3];
+    }
+
+    // require 18 + max(9*nedge, 6 * npos) floats
     modify_conformer(init_coord, new_pos, values, torsions, masks, npred, nval, ntorsion, tmp);
     // require tmp npred *(npocket + npred + max(npred, npocket)+ 2) * float + npred*npocket
+    // require tmp :
+    //   npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
+    //    + npred * max(npred, npocket)
     single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss);
 }
+__global__ void dock_grad_kernel(float *init_coord,
+                                 float *pocket,
+                                 float *pred_cross_dist,
+                                 float *pred_holo_dist,
+                                 float *values,
+                                 int *torsions,
+                                 uint8_t *masks,
+                                 int npred,
+                                 int npocket,
+                                 int nval,
+                                 int ngval,
+                                 int ntorsion,
+                                 float *loss, float *dev, int blksz) {
+    extern __shared__ float sm[];
+    int group      = blockIdx.x;
+    if (group < ngval) {
+        float *new_pos, *tmp;
+        if (dev == nullptr) {
+            new_pos = &sm[blksz * group];  // require float * npred * 3
+            tmp     = &sm[npred * 3];
+        } else {
+            new_pos = dev + blksz * group;  // require float * npred * 3
+            tmp     = &dev[npred * 3];
+        }
 
+        modify_conformer(init_coord, new_pos, values, torsions, masks, npred, nval, ntorsion, tmp);
+        single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss);
+    }
+}
+#if 0
+__global__ void sched(float *data) {
+    printf(">>>> enter block %d %d thread %d %d\n", blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y);
+    for (int i = 0; i < 1000000; i++) {
+        *data += (float)i;
+    }
+    printf("==== Leave block %d %d thread %d %d\n", blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y);
+}
+#endif
+
+static size_t sm_max_size = 0;
+void dock_init(int device) {
+    cudaDeviceProp prop;
+    auto err = cudaGetDeviceProperties(&prop, device);
+    if (err != cudaSuccess) {
+        return;
+    }
+    sm_max_size = prop.sharedMemPerBlock;
+}
 void dock_gpu(float *init_coord,
               float *pocket,
               float *pred_cross_dist,
@@ -690,13 +900,28 @@ void dock_gpu(float *init_coord,
               int nval,
               int ntorsion,
               float *loss,
+              float *dev,
+              size_t devSize,
               cudaStream_t stream) {
-    int smsize = npred * 3 * sizeof(float);
-    int extra  = std::max(
-      (npred * 9 + ntorsion * 3 + 12) * sizeof(float),
-      npred * (npocket + npred + std::max(npred, npocket) + 2) * sizeof(float) + npred * npocket);
-    smsize += extra;
-    dim3 block(npred, npocket, 1);
+    //    npred * 3 + max(
+    //          18 + max(9*nedge, 6 * npos),
+    //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
+    //          max(npred, npocket)
+    int smsize = npred * 3
+                 + std::max(18 + std::max(9 * ntorsion, 6 * npred),
+                            npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
+                              + npred * std::max(npred, npocket));
+    smsize *= sizeof(float);
+    float *tmp = nullptr;
+    if (smsize > sm_max_size) {
+        tmp = dev;
+        assert(smsize <= devSize);
+        smsize = 0;
+    }
+
+    std::cout << "npred " << npred << " npocket " << npocket << " mem " << smsize << std::endl;
+
+    dim3 block(npred);
     dim3 grid(1, 1, 1);
     dock_kernel<<<grid, block, smsize, stream>>>(init_coord,
                                                  pocket,
@@ -709,6 +934,57 @@ void dock_gpu(float *init_coord,
                                                  npocket,
                                                  nval,
                                                  ntorsion,
-                                                 loss);
+                                                 loss, tmp);
+}
+void dock_grad_gpu(float *init_coord,
+                   float *pocket,
+                   float *pred_cross_dist,
+                   float *pred_holo_dist,
+                   float *values,
+                   int *torsions,
+                   uint8_t *masks,
+                   int npred,
+                   int npocket,
+                   int nval,
+                   int ngval,
+                   int ntorsion,
+                   float *loss,  // ngval float array
+                   float *dev,
+                   size_t devSize,
+                   cudaStream_t stream) {
+    //    npred * 3 + max(
+    //          18 + max(9*nedge, 6 * npos),
+    //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
+    //          max(npred, npocket)
+    int smsize = npred * 3
+                 + std::max(18 + std::max(9 * ntorsion, 6 * npred),
+                            npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
+                              + npred * std::max(npred, npocket));
+    smsize *= sizeof(float);
+    int blksz = smsize;
+    smsize *= ngval;
+
+    float *tmp = nullptr;
+    if (smsize > sm_max_size) {
+        tmp = dev;
+        assert(smsize <= devSize);
+        smsize = 0;
+    }
+
+    dim3 block(npred);
+    dim3 grid(ngval);
+    dock_grad_kernel<<<grid, block, smsize, stream>>>(init_coord,
+                                                 pocket,
+                                                 pred_cross_dist,
+                                                 pred_holo_dist,
+                                                 values,
+                                                 torsions,
+                                                 masks,
+                                                 npred,
+                                                 npocket,
+                                                 nval,
+                                                 ngval,
+                                                 ntorsion,
+                                                 loss, tmp, blksz);
 }
 }  // namespace dock

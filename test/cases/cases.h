@@ -1,7 +1,7 @@
 #ifndef DOCK_CASE_H
 #define DOCK_CASE_H
 #include "stdint.h"
-#define CASE 0
+#define CASE      0
 #define NR_PRED 20
 #define NR_POCKET 167
 

@@ -1,6 +1,6 @@
 set(SRC ${PROJECT_SOURCE_DIR}/src)
 list(APPEND SRC_FILES 
-        ${SRC}/cu/utils.cu
+        ${SRC}/cu/dock.cu
         ${SRC}/dock.cpp
 )
 cuda_add_library(${PROJECT_NAME} SHARED ${SRC_FILES})

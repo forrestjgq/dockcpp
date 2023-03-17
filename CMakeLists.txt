@@ -21,6 +21,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -fno-strict-aliasing -Wno-
 set(CMAKE_CXX_FLAGS_DEBUG   " ${CMAKE_CXX_FLAGS} -DDEBUG -g -O0")
 set(CMAKE_CXX_FLAGS_RELEASE " ${CMAKE_CXX_FLAGS} -DNDEBUG -O3")
 
+
 find_package(CUDA ${CUDA_VERSION} REQUIRED)
 list(APPEND INCLUDE_PATHS ${CUDA_INCLUDE_DIRS})
 list(APPEND LINK_LIBS 
@@ -37,7 +38,10 @@ list(APPEND LINK_LIBS
     #${CUDA_nvcuvenc_LIBRARY}
     ${CUDA_nvcuvid_LIBRARY}
 )
-
+find_package(OpenCV REQUIRED)
+set(LNK_LIBS ${LNK_LIBS} ${OpenCV_LIBS} )
+set(INCLUDE_PATHS ${INCLUDE_PATHS} ${OpenCV_INCLUDE_DIRS} )
+include_directories(${INCLUDE_PATHS})
 add_subdirectory(${PROJECT_SOURCE_DIR}/src)
 add_subdirectory(${PROJECT_SOURCE_DIR}/test)
 
