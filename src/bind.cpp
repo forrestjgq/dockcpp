@@ -31,8 +31,6 @@ float dock(std::shared_ptr<dock::Context> ctx,
     int npocket = pocket.sizes()[0];
     int nval    = values.sizes()[0];
     int ntorsions = torsions.sizes()[0];
-    std::cout << "npred " << npred << " npocket " << npocket << " nval " << nval << " ntorsions "
-              << ntorsions << std::endl;
 
     float loss = -1;
     auto req = dock::create_dock_cuda_request((float *)init_coord.data_ptr(),
@@ -62,8 +60,6 @@ Tensor dock_grad(std::shared_ptr<dock::Context> ctx,
     int npocket = pocket.sizes()[0];
     int nval    = values.sizes()[0];
     int ntorsions = torsions.sizes()[0];
-    std::cout << "npred " << npred << " npocket " << npocket << " nval " << nval << " ntorsions "
-              << ntorsions << std::endl;
 
     auto losses = std::shared_ptr<float>(new float[nval + 1]);
     auto req    = dock::create_dock_grad_cuda_request((float *)init_coord.data_ptr(),

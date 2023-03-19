@@ -7,10 +7,7 @@ import torch
 from pydock._build_config import _build_config  # NOQA: E402
 __pydock_lib_version__ = _build_config["PYDOCK_VERSION"]
 __pydock_lib_build_type__ = _build_config["PYDOCK_BUILD_TYPE"]
-_homepath, _ = _os.path.split(_os.path.realpath(__file__))
 
-for __so in _glob.glob(_os.path.join(_homepath, "cudock.cpython*.so")):
-    _CDLL(__so)
 import pydock.cudock as _cu
 
 class CudaContext:
@@ -24,9 +21,6 @@ class CudaContext:
         masks = [[1 if m else 0 for m in item] for item in masks]
         masks = torch.tensor(masks,dtype=torch.uint8)
         torsions = torch.tensor(torsions, dtype=torch.int)
-        print(f'vt {vt} dtype {vt.dtype}')
-        print(f'masks {masks} dtype {masks.dtype}')
-        print(f'torsions {torsions} dtype {torsions.dtype}')
         return _cu.dock_grad(self._cu_ctx, init_coord, pocket_coords, pred_cross_dist, pred_holo_dist, vt, torsions, masks)
 
 
@@ -36,7 +30,4 @@ class CudaContext:
         masks = [[1 if m else 0 for m in item] for item in masks]
         masks = torch.tensor(masks,dtype=torch.uint8)
         torsions = torch.tensor(torsions, dtype=torch.int)
-        print(f'vt {vt} dtype {vt.dtype}')
-        print(f'masks {masks} dtype {masks.dtype}')
-        print(f'torsions {torsions} dtype {torsions.dtype}')
         return _cu.dock(self._cu_ctx, init_coord, pocket_coords, pred_cross_dist, pred_holo_dist, vt, torsions, masks)
