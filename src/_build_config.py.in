@@ -1,0 +1,4 @@
+_build_config = {
+    "PYDOCK_VERSION" : "@PYDOCK_VERSION@",
+    "PYDOCK_BUILD_TYPE" : "@PYDOCK_BUILD_TYPE@"
+}

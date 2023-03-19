@@ -1,0 +1,20 @@
+# Main library, including compiled binaries
+graft pydock
+#graft js
+#prune **/node_modules
+#graft test
+
+# Misc
+include requirements.txt
+# include setup.cfg
+include setup.py
+include pydock*.so
+include pydock.cpython-38-x86_64-linux-gnu.so
+
+# Patterns to exclude from any directory
+global-exclude *~
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude .git
+global-exclude .ipynb_checkpoints
+global-exclude *.map

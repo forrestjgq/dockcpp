@@ -40,15 +40,14 @@
 
 # Folders
 build*
-thirdparty
-!thirdparty_source
+thirdparty_download
 release
 Release
 debug
 Debug
 bin
-lib
-build
+#lib
+#build
 #data
 src/imodel/src/
 
@@ -83,3 +82,4 @@ common/*.pb.*
 
 #idea clion
 cmake-build-*
+tmp

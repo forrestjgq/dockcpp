@@ -10,35 +10,20 @@ if (CCACHE)
 endif()
 
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -DUSE_CUDA -DDLIB_NO_GUI_SUPPORT")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -std=c++14 -DUSE_CUDA -DDLIB_NO_GUI_SUPPORT")
 
 # nvci does not support openmp, so we set nvcc flags in advance
-set(NVCC_FLAGS_RELEASE " -std=c++11 -DUSE_CUDA -DDLIB_NO_GUI_SUPPORT -DNDEBUG -O3 -w")
-set(CUDA_NVCC_FLAGS ${NVCC_FLAGS_RELEASE} ${CUDA_NVCC_FLAGS} -arch=sm_75 -gencode arch=compute_52,code=sm_52 -gencode arch=compute_60,code=sm_60
+set(NVCC_FLAGS_RELEASE " -std=c++14 -DUSE_CUDA -DDLIB_NO_GUI_SUPPORT -DNDEBUG -O3 -w")
+set(CUDA_NVCC_FLAGS ${NVCC_FLAGS_RELEASE} ${CUDA_NVCC_FLAGS}   -arch=sm_75 -gencode arch=compute_52,code=sm_52 -gencode arch=compute_60,code=sm_60
         -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=compute_75 -gencode arch=compute_72,code=sm_72 -gencode arch=compute_86,code=sm_86; --use_fast_math)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -fno-strict-aliasing -Wno-deprecated-declarations -Wno-unused-local-typedefs -Wno-parentheses -Wno-catch-value")
 set(CMAKE_CXX_FLAGS_DEBUG   " ${CMAKE_CXX_FLAGS} -DDEBUG -g -O0")
 set(CMAKE_CXX_FLAGS_RELEASE " ${CMAKE_CXX_FLAGS} -DNDEBUG -O3")
 
+set(THIRD_PARTY_DOWNLOAD_DIR ${CMAKE_SOURCE_DIR}/thirdparty_download)
+set(THIRDPARTY_DIR ${CMAKE_SOURCE_DIR}/thirdparty)
 
-find_package(CUDA ${CUDA_VERSION} REQUIRED)
-list(APPEND INCLUDE_PATHS ${CUDA_INCLUDE_DIRS})
-list(APPEND LINK_LIBS 
-    ${CUDA_LIBRARIES}
-    #${CUDA_CUFFT_LIBRARIES}
-    ${CUDA_CUBLAS_LIBRARIES}
-    #${CUDA_cupti_LIBRARY}
-    #${CUDA_curand_LIBRARY}
-    #${CUDA_cusparse_LIBRARY}
-    #${CUDA_npp_LIBRARY}
-    #${CUDA_nppc_LIBRARY}
-    #${CUDA_nppi_LIBRARY}
-    #${CUDA_npps_LIBRARY}
-    #${CUDA_nvcuvenc_LIBRARY}
-    ${CUDA_nvcuvid_LIBRARY}
-)
-find_package(OpenCV REQUIRED)
 set(LNK_LIBS ${LNK_LIBS} ${OpenCV_LIBS} )
 set(INCLUDE_PATHS ${INCLUDE_PATHS} ${OpenCV_INCLUDE_DIRS} )
 include_directories(${INCLUDE_PATHS})

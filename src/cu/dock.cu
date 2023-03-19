@@ -8,14 +8,21 @@
 
 namespace dock {
 #define DOCKDBG 0
+#define GRIDIDX 0
+#define INGRID  (blockIdx.x == GRIDIDX)
 #if DOCKDBG
-#define SDBG(x1, y1, ...) \
- do { \
-  if (threadIdx.x == x1 && threadIdx.y == y1) { \
-   printf(__VA_ARGS__); \
-  } \
- } while (0)
-#define DBG(...) printf(__VA_ARGS__)
+# define SDBG(x1, y1, ...) \
+  do { \
+   if (INGRID && threadIdx.x == x1 && threadIdx.y == y1) { \
+    printf(__VA_ARGS__); \
+   } \
+  } while (0)
+# define DBG(...) \
+  do { \
+   if (INGRID) { \
+    printf(__VA_ARGS__); \
+   } \
+  } while (0)
 #else
 #define SDBG(x1, y1, ...) 
 #define DBG(...)
@@ -52,18 +59,21 @@ __device__ void dumparr(int m, int n, float *p) {
     }
 }
 #if DOCKDBG
-#define DUMP(hdr, m, n, p) \
- do { \
-  printf(hdr); \
-  dumparr(m, n, p); \
- } while (0)
-#define DUMPARR(x1, y1, hdr, m, n, p) \
- do { \
-  if (threadIdx.x == x1 && threadIdx.y == y1) { \
-   printf(hdr); \
-   dumparr(m, n, p); \
-  } \
- } while (0)
+# define DUMP(hdr, m, n, p) \
+  do { \
+   if (INGRID) { \
+    printf(hdr); \
+    dumparr(m, n, p); \
+   } \
+  } while (0)
+
+# define DUMPARR(x1, y1, hdr, m, n, p) \
+  do { \
+   if (INGRID && threadIdx.x == x1 && threadIdx.y == y1) { \
+    printf(hdr); \
+    dumparr(m, n, p); \
+   } \
+  } while (0)
 #else
 #define DUMP(hdr, m, n, p) 
 #define DUMPARR(x1, y1, hdr, m, n, p) 
@@ -706,6 +716,12 @@ __device__ __forceinline__ void smooth_l1_loss(float *a,
     if (IS_MAIN_THREAD()) {
         float sum = 0;
         int total = 0;
+        // DUMP("smooth a", m, n, a);
+        // DUMP("smooth b", m, n, b);
+        // DUMP("smooth tmp", m, n, tmp);
+        // if (flags) {
+        //     DUMPARR(0, 0, "smooth sum", m, n, flags);
+        // }
         for (int i = 0; i < m * n; i++) {
             sum += tmp[i];
             if (flags == nullptr || flags[i] != 0) {
@@ -787,7 +803,7 @@ __device__ __forceinline__ void single_SF_loss(float *predict,            // npr
         }
     }
     __syncthreads();
-    DUMPARR(0, 0, "dist", 80,  8, dist);
+    // DUMPARR(0, 0, "dist", npred, ncross, dist);
 
     // require npred x npocket floats
     smooth_l1_loss<true>(dist_predict, dist, tmp, 1.0, npred, npocket, flags, cross_dist_score);
@@ -801,6 +817,7 @@ __device__ __forceinline__ void single_SF_loss(float *predict,            // npr
         DUMPARR(0, 0, "cross dist score", 1, 1, cross_dist_score);
         DUMPARR(0, 0, "dist score", 1, 1, dist_score);
         DUMPARR(0, 0, "loss", 1, 1, out);
+        // printf("grid %d loss %p %f\n", blockIdx.x, out, *out);
     }
 }
 // mem req:
@@ -852,21 +869,27 @@ __global__ void dock_grad_kernel(float *init_coord,
                                  int nval,
                                  int ngval,
                                  int ntorsion,
-                                 float *loss, float *dev, int blksz) {
+                                 float *loss,
+                                 float *dev,
+                                 int blksz) {
     extern __shared__ float sm[];
     int group      = blockIdx.x;
     if (group < ngval) {
         float *new_pos, *tmp;
         if (dev == nullptr) {
-            new_pos = &sm[blksz * group];  // require float * npred * 3
-            tmp     = &sm[npred * 3];
+            tmp = &sm[blksz * group];  // require float * npred * 3
         } else {
-            new_pos = dev + blksz * group;  // require float * npred * 3
-            tmp     = &dev[npred * 3];
+            tmp = dev + blksz * group;  // require float * npred * 3
         }
+        new_pos = tmp, tmp += npred * 3;
 
-        modify_conformer(init_coord, new_pos, values, torsions, masks, npred, nval, ntorsion, tmp);
-        single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss);
+        float *vals = values + group * nval;
+        if (group == 0) {
+            DUMPARR(0, 0, "input masks", ntorsion, npred, masks);
+        }
+        modify_conformer(init_coord, new_pos, vals, torsions, masks, npred, nval, ntorsion, tmp);
+        single_SF_loss(
+          new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss + group);
     }
 }
 #if 0
