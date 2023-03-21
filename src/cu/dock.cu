@@ -903,7 +903,7 @@ __global__ void sched(float *data) {
 #endif
 
 static size_t sm_max_size = 0;
-void dock_init(int device) {
+void sm_init(int device) {
     cudaDeviceProp prop;
     auto err = cudaGetDeviceProperties(&prop, device);
     if (err != cudaSuccess) {
@@ -925,7 +925,7 @@ void dock_gpu(float *init_coord,
               float *loss,
               float *dev,
               size_t devSize,
-              cudaStream_t stream) {
+              cudaStream_t stream, int smMaxSize) {
     //    npred * 3 + max(
     //          18 + max(9*nedge, 6 * npos),
     //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
@@ -936,7 +936,7 @@ void dock_gpu(float *init_coord,
                               + npred * std::max(npred, npocket));
     smsize *= sizeof(float);
     float *tmp = nullptr;
-    if (smsize > sm_max_size) {
+    if (smsize > smMaxSize) {
         tmp = dev;
         assert(smsize <= devSize);
         smsize = 0;
@@ -974,7 +974,7 @@ void dock_grad_gpu(float *init_coord,
                    float *loss,  // ngval float array
                    float *dev,
                    size_t devSize,
-                   cudaStream_t stream) {
+                   cudaStream_t stream, int smMaxSize) {
     //    npred * 3 + max(
     //          18 + max(9*nedge, 6 * npos),
     //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
@@ -988,7 +988,7 @@ void dock_grad_gpu(float *init_coord,
     smsize *= ngval;
 
     float *tmp = nullptr;
-    if (smsize > sm_max_size) {
+    if (smsize > smMaxSize) {
         tmp = dev;
         assert(smsize <= devSize);
         smsize = 0;

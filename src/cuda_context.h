@@ -11,6 +11,11 @@ class CudaContext : public Context {
 public:
     CudaContext(int device) : device_id_(device) {
         q_ = std::make_shared<BlockQueue<RequestSP>>();
+        cudaDeviceProp prop;
+        auto err = cudaGetDeviceProperties(&prop, device);
+        if (err == cudaSuccess) {
+            sm_max_size_ = prop.sharedMemPerBlock;
+        }
     }
     ~CudaContext()  override {
         if (t_) {
@@ -50,6 +55,9 @@ public:
     }
     cudaStream_t stream() {
         return stream_;
+    }
+    int smsize() {
+        return sm_max_size_;
     }
 
 private:
@@ -109,14 +117,8 @@ private:
     void *device_ = nullptr;
     int host_size_ = 512*1024;
     int device_size_ = 2*1024*1024;
+    int sm_max_size_     = 0; // max sm size on this device
     cudaStream_t stream_ = nullptr;
 };
-std::shared_ptr<Context> createCudaContext(int device) {
-    auto ctx = std::make_shared<CudaContext>(device);
-    if (ctx->create()) {
-        return ctx;
-    }
-    return nullptr;
-}
 };
 #endif

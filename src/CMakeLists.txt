@@ -1,10 +1,13 @@
+#=======================================================================
+#  Build cudock c++ implementation based on CUDA
+#=======================================================================
 
 find_package(CUDA ${CUDA_VERSION} REQUIRED)
 list(APPEND INCLUDE_PATHS ${CUDA_INCLUDE_DIRS})
 list(APPEND LINK_LIBS 
     ${CUDA_LIBRARIES}
     #${CUDA_CUFFT_LIBRARIES}
-    ${CUDA_CUBLAS_LIBRARIES}
+    # ${CUDA_CUBLAS_LIBRARIES}
     #${CUDA_cupti_LIBRARY}
     #${CUDA_curand_LIBRARY}
     #${CUDA_cusparse_LIBRARY}
@@ -13,18 +16,22 @@ list(APPEND LINK_LIBS
     #${CUDA_nppi_LIBRARY}
     #${CUDA_npps_LIBRARY}
     #${CUDA_nvcuvenc_LIBRARY}
-    ${CUDA_nvcuvid_LIBRARY}
+    # ${CUDA_nvcuvid_LIBRARY}
 )
 
 set(SRC ${PROJECT_SOURCE_DIR}/src)
 list(APPEND SRC_FILES 
         ${SRC}/cu/dock.cu
         ${SRC}/dock.cpp
+        ${SRC}/cuda_context.cpp
 )
 cuda_add_library(${PROJECT_NAME} STATIC ${SRC_FILES})
-target_link_libraries(${PROJECT_NAME} ${LINK_LIBS})   
+target_link_libraries(${PROJECT_NAME} ${LINK_LIBS} -lpthread)   
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
+#=======================================================================
+#  Build cudock pybind based package
+#=======================================================================
 set(PYDOCK_VERSION "0.1")
 
 # Setup Python executable
@@ -47,16 +54,18 @@ if(NOT Python3_EXECUTABLE)
     message(FATAL_ERROR "Python 3 not found in top level file")
 endif()
 
-# We need to get python version to configure some meta files
 set(PYTHON_VERSION "${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}")
 set(PYPI_PACKAGE_NAME "pydock")
+
+# to use pytorch pybind conversion, we need link to current pytorch package
 set(Torch_DIR "${Python3_SITELIB}/torch/share/cmake/Torch")
 find_package(Torch REQUIRED)
 set(INCDIRS "${TORCH_INCLUDE_DIRS}")
 set(LNKLIBS "${TORCH_LIBRARIES}")
+# This lib must be linked so that torch.Tensor could be accepted as pybind API parameter
 list(APPEND LNKLIBS "${Python3_SITELIB}/torch/lib/libtorch_python.so")
 
-# pybind11
+# pybind11, download if required
 option(USE_SYSTEM_PYBIND11 OFF)
 if(USE_SYSTEM_PYBIND11)
     find_package(pybind11)

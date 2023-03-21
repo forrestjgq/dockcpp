@@ -18,6 +18,9 @@ public:
     void signal() {
         evt_.set();
     }
+    virtual std::string getProp(const std::string &key) {
+        return "";
+    }
 
 private:
     Event evt_;

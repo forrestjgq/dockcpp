@@ -33,7 +33,7 @@ float dock(std::shared_ptr<dock::Context> ctx,
     int ntorsions = torsions.sizes()[0];
 
     float loss = -1;
-    auto req = dock::create_dock_cuda_request((float *)init_coord.data_ptr(),
+    auto req = dock::createCudaDockRequest((float *)init_coord.data_ptr(),
                                                    (float *)pocket.data_ptr(),
                                                    (float *)pred_cross_dist.data_ptr(),
                                                    (float *)pred_holo_dist.data_ptr(),
@@ -62,18 +62,18 @@ Tensor dock_grad(std::shared_ptr<dock::Context> ctx,
     int ntorsions = torsions.sizes()[0];
 
     auto losses = std::shared_ptr<float>(new float[nval + 1]);
-    auto req    = dock::create_dock_grad_cuda_request((float *)init_coord.data_ptr(),
-                                                   (float *)pocket.data_ptr(),
-                                                   (float *)pred_cross_dist.data_ptr(),
-                                                   (float *)pred_holo_dist.data_ptr(),
-                                                   (float *)values.data_ptr(),
-                                                   (int *)torsions.data_ptr(),
-                                                   (uint8_t *)masks.data_ptr(),
-                                                   npred,
-                                                   npocket,
-                                                   nval,
-                                                   ntorsions,
-                                                   losses.get());
+    auto req    = dock::createCudaDockGradRequest((float *)init_coord.data_ptr(),
+                                               (float *)pocket.data_ptr(),
+                                               (float *)pred_cross_dist.data_ptr(),
+                                               (float *)pred_holo_dist.data_ptr(),
+                                               (float *)values.data_ptr(),
+                                               (int *)torsions.data_ptr(),
+                                               (uint8_t *)masks.data_ptr(),
+                                               npred,
+                                               npocket,
+                                               nval,
+                                               ntorsions,
+                                               losses.get());
     ctx->commit(req);
     auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
     return torch::from_blob(losses.get(), { nval + 1 }, options).clone();

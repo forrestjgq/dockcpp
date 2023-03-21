@@ -47,7 +47,8 @@ extern void dock_gpu(float *init_coord,       // npred *3
                      float *loss,     // output, scalar
                      float *dev,      // input device mem
                      size_t devSize,  // dev size in byte
-                     cudaStream_t stream);
+                     cudaStream_t stream,
+                     int smsize);
 void dock_grad_gpu(float *init_coord,
                    float *pocket,
                    float *pred_cross_dist,
@@ -63,7 +64,8 @@ void dock_grad_gpu(float *init_coord,
                    float *loss,  // ngval float array
                    float *dev,
                    size_t devSize,
-                   cudaStream_t stream);
+                   cudaStream_t stream,
+                   int smsize);
 static std::uint64_t now() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::high_resolution_clock::now().time_since_epoch())
@@ -86,6 +88,7 @@ int dock_cpu_async(float *init_coord,
                    void *host,
                    int hostsize,
                    cudaStream_t stream,
+                   int smsize,
                    float *outloss) {
     uint8_t *tmp     = (uint8_t *)dev;
     uint8_t *hosttmp = (uint8_t *)host;
@@ -132,11 +135,13 @@ int dock_cpu_async(float *init_coord,
              loss,
              (float *)tmp,
              tmpsz,
-             stream);
+             stream,
+             smsize);
     cudaMemcpyAsync(outloss, loss, sizeof(float), cudaMemcpyDeviceToHost, stream);
 #undef COPY
     return 0;
 }
+#if 0
 float dock_cpu(float *init_coord,
                float *pocket,
                float *pred_cross_dist,
@@ -219,6 +224,7 @@ float dock_cpu(float *init_coord,
 #undef COPY
     return ret;
 }
+#endif
 // return 1 for lacking of host memory
 int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
                         float *pocket,           // npocket * 3 floats
@@ -236,8 +242,8 @@ int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
                         int hostsz,
                         void *device,
                         int cudasz,
-                        cudaStream_t stream) {
-
+                        cudaStream_t stream,
+                        int smsize) {
     // printf("input loss %f %f %f %f %f %f %f %f %f\n",
     //        losses[0],
     //        losses[1],
@@ -311,7 +317,8 @@ int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
                   loss,
                   (float *)tmp,
                   tmpsz,
-                  stream);
+                  stream,
+                  smsize);
     cudaMemcpyAsync(losses, loss, (nval + 1) * sizeof(float), cudaMemcpyDeviceToHost);
     // cudaStreamSynchronize(stream);
     // printf("output loss %f %f %f %f %f %f %f %f %f\n",
@@ -326,180 +333,6 @@ int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
     //        losses[8]);
 #undef COPY
     return 0;
-}
-int dock_grad_cpu(float *init_coord,
-                  float *pocket,
-                  float *pred_cross_dist,
-                  float *pred_holo_dist,
-                  float *values,
-                  int *torsions,
-                  uint8_t *masks,
-                  int npred,
-                  int npocket,
-                  int nval,
-                  int ntorsion,
-                  float *losses) {
-    int sz    = 2 * 1024 * 1024;
-    void *mem = nullptr;
-    auto err  = cudaMalloc(&mem, sz);
-    if (err != cudaSuccess) {
-        return 1;
-    }
-    uint8_t *tmp = (uint8_t *)mem;
-    size_t tsz;
-
-#define COPY(val, tp, sz) \
- tp *gpu_##val = (tp *)tmp; \
- tsz           = sizeof(tp) * sz; \
- tmp += tsz; \
- cudaMemcpy(gpu_##val, val, tsz, cudaMemcpyHostToDevice);
-
-    COPY(init_coord, float, npred * 3);
-    COPY(pocket, float, npocket * 3);
-    COPY(pred_cross_dist, float, npred *npocket);
-    COPY(pred_holo_dist, float, npred *npred);
-
-    float *valueBatch = new float[nval * (nval + 1)];
-    memcpy(valueBatch, values, nval * sizeof(float));
-    for (int i = 0; i < nval; i++) {
-        float *start = valueBatch + (i + 1) * nval;
-        memcpy(start, values, nval * sizeof(float));
-        start[i] += 0.01;
-    }
-    COPY(valueBatch, float, nval *(nval + 1));
-    COPY(torsions, int, ntorsion * 2);
-
-    float *loss;
-    loss = (float *)tmp, tmp += (nval + 1) * sizeof(float);
-
-    int tmpsz = int(tmp - (uint8_t *)mem);
-
-    assert(uint64_t(tmp) % 4 == 0);
-
-    // must be last one to copy for alignment
-    COPY(masks, uint8_t, ntorsion * npred);
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-    dock_grad_gpu(gpu_init_coord,
-                  gpu_pocket,
-                  gpu_pred_cross_dist,
-                  gpu_pred_holo_dist,
-                  gpu_valueBatch,
-                  gpu_torsions,
-                  gpu_masks,
-                  npred,
-                  npocket,
-                  nval,
-                  nval + 1,
-                  ntorsion,
-                  loss,
-                  (float *)tmp,
-                  tmpsz,
-                  stream);
-    cudaStreamSynchronize(stream);
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        std::cout << "dock gpu fail, err: " << err << " " << cudaGetErrorString(err) << std::endl;
-        return 4;
-    }
-    cudaStreamDestroy(stream);
-
-    cudaMemcpy(&losses, loss, (nval + 1) * sizeof(float), cudaMemcpyDeviceToHost);
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        std::cout << "memcpy fail, err: " << err << " " << cudaGetErrorString(err) << std::endl;
-        return 3;
-    }
-    cudaFree(mem);
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        return 2;
-    }
-#undef COPY
-    return 0;
-}
-int dock_grad_cpu_perf(float *init_coord,
-                       float *pocket,
-                       float *pred_cross_dist,
-                       float *pred_holo_dist,
-                       float *values,
-                       int *torsions,
-                       uint8_t *masks,
-                       int npred,
-                       int npocket,
-                       int nval,
-                       int ntorsion,
-                       int n) {
-    int sz    = 2 * 1024 * 1024;
-    void *mem = nullptr;
-    auto err  = cudaMalloc(&mem, sz);
-    if (err != cudaSuccess) {
-        return -1;
-    }
-    float *output = new float[nval + 1];
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-    auto start = now();
-#define COPY(val, tp, sz) \
- tp *gpu_##val = (tp *)tmp; \
- tsz           = sizeof(tp) * sz; \
- tmp += tsz; \
- cudaMemcpyAsync(gpu_##val, val, tsz, cudaMemcpyHostToDevice, stream);
-    for (int i = 0; i < n; i++) {
-        uint8_t *tmp = (uint8_t *)mem;
-        size_t tsz;
-
-        COPY(init_coord, float, npred * 3);
-        COPY(pocket, float, npocket * 3);
-        COPY(pred_cross_dist, float, npred *npocket);
-        COPY(pred_holo_dist, float, npred *npred);
-
-        float *valueBatch = new float[nval * (nval + 1)];
-        memcpy(valueBatch, values, nval * sizeof(float));
-        for (int i = 0; i < nval; i++) {
-            float *start = valueBatch + (i + 1) * nval;
-            memcpy(start, values, nval * sizeof(float));
-            start[i] += 0.01;
-        }
-        COPY(valueBatch, float, nval *(nval + 1));
-        COPY(torsions, int, ntorsion * 2);
-
-        float *loss;
-        loss = (float *)tmp, tmp += (nval + 1) * sizeof(float);
-
-        int tmpsz = int(tmp - (uint8_t *)mem);
-
-        assert(uint64_t(tmp) % 4 == 0);
-
-        // must be last one to copy for alignment
-        COPY(masks, uint8_t, ntorsion * npred);
-        dock_grad_gpu(gpu_init_coord,
-                      gpu_pocket,
-                      gpu_pred_cross_dist,
-                      gpu_pred_holo_dist,
-                      gpu_valueBatch,
-                      gpu_torsions,
-                      gpu_masks,
-                      npred,
-                      npocket,
-                      nval,
-                      nval + 1,
-                      ntorsion,
-                      loss,
-                      (float *)tmp,
-                      tmpsz,
-                      stream);
-        cudaMemcpyAsync(output, loss, (nval + 1) * sizeof(float), cudaMemcpyDeviceToHost, stream);
-    }
-
-    cudaStreamSynchronize(stream);
-    auto end = now();
-    auto du  = end - start;
-    auto qps = n * 1000 / du;
-    cudaStreamDestroy(stream);
-    cudaFree(mem);
-#undef COPY
-    return qps;
 }
 
 class CudaDockRequest : public Request {
@@ -539,6 +372,7 @@ public:
             void *host   = cudaCtx->hostMemory(hostsz);
             void *device = cudaCtx->deviceMemory(cudasz);
             auto stream  = cudaCtx->stream();
+            auto smsize  = cudaCtx->smsize();
             dock_cpu_async(init_coord_,
                            pocket_,
                            pred_cross_dist_,
@@ -555,6 +389,7 @@ public:
                            host,
                            hostsz,
                            stream,
+                           smsize,
                            loss_);
             auto err = cudaStreamSynchronize(stream);
             if(cudaSuccess != err) {
@@ -577,7 +412,7 @@ private:
     int ntorsion_;
     float *loss_;
 };
-std::shared_ptr<Request> create_dock_cuda_request(float *init_coord,       // npred * 3 floats
+std::shared_ptr<Request> createCudaDockRequest(float *init_coord,       // npred * 3 floats
                                                   float *pocket,           // npocket * 3 floats
                                                   float *pred_cross_dist,  // npred * npocket floats
                                                   float *pred_holo_dist,   // npred * npred floats
@@ -640,6 +475,7 @@ public:
             void *host   = cudaCtx->hostMemory(hostsz);
             void *device = cudaCtx->deviceMemory(cudasz);
             auto stream  = cudaCtx->stream();
+            int smsize   = cudaCtx->smsize();
             dock_grad_cpu_async(init_coord_,
                                 pocket_,
                                 pred_cross_dist_,
@@ -656,7 +492,8 @@ public:
                                 hostsz,
                                 device,
                                 cudasz,
-                                stream);
+                                stream,
+                                smsize);
             cudaStreamSynchronize(stream);
         }
     }
@@ -675,7 +512,7 @@ private:
     int ntorsion_;
     float *losses_;
 };
-std::shared_ptr<Request> create_dock_grad_cuda_request(
+std::shared_ptr<Request> createCudaDockGradRequest(
   float *init_coord,       // npred * 3 floats
   float *pocket,           // npocket * 3 floats
   float *pred_cross_dist,  // npred * npocket floats
@@ -702,5 +539,124 @@ std::shared_ptr<Request> create_dock_grad_cuda_request(
                                                  nval,
                                                  ntorsion,
                                                  losses);
+}
+class CudaDockGradPerfRequest : public Request {
+public:
+    explicit CudaDockGradPerfRequest(float *init_coord,       // npred * 3 floats
+                                 float *pocket,           // npocket * 3 floats
+                                 float *pred_cross_dist,  // npred * npocket floats
+                                 float *pred_holo_dist,   // npred * npred floats
+                                 float *values,           // nval float, as x in f(x)
+                                 int *torsions,           // ntorsion * 2 ints
+                                 uint8_t *masks,          // npred * ntorsion masks
+                                 int npred,
+                                 int npocket,
+                                 int nval,
+                                 int ntorsion,
+                                 int loop
+
+    ) {
+        init_coord_      = init_coord;
+        pocket_          = pocket;
+        pred_cross_dist_ = pred_cross_dist;
+        pred_holo_dist_  = pred_holo_dist;
+        values_          = values;
+        torsions_        = torsions;
+        masks_           = masks;
+        npred_           = npred;
+        npocket_         = npocket;
+        nval_            = nval;
+        ntorsion_        = ntorsion;
+        losses_          = new float[nval+1];
+        loop_            = loop;
+    }
+    ~CudaDockGradPerfRequest() override = default;
+    void run(Context *ctx) override {
+        auto cudaCtx = dynamic_cast<CudaContext *>(ctx);
+        if (cudaCtx) {
+            int hostsz = 0, cudasz = 0;
+            void *host   = cudaCtx->hostMemory(hostsz);
+            void *device = cudaCtx->deviceMemory(cudasz);
+            auto stream  = cudaCtx->stream();
+            int smsize   = cudaCtx->smsize();
+            auto start   = now();
+            for (auto i = 0; i < loop_; i++) {
+                dock_grad_cpu_async(init_coord_,
+                                    pocket_,
+                                    pred_cross_dist_,
+                                    pred_holo_dist_,
+                                    values_,
+                                    torsions_,
+                                    masks_,
+                                    npred_,
+                                    npocket_,
+                                    nval_,
+                                    ntorsion_,
+                                    losses_,
+                                    host,
+                                    hostsz,
+                                    device,
+                                    cudasz,
+                                    stream,
+                                    smsize);
+
+            }
+            auto err = cudaStreamSynchronize(stream);
+            assert(err == cudaSuccess);
+            auto end = now();
+            auto du  = end - start;
+            qps_ = loop_ * 1000 / du;
+        }
+    }
+    std::string getProp(const std::string &key) override {
+        if (key == "qps") {
+            return std::to_string(qps_);
+        }
+        return Request::getProp(key);
+    }
+
+private:
+    float *init_coord_;
+    float *pocket_;
+    float *pred_cross_dist_;
+    float *pred_holo_dist_;
+    float *values_;
+    int *torsions_;
+    uint8_t *masks_;
+    int npred_;
+    int npocket_;
+    int nval_;
+    int ntorsion_;
+    float *losses_;
+    int loop_ = 0;
+    int qps_  = 0;
+};
+std::shared_ptr<Request> createCudaDockGradPerfRequest(
+  float *init_coord,       // npred * 3 floats
+  float *pocket,           // npocket * 3 floats
+  float *pred_cross_dist,  // npred * npocket floats
+  float *pred_holo_dist,   // npred * npred floats
+  float *values,           // nval float, as x in f(x)
+  int *torsions,           // ntorsion * 2 ints
+  uint8_t *masks,          // npred * ntorsion masks
+  int npred,
+  int npocket,
+  int nval,
+  int ntorsion,
+  int loop
+
+) {
+    return std::make_shared<CudaDockGradPerfRequest>(init_coord,
+                                                 pocket,
+                                                 pred_cross_dist,
+                                                 pred_holo_dist,
+                                                 values,
+                                                 torsions,
+                                                 masks,
+                                                 npred,
+                                                 npocket,
+                                                 nval,
+                                                 ntorsion,
+                                                 loop);
 }
 }  // namespace dock
