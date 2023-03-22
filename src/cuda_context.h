@@ -68,7 +68,6 @@ public:
         return err;
     }
     void *requireDeviceMemory(int size) {
-        cuda_memories_.clear();
         if (device_size_ >= size) {
             assert(!cuda_memories_.empty());
             return cuda_memories_.back();
