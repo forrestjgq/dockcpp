@@ -1,3 +1,34 @@
+#  Build cudock pybind based package
+#=======================================================================
+set(PYDOCK_VERSION "0.1")
+
+# Setup Python executable
+if(NOT DEFINED Python3_FIND_REGISTRY)
+    # Only consider PATH variable on Windows by default
+    set(Python3_FIND_REGISTRY NEVER)
+endif()
+# Requires Python 3.6+
+find_package(Python3 3.6 COMPONENTS Interpreter Development)
+if(Python3_FOUND)
+    # Setup PYTHON_EXECUTABLE for 3rdparty modules which still use the deprecated find_package(PythonInterp)
+    set(PYTHON_EXECUTABLE
+        ${Python3_EXECUTABLE}
+        CACHE STRING "Deprecated path to the Python executable (for 3rdparty only)" FORCE)
+else()
+    message(FATAL_ERROR "BUILD_PYTHON_MODULE=ON requires Python >= 3.6. Please ensure it is in PATH.")
+endif()
+
+if(NOT Python3_EXECUTABLE)
+    message(FATAL_ERROR "Python 3 not found in top level file")
+endif()
+
+set(PYTHON_VERSION "${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}")
+set(PYPI_PACKAGE_NAME "pydock")
+
+# to use pytorch pybind conversion, we need link to current pytorch package
+set(Torch_DIR "${Python3_SITELIB}/torch/share/cmake/Torch")
+find_package(Torch REQUIRED)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 #=======================================================================
 #  Build cudock c++ implementation based on CUDA
 #=======================================================================
@@ -30,38 +61,9 @@ target_link_libraries(${PROJECT_NAME} ${LINK_LIBS} -lpthread)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 #=======================================================================
-#  Build cudock pybind based package
-#=======================================================================
-set(PYDOCK_VERSION "0.1")
-
-# Setup Python executable
-if(NOT DEFINED Python3_FIND_REGISTRY)
-    # Only consider PATH variable on Windows by default
-    set(Python3_FIND_REGISTRY NEVER)
-endif()
-# Requires Python 3.6+
-find_package(Python3 3.6 COMPONENTS Interpreter Development)
-if(Python3_FOUND)
-    # Setup PYTHON_EXECUTABLE for 3rdparty modules which still use the deprecated find_package(PythonInterp)
-    set(PYTHON_EXECUTABLE
-        ${Python3_EXECUTABLE}
-        CACHE STRING "Deprecated path to the Python executable (for 3rdparty only)" FORCE)
-else()
-    message(FATAL_ERROR "BUILD_PYTHON_MODULE=ON requires Python >= 3.6. Please ensure it is in PATH.")
-endif()
-
-if(NOT Python3_EXECUTABLE)
-    message(FATAL_ERROR "Python 3 not found in top level file")
-endif()
-
-set(PYTHON_VERSION "${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}")
-set(PYPI_PACKAGE_NAME "pydock")
-
-# to use pytorch pybind conversion, we need link to current pytorch package
-set(Torch_DIR "${Python3_SITELIB}/torch/share/cmake/Torch")
-find_package(Torch REQUIRED)
 set(INCDIRS "${TORCH_INCLUDE_DIRS}")
 set(LNKLIBS "${TORCH_LIBRARIES}")
+message("TORCH CXX flags ${TORCH_CXX_FLAGS}")
 # This lib must be linked so that torch.Tensor could be accepted as pybind API parameter
 list(APPEND LNKLIBS "${Python3_SITELIB}/torch/lib/libtorch_python.so")
 

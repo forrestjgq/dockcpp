@@ -27,7 +27,7 @@ set(THIRDPARTY_DIR ${CMAKE_SOURCE_DIR}/thirdparty)
 
 set(LNK_LIBS ${LNK_LIBS} ${OpenCV_LIBS} )
 set(INCLUDE_PATHS ${INCLUDE_PATHS} ${OpenCV_INCLUDE_DIRS} )
-add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
+# add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
 include_directories(${INCLUDE_PATHS})
 add_subdirectory(${PROJECT_SOURCE_DIR}/src)
 add_subdirectory(${PROJECT_SOURCE_DIR}/test)
