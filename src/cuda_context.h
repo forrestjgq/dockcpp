@@ -1,15 +1,18 @@
 #ifndef CUDA_CONTEXT_H
 #define CUDA_CONTEXT_H
+#include <assert.h>
+#include <list>
+
 #include <cuda_runtime_api.h>
 
 #include "context.h"
-#include "utils.h"
 #include "dock.h"
+#include "utils.h"
 
 namespace dock {
 class CudaContext : public Context {
 public:
-    CudaContext(int device) : device_id_(device) {
+    explicit CudaContext(int device) : device_id_(device) {
         q_ = std::make_shared<BlockQueue<RequestSP>>();
         cudaDeviceProp prop;
         auto err = cudaGetDeviceProperties(&prop, device);
@@ -25,8 +28,8 @@ public:
         }
     }
     bool create() {
-        if(!t_) {
-            t_ = std::make_shared<std::thread>([this]() { this->run(); });
+        if (!t_) {
+            t_ = std::make_shared<std::thread>([=]() { this->run(); });
             e_.wait();
             e_.reset();
             if (running_) {
@@ -49,15 +52,38 @@ public:
         sz = host_size_;
         return host_;
     }
-    void *deviceMemory(int &sz) {
-        sz = device_size_;
-        return device_;
-    }
     cudaStream_t stream() {
         return stream_;
     }
     int smsize() {
         return sm_max_size_;
+    }
+    cudaError_t sync() {
+        auto err = cudaStreamSynchronize(stream_);
+        while (cuda_memories_.size() > 1) {
+            auto p = cuda_memories_.front();
+            cuda_memories_.pop_front();
+            cudaFree(p);
+        }
+        return err;
+    }
+    void *requireDeviceMemory(int size) {
+        cuda_memories_.clear();
+        if (device_size_ >= size) {
+            assert(!cuda_memories_.empty());
+            return cuda_memories_.back();
+        }
+        void *p = nullptr;
+        size    = (size + 4095) / 4096 * 4096;  // 4K aligned
+        auto err = cudaMalloc(&p, size);
+        if (err != cudaSuccess) {
+            std::cerr << "malloc cuda memory fail, size " << size << " err " << err << " msg "
+                      << cudaGetErrorString(err) << std::endl;
+            return nullptr;
+        }
+        cuda_memories_.push_back(p);
+        device_size_ = size;
+        return p;
     }
 
 private:
@@ -87,14 +113,6 @@ private:
         }
         cleanups.push_back([this]() { cudaFree(this->host_); });
 
-        err = cudaMalloc(&device_, device_size_);
-        if (err != cudaSuccess) {
-            std::cerr << "create host memory at device " << device_id_ << " fail, err: " << err << ", "
-                      << cudaGetErrorString(err) << std::endl;
-            return;
-        }
-        cleanups.push_back([this]() { cudaFree(this->device_); });
-
         e_.set();
         running_ = true;
         while (true) {
@@ -105,20 +123,24 @@ private:
             req->run(this);
             req->signal();
         }
+        for (auto p : cuda_memories_) {
+            cudaFree(p);
+        }
         running_ = false;
     }
-private:
-    int device_id_          = -1;
+
+public:
+    int device_id_ = -1;
     std::shared_ptr<BlockQueue<RequestSP>> q_;
     std::shared_ptr<std::thread> t_;
     Event e_;
-    bool running_ = false;
-    void *host_   = nullptr;
-    void *device_ = nullptr;
+    bool running_        = false;
+    void *host_          = nullptr;
     int host_size_ = 512*1024;
-    int device_size_ = 2*1024*1024;
-    int sm_max_size_     = 0; // max sm size on this device
+    int device_size_     = 0;
+    int sm_max_size_     = 0;  // max sm size on this device
     cudaStream_t stream_ = nullptr;
+    std::list<void *> cuda_memories_;
 };
 };
 #endif

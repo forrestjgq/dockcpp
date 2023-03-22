@@ -29,6 +29,7 @@ class CudaContext:
             pred_holo_dist (torch.Tensor): predicted ligand holo distance, N X N
 
         Returns:
+            tuple of (torch.Tensor, bool)
             torch.Tensor: 1 dimension tensor, length should be vt.shape[0]+1 the first element should be the loss, 
                           the rest will be the grad value for each value in vt 
         """
@@ -53,7 +54,7 @@ class CudaContext:
             pred_holo_dist (torch.Tensor): predicted ligand holo distance, N X N
 
         Returns:
-            loss value in float
+            tuple of (float, bool): loss value in float and result flag
         """
         if not isinstance(vt, torch.Tensor):
             vt = torch.tensor(vt, dtype=torch.float)

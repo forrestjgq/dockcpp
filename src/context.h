@@ -6,11 +6,17 @@
 namespace dock {
 
 class Context;
+
+enum class RequestResult {
+    Success,
+    Fail,
+    Retry,
+};
 class Request {
 public:
     Request()          = default;
     virtual ~Request() = default;
-    virtual void run(Context *) = 0;
+    virtual void run(Context *) {}
     void wait() {
         evt_.wait();
         evt_.reset();
@@ -21,7 +27,15 @@ public:
     virtual std::string getProp(const std::string &key) {
         return "";
     }
+    RequestResult result() {
+        return result_;
+    }
+    bool ok() {
+        return result_ == RequestResult::Success;
+    }
 
+protected:
+    RequestResult result_ = RequestResult::Success;
 private:
     Event evt_;
 };

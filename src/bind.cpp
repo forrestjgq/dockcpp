@@ -1,4 +1,5 @@
-#include "pybind11/numpy.h"
+// #include "pybind11/numpy.h"
+// #include "pybind11/stl.h"
 // #include "ATen/Tensor.h"
 // #include "torch/torch.h"
 #include "torch/extension.h"
@@ -19,14 +20,14 @@ namespace cudock {
 
 using Tensor = torch::Tensor;
 
-float dock(std::shared_ptr<dock::Context> ctx,
-                 Tensor init_coord,
-                 Tensor pocket,
-                 Tensor pred_cross_dist,
-                 Tensor pred_holo_dist,
-                 Tensor values,
-                 Tensor torsions,
-                 Tensor masks) {
+std::tuple<float, bool> dock(std::shared_ptr<dock::Context> ctx,
+                             Tensor init_coord,
+                             Tensor pocket,
+                             Tensor pred_cross_dist,
+                             Tensor pred_holo_dist,
+                             Tensor values,
+                             Tensor torsions,
+                             Tensor masks) {
     int npred = init_coord.sizes()[0];
     int npocket = pocket.sizes()[0];
     int nval    = values.sizes()[0];
@@ -46,18 +47,19 @@ float dock(std::shared_ptr<dock::Context> ctx,
                                                    ntorsions,
                                                    &loss);
     ctx->commit(req);
-    return loss;
+    auto ok = req->result() == dock::RequestResult::Success;
+    return std::tuple<float, bool>(loss, ok);
 }
-Tensor dock_grad(std::shared_ptr<dock::Context> ctx,
-                 Tensor init_coord,
-                 Tensor pocket,
-                 Tensor pred_cross_dist,
-                 Tensor pred_holo_dist,
-                 Tensor values,
-                 Tensor torsions,
-                 Tensor masks,
-                 float eps) {
-    int npred = init_coord.sizes()[0];
+std::tuple<Tensor, bool> dock_grad(std::shared_ptr<dock::Context> ctx,
+                                   Tensor init_coord,
+                                   Tensor pocket,
+                                   Tensor pred_cross_dist,
+                                   Tensor pred_holo_dist,
+                                   Tensor values,
+                                   Tensor torsions,
+                                   Tensor masks,
+                                   float eps) {
+    int npred     = init_coord.sizes()[0];
     int npocket = pocket.sizes()[0];
     int nval    = values.sizes()[0];
     int ntorsions = torsions.sizes()[0];
@@ -77,12 +79,17 @@ Tensor dock_grad(std::shared_ptr<dock::Context> ctx,
                                                eps,
                                                losses.get());
     ctx->commit(req);
-    auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
-    auto ploss   = losses.get();
-    for (auto i = 1; i < nval + 1; i++) {
-        ploss[i] = (ploss[i] - ploss[0]) / eps;
+    torch::Tensor t;
+    if (req->ok()) {
+        auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+        auto ploss   = losses.get();
+        for (auto i = 1; i < nval + 1; i++) {
+            ploss[i] = (ploss[i] - ploss[0]) / eps;
+        }
+        t = torch::from_blob(losses.get(), { nval + 1 }, options).clone();
+        return std::tuple<torch::Tensor, bool>(t, true);
     }
-    return torch::from_blob(losses.get(), { nval + 1 }, options).clone();
+    return std::tuple<torch::Tensor, bool>(t, false);
 }
 
 PYBIND11_MODULE(cudock, m) {

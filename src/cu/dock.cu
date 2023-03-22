@@ -384,8 +384,8 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(float *pos,
     }
 
     __syncthreads();
-    DUMPARR(0, 0, "mask 0",  1, 20, mask_rotate);
-    DUMPARR(0, 0, "mask 1",  1, 20, mask_rotate+n);
+    DUMPARR(0, 0, "mask 0", 1, n, mask_rotate);
+    DUMPARR(0, 0, "mask 1", 1, n, mask_rotate + n);
     FOR_LOOP(i, n) {
         float *p    = pos + 3 * i;
         float *outp = out + 3 * i;
@@ -590,7 +590,7 @@ __device__ __forceinline__ void modify_conformer(float *pos,
     rot_mat        = tmp, tmp += 9;
     tr             = tmp, tmp += 3;
     rot            = tmp, tmp += 3;
-    DUMPARR(0, 0, "coords", 20, 3, pos);
+    DUMPARR(0, 0, "coords", npos, 3, pos);
     DUMPARR(0, 0, "values", 1, nval, values);
 
     FOR_LOOP(i, 3) {
@@ -871,7 +871,7 @@ __global__ void dock_grad_kernel(float *init_coord,
                                  int ntorsion,
                                  float *loss,
                                  float *dev,
-                                 int blksz) {
+                                 int blksz /*in floats*/) {
     extern __shared__ float sm[];
     int group      = blockIdx.x;
     if (group < ngval) {
@@ -924,8 +924,9 @@ void dock_gpu(float *init_coord,
               int ntorsion,
               float *loss,
               float *dev,
-              size_t devSize,
-              cudaStream_t stream, int smMaxSize) {
+              int &devSize,
+              cudaStream_t stream,
+              int smMaxSize) {
     //    npred * 3 + max(
     //          18 + max(9*nedge, 6 * npos),
     //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
@@ -935,6 +936,11 @@ void dock_gpu(float *init_coord,
                             npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
                               + npred * std::max(npred, npocket));
     smsize *= sizeof(float);
+
+    if (dev == nullptr) {
+        devSize = smsize;
+        return;
+    }
     float *tmp = nullptr;
     if (smsize > smMaxSize) {
         tmp = dev;
@@ -973,8 +979,9 @@ void dock_grad_gpu(float *init_coord,
                    int ntorsion,
                    float *loss,  // ngval float array
                    float *dev,
-                   size_t devSize,
-                   cudaStream_t stream, int smMaxSize) {
+                   int &devSize,  // in bytes
+                   cudaStream_t stream,
+                   int smMaxSize) {
     //    npred * 3 + max(
     //          18 + max(9*nedge, 6 * npos),
     //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
@@ -984,8 +991,14 @@ void dock_grad_gpu(float *init_coord,
                             npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
                               + npred * std::max(npred, npocket));
     smsize *= sizeof(float);
-    int blksz = smsize;
+    int blksz = smsize;  // in bytes
     smsize *= ngval;
+
+    // get required memories
+    if (dev == nullptr) {
+        devSize = smsize;
+        return;
+    }
 
     float *tmp = nullptr;
     if (smsize > smMaxSize) {
@@ -998,17 +1011,19 @@ void dock_grad_gpu(float *init_coord,
     dim3 block(npred);
     dim3 grid(ngval);
     dock_grad_kernel<<<grid, block, smsize, stream>>>(init_coord,
-                                                 pocket,
-                                                 pred_cross_dist,
-                                                 pred_holo_dist,
-                                                 values,
-                                                 torsions,
-                                                 masks,
-                                                 npred,
-                                                 npocket,
-                                                 nval,
-                                                 ngval,
-                                                 ntorsion,
-                                                 loss, tmp, blksz);
+                                                      pocket,
+                                                      pred_cross_dist,
+                                                      pred_holo_dist,
+                                                      values,
+                                                      torsions,
+                                                      masks,
+                                                      npred,
+                                                      npocket,
+                                                      nval,
+                                                      ngval,
+                                                      ntorsion,
+                                                      loss,
+                                                      tmp,
+                                                      blksz / sizeof(float));
 }
 }  // namespace dock

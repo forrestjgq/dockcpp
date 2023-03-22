@@ -140,13 +140,15 @@ def test_py(seq):
 
 def test_grad_seq(seq, ctx):
     vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, gt = loadtensors(seq)
-    t = ctx.dock_grad(vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist)
+    t, ok = ctx.dock_grad(vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist)
+    assert ok
     print(f't={t}')
     
 def test_seq(seq, ctx):
     vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, gt = loadtensors(seq)
     ctx = pydock.CudaContext(0) # cuda context on device 0
-    t = ctx.dock(vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist)
+    t, ok = ctx.dock(vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist)
+    assert ok
     print(f't={t}')
 
 
