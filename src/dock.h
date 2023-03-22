@@ -31,6 +31,7 @@ extern std::shared_ptr<dock::Request> createCudaDockGradRequest(
   int npocket,
   int nval,
   int ntorsion,
+  float eps,
   float *losses  // should be nval+1 floats, output
 );
 std::shared_ptr<Request> createCudaDockGradPerfRequest(

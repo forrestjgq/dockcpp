@@ -16,7 +16,7 @@ class CudaContext:
         self._cu_ctx = _cu.create_cuda_context(device)
         assert self._cu_ctx is not None, f"Create cuda context failed, make sure cuda device {device} is available"
 
-    def dock_grad(self, vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist):
+    def dock_grad(self, vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, eps=0.001):
         """calculate loss and related grad
 
         Args:
@@ -37,7 +37,7 @@ class CudaContext:
         masks = [[1 if m else 0 for m in item] for item in masks]
         masks = torch.tensor(masks,dtype=torch.uint8)
         torsions = torch.tensor(torsions, dtype=torch.int)
-        return _cu.dock_grad(self._cu_ctx, init_coord, pocket_coords, pred_cross_dist, pred_holo_dist, vt, torsions, masks)
+        return _cu.dock_grad(self._cu_ctx, init_coord, pocket_coords, pred_cross_dist, pred_holo_dist, vt, torsions, masks, eps)
 
 
     def dock(self, vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist):

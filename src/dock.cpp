@@ -237,6 +237,7 @@ int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
                         int npocket,
                         int nval,
                         int ntorsion,
+                        float eps,
                         float *losses,  // should be nval+1 floats, output
                         void *host,     // cuda host memory
                         int hostsz,
@@ -282,7 +283,7 @@ int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
     for (int i = 0; i < nval; i++) {
         float *start = valueBatch + (i + 1) * nval;
         memcpy(start, values, nval * sizeof(float));
-        start[i] += 0.01;
+        start[i] += eps;
     }
     int cpsize = (nval + 1) * nval * sizeof(float);
     float *gpu_valueBatch = (float *)tmp;
@@ -451,6 +452,7 @@ public:
                                  int npocket,
                                  int nval,
                                  int ntorsion,
+                                 float eps,
                                  float *losses  // should be nval+1 floats, output
 
     ) {
@@ -465,6 +467,7 @@ public:
         npocket_         = npocket;
         nval_            = nval;
         ntorsion_        = ntorsion;
+        eps_             = eps;
         losses_          = losses;
     }
     ~CudaDockGradRequest() override = default;
@@ -487,6 +490,7 @@ public:
                                 npocket_,
                                 nval_,
                                 ntorsion_,
+                                eps_,
                                 losses_,
                                 host,
                                 hostsz,
@@ -510,6 +514,7 @@ private:
     int npocket_;
     int nval_;
     int ntorsion_;
+    float eps_;
     float *losses_;
 };
 std::shared_ptr<Request> createCudaDockGradRequest(
@@ -524,6 +529,7 @@ std::shared_ptr<Request> createCudaDockGradRequest(
   int npocket,
   int nval,
   int ntorsion,
+  float eps,
   float *losses  // should be nval+1 floats, output
 
 ) {
@@ -538,6 +544,7 @@ std::shared_ptr<Request> createCudaDockGradRequest(
                                                  npocket,
                                                  nval,
                                                  ntorsion,
+                                                 eps,
                                                  losses);
 }
 class CudaDockGradPerfRequest : public Request {
@@ -592,6 +599,7 @@ public:
                                     npocket_,
                                     nval_,
                                     ntorsion_,
+                                    0.001,
                                     losses_,
                                     host,
                                     hostsz,

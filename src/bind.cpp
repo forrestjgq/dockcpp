@@ -55,7 +55,8 @@ Tensor dock_grad(std::shared_ptr<dock::Context> ctx,
                  Tensor pred_holo_dist,
                  Tensor values,
                  Tensor torsions,
-                 Tensor masks) {
+                 Tensor masks,
+                 float eps) {
     int npred = init_coord.sizes()[0];
     int npocket = pocket.sizes()[0];
     int nval    = values.sizes()[0];
@@ -73,9 +74,14 @@ Tensor dock_grad(std::shared_ptr<dock::Context> ctx,
                                                npocket,
                                                nval,
                                                ntorsions,
+                                               eps,
                                                losses.get());
     ctx->commit(req);
     auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+    auto ploss   = losses.get();
+    for (auto i = 1; i < nval + 1; i++) {
+        ploss[i] = (ploss[i] - ploss[0]) / eps;
+    }
     return torch::from_blob(losses.get(), { nval + 1 }, options).clone();
 }
 

@@ -591,7 +591,7 @@ __device__ __forceinline__ void modify_conformer(float *pos,
     tr             = tmp, tmp += 3;
     rot            = tmp, tmp += 3;
     DUMPARR(0, 0, "coords", 20, 3, pos);
-    DUMPARR(0, 0, "values", 1, 8, values);
+    DUMPARR(0, 0, "values", 1, nval, values);
 
     FOR_LOOP(i, 3) {
         tr[i]  = (SigmoidForward<float>(values[i]) - 0.5) * 10;
@@ -813,7 +813,7 @@ __device__ __forceinline__ void single_SF_loss(float *predict,            // npr
     __syncthreads();
 
     if (IS_MAIN_THREAD()) {
-        *out = *cross_dist_score + *dist_score * 5.0;
+        *out = *cross_dist_score + *dist_score * 1.0;
         DUMPARR(0, 0, "cross dist score", 1, 1, cross_dist_score);
         DUMPARR(0, 0, "dist score", 1, 1, dist_score);
         DUMPARR(0, 0, "loss", 1, 1, out);
@@ -993,6 +993,7 @@ void dock_grad_gpu(float *init_coord,
         assert(smsize <= devSize);
         smsize = 0;
     }
+    assert(ntorsion + 6 == nval);
 
     dim3 block(npred);
     dim3 grid(ngval);
