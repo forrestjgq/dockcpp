@@ -5,7 +5,9 @@
 #include <cuda_runtime.h>
 
 #include "math.h"
-
+#define REST __restrict__
+#define IN
+#define OUT
 namespace dock {
 #define DOCKDBG 0
 #define GRIDIDX 0
@@ -36,22 +38,22 @@ namespace dock {
 #define IS_MAIN_THREAD() IS_THREAD(0)
 #define PI               3.141592653589793
 
-__device__ void dumparr(int m, int n, uint8_t *p) {
+__device__ void dumparr(int m, int n, const uint8_t * REST p) {
     printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
     for (int i = 0; i < m; i++) {
         printf("%d: ", i);
-        uint8_t *p1 = p + i * n;
+        const uint8_t *p1 = p + i * n;
         for (int j = 0; j < n; j++) {
             printf("%d ", int(p1[j]));
         }
         printf("\n");
     }
 }
-__device__ void dumparr(int m, int n, float *p) {
+__device__ void dumparr(int m, int n, const float * REST p) {
     printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
     for (int i = 0; i < m; i++) {
         printf("%d: ", i);
-        float *p1 = p + i * n;
+        const float *p1 = p + i * n;
         for (int j = 0; j < n; j++) {
             printf("%f ", p1[j]);
         }
@@ -82,22 +84,22 @@ __device__ void dumparr(int m, int n, float *p) {
 __device__ __forceinline__ float3 sub3(float3 a, float3 b) {
     return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
 }
-__device__ __forceinline__ void sub3p(float *a, float *b, float *out) {
+__device__ __forceinline__ void sub3p(const float * REST a, const float * REST b, float * REST out) {
     out[0] = a[0] - b[0];
     out[1] = a[1] - b[1];
     out[2] = a[2] - b[2];
 }
-__device__ __forceinline__ void add3p(float *a, float *b, float *out) {
+__device__ __forceinline__ void add3p(const float * REST a, const float * REST b, float * REST out) {
     out[0] = a[0] + b[0];
     out[1] = a[1] + b[1];
     out[2] = a[2] + b[2];
 }
-__device__ __forceinline__ void sub3p(float *a, float *b) {
+__device__ __forceinline__ void sub3p(IN OUT float * REST a, const float * REST b) {
     a[0] = a[0] - b[0];
     a[1] = a[1] - b[1];
     a[2] = a[2] - b[2];
 }
-__device__ __forceinline__ void add3p(float *a, float *b) {
+__device__ __forceinline__ void add3p(IN OUT float * REST a, const float * REST b) {
     a[0] = a[0] + b[0];
     a[1] = a[1] + b[1];
     a[2] = a[2] + b[2];
@@ -114,7 +116,7 @@ __device__ __forceinline__ void SigmoidBackward(T dy, T y) {
 }
 // sum(abs(x)**ord)**(1./ord) where ord = 2
 template <int n>
-__device__ __forceinline__ float Norm2(float *d) {
+__device__ __forceinline__ float Norm2(const float * REST d) {
     float f = 0;
     for (int i = 0; i < n; i++) {
         float x = d[i];  // abs is ignored for ^2
@@ -205,7 +207,7 @@ def quaternion_to_matrix(quaternions):
     return o.reshape(quaternions.shape[:-1] + (3, 3))
 #endif
 // m: 3*3
-__device__ __forceinline__ void quaternion_to_matrix(float4 q, float *m) {
+__device__ __forceinline__ void quaternion_to_matrix(float4 q, OUT float * REST m) {
     float4 q2 = make_float4(q.x * q.x, q.y * q.y, q.z * q.z, q.w * q.w);
     float s   = reciprocal(q2.x + q2.y + q2.z + q2.w) * 2.0;
     m[0] = 1 - s * (q2.z + q2.w), m[1] = s * (q.y * q.z - q.w * q.x),
@@ -215,18 +217,18 @@ __device__ __forceinline__ void quaternion_to_matrix(float4 q, float *m) {
     m[8] = 1 - s * (q2.y + q2.z);
 }
 // p: source point, m: rotate matrix(3x3), n: n-th dim after rotate, value [0,2]
-__device__ __forceinline__ float rotate(float3 p, float *m, int n) {
+__device__ __forceinline__ float rotate(float3 p, const float * REST m, int n) {
     return p.x * m[n * 3 + 0] + p.y * m[n * 3 + 1] + p.z * m[n * 3 + 2];
 }
 // calc m1[m,n] @ m2[n,k]
 // if trans, calc m1[m,n] @ m2[k,n].T
 template <int m, int n, int k, bool trans>
-__device__ __forceinline__ void matmul(float *m1, float *m2, float *out) {
+__device__ __forceinline__ void matmul(const float * REST m1, const float * REST m2, float * REST out) {
     int s = 0;
     for (int r = 0; r < m; r++) {  // rows
         int row = r * n;
         for (int c = 0; c < k; c++) {  // columns
-            float *rp, *cp;
+            const float *rp, *cp;
             if (trans) {
                 rp        = &m1[row];
                 cp        = &m2[c * k];
@@ -249,12 +251,12 @@ __device__ __forceinline__ void matmul(float *m1, float *m2, float *out) {
     }
 }
 template <bool trans>
-__device__ __forceinline__ void matmul1(float *m1, float *m2, float *out, int m, int n, int k) {
+__device__ __forceinline__ void matmul1(const float * REST m1, const float * REST m2, float * REST out, int m, int n, int k) {
     int s = 0;
     for (int r = 0; r < m; r++) {  // rows
         int row = r * n;
         for (int c = 0; c < k; c++) {  // columns
-            float *rp, *cp;
+            const float *rp, *cp;
             if (trans) {
                 rp        = &m1[row];
                 cp        = &m2[c * k];
@@ -286,7 +288,7 @@ def gen_matrix_from_rot_vec(k, theta):
     return R
 #endif
 template <int n>
-__device__ __forceinline__ void gen_matrix_from_rot_vec(float *k, float *out, float theta) {
+__device__ __forceinline__ void gen_matrix_from_rot_vec(const float * REST k, float * REST out, float theta) {
     float sin = sinf(theta);
     float cos = 1.0 - cosf(theta);
     DUMPARR(1, 0, "K", 3, 3, k);
@@ -303,7 +305,7 @@ __device__ __forceinline__ void gen_matrix_from_rot_vec(float *k, float *out, fl
     }
     DUMPARR(1, 0, "R", 3, 3, out);
 }
-__device__ __forceinline__ void gen_matrix_from_rot_vec3(float *k, float *out, float theta) {
+__device__ __forceinline__ void gen_matrix_from_rot_vec3(const float * REST k, float * REST out, float theta) {
     float K[3][3] = { { 0., -k[2], k[1] }, { k[2], 0., -k[0] }, { -k[1], k[0], 0. } };
     gen_matrix_from_rot_vec<3>((float *)K, out, theta);
 }
@@ -350,12 +352,12 @@ __device__ __forceinline__ void modify_conformer_torsion_angles_single(float *po
 // mask_rotate: edge_size * n bool mask
 // torsion_updates: 1D array, size <edge_size>
 // require tmp: 9 * nedge floats
-__device__ __forceinline__ void modify_conformer_torsion_angles(float *pos,
-                                                                float *out,
-                                                                float *tmp,
-                                                                uint8_t *mask_rotate,
-                                                                int *edge_index,
-                                                                float *torsion_updates,
+__device__ __forceinline__ void modify_conformer_torsion_angles(const float * REST pos,
+                                                                OUT float * REST out,
+                                                                float * REST tmp,
+                                                                const uint8_t * REST mask_rotate,
+                                                                const int * REST edge_index,
+                                                                const float * REST torsion_updates,
                                                                 int n,
                                                                 int nedge) {
     float *rot_mats = tmp;
@@ -369,8 +371,8 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(float *pos,
             int v        = edge_index[idx_edge * 2 + 1];
 
             float theta   = torsion_updates[idx_edge];
-            float *pu     = pos + 3 * u;
-            float *pv     = pos + 3 * v;
+            const float *pu     = pos + 3 * u;
+            const float *pv     = pos + 3 * v;
             float *rot    = rot_mats + idx_edge * 9;
             float rot_vec[3];
             sub3p(pu, pv, rot_vec);
@@ -387,16 +389,16 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(float *pos,
     DUMPARR(0, 0, "mask 0", 1, n, mask_rotate);
     DUMPARR(0, 0, "mask 1", 1, n, mask_rotate + n);
     FOR_LOOP(i, n) {
-        float *p    = pos + 3 * i;
+        const float *p    = pos + 3 * i;
         float *outp = out + 3 * i;
         for (int k = 0; k < nedge; k++) {
-            uint8_t *mask = mask_rotate + n * k;
+            const uint8_t *mask = mask_rotate + n * k;
             if (mask[i] != 0) {
                 int u      = edge_index[k * 2];
                 int v      = edge_index[k * 2 + 1];
-                float *pu  = pos + 3 * u;
-                float *pv  = pos + 3 * v;
-                float *rot = rot_mats + k * 9;
+                const float *pu  = pos + 3 * u;
+                const float *pv  = pos + 3 * v;
+                const float *rot = rot_mats + k * 9;
                 float tp[3];
                 sub3p(p, pv, tp);
                 matmul<1, 3, 3, true>(tp, rot, outp);
@@ -434,13 +436,13 @@ def modify_conformer_torsion_angles(pos, edge_index, mask_rotate, torsion_update
 #endif
 
 template <typename T>
-__device__ __forceinline__ T det3x3(T *v) {
+__device__ __forceinline__ T det3x3(const T * REST v) {
     T a = v[0] * v[4] * v[8] + v[1] * v[5] * v[6] + v[2] * v[3] * v[7];
     T b = v[0] * v[5] * v[7] + v[1] * v[3] * v[8] + v[2] * v[4] * v[6];
     return a - b;
 }
 template <typename T>
-__device__ __forceinline__ void trans(T *in, T *out, int m, int n) {
+__device__ __forceinline__ void trans(const T * REST in, OUT T * REST out, int m, int n) {
     for (int inr = 0; inr < m; inr++) {
         T *instart  = in + inr * n;
         T *outstart = out + inr;
@@ -493,11 +495,11 @@ def rigid_transform_Kabsch_3D_torch(A, B):
 // t: 3x1 output
 // n: num of input coords a and b
 // called in main thread, require memory 2xnx3
-__device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(float *a,
-                                                                float *b,
-                                                                float *tmp,
-                                                                float *r,
-                                                                float *t,
+__device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const float * REST a,
+                                                                const float * REST b,
+                                                                float * REST tmp,
+                                                                OUT float * REST r,
+                                                                OUT float * REST t,
                                                                 int n) {
     // mean of a, b
 
@@ -508,7 +510,8 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(float *a,
     DUMP("B", n, 3, b);
     float ca[3] = { 0., 0., 0. };
     float cb[3] = { 0., 0., 0. };
-    float *tpa = a, *tpb = b;
+    const float * REST tpa = a;
+    const float *REST tpb = b;
     for (int i = 0; i < n * 3; i += 3) {
         add3p(ca, tpa + i);
         add3p(cb, tpb + i);
@@ -522,10 +525,10 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(float *a,
     DUMP("Center B", 1, 3, cb);
     // substract mean and turn nx3 -> 3xn
     for (int i = 0; i < 3; i++) {
-        tpa = at + i * n;
+        float * REST tp = at + i * n;
         for (int j = 0; j < n; j++) {
             // at[i, j] = a[j, i] - ca[i];
-            tpa[j] = a[j * 3 + i] - ca[i];
+            tp[j] = a[j * 3 + i] - ca[i];
         }
     }
     for (int i = 0; i < n; i++) {
@@ -576,15 +579,15 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(float *a,
 // edge_index: nedge x 2
 // mask_rotate: npos
 // tmp: tmp memory, 18 + max(9*nedge, 6 * npos) floats
-__device__ __forceinline__ void modify_conformer(float *pos,
-                                                 float *newpos,
-                                                 float *values,
-                                                 int *edge_index,
-                                                 uint8_t *mask_rotate,
+__device__ __forceinline__ void modify_conformer(const float * REST pos,
+                                                 OUT float * REST newpos,
+                                                 const float * REST values,
+                                                 const int * REST edge_index,
+                                                 const uint8_t * REST mask_rotate,
                                                  int npos,
                                                  int nval,
                                                  int nedge,
-                                                 float *tmp) {
+                                                 float * REST tmp) {
     float *center, *rot_mat, *tr, *rot;
     center         = tmp, tmp += 3;
     rot_mat        = tmp, tmp += 9;
@@ -623,7 +626,7 @@ __device__ __forceinline__ void modify_conformer(float *pos,
 
     // calc new pos
     FOR_LOOP(n, npos) {
-        float *p    = pos + 3 * n;
+        const float *p    = pos + 3 * n;
         float *newp = newpos + 3 * n;
         float np[3];
         sub3p(p, center, np);
@@ -697,14 +700,14 @@ __device__ __forceinline__ float smooth_l1_loss(float a, float b, float beta, fl
 // flags, nullptr or flag indicates if corresponding a and b should be calculated
 // mean: true for smooth with mean, or false for sum
 template <bool mean>
-__device__ __forceinline__ void smooth_l1_loss(float *a,
-                                               float *b,
-                                               float *tmp,
+__device__ __forceinline__ void smooth_l1_loss(const float * REST a,
+                                               const float * REST b,
+                                               float * REST tmp,
                                                float beta,
                                                int m,
                                                int n,
-                                               uint8_t *flags,
-                                               float *out) {
+                                               const uint8_t * REST flags,
+                                               float * REST out) {
     float rebeta = reciprocal(beta);
     FOR_LOOP(i, m * n) {
         if (flags == nullptr || flags[i] != 0) {
@@ -723,9 +726,9 @@ __device__ __forceinline__ void smooth_l1_loss(float *a,
         //     DUMPARR(0, 0, "smooth sum", m, n, flags);
         // }
         for (int i = 0; i < m * n; i++) {
-            sum += tmp[i];
             if (flags == nullptr || flags[i] != 0) {
                 total++;
+                sum += tmp[i];
             }
         }
         DBG("sum %f total %d mean %f\n", sum, total, sum / total);
@@ -761,15 +764,15 @@ def single_SF_loss(
 // require tmp :
 //   npred * ncross + npred * npred + 2 + ((npred * ncross + 3) >> 2)
 //    + npred * max(npred, ncross)
-__device__ __forceinline__ void single_SF_loss(float *predict,            // npredx3
-                                               float *pocket,             // npocketx3
-                                               float *dist_predict,       // npred x npocket
-                                               float *holo_dist_predict,  // npred x npred
+__device__ __forceinline__ void single_SF_loss(const float * REST predict,            // npredx3
+                                               const float * REST pocket,             // npocketx3
+                                               const float * REST dist_predict,       // npred x npocket
+                                               const float * REST holo_dist_predict,  // npred x npred
                                                float dist_threshold,
                                                int npred,
                                                int npocket,
-                                               float *tmp,
-                                               float *out) {
+                                               float * REST tmp,
+                                               float * REST out) {
     int ncross = npred * npocket;
     int nsq    = npred * npred;
     float *dist, *holo_dist, *cross_dist_score, *dist_score;
@@ -787,8 +790,8 @@ __device__ __forceinline__ void single_SF_loss(float *predict,            // npr
         // i / npred
         int idxpred = floor(i * divpocket);
         int idxpocket  = i - idxpred * npocket;
-        float *p1   = predict + 3 * idxpred;
-        float *p2   = pocket + 3 * idxpocket;
+        const float *p1   = predict + 3 * idxpred;
+        const float *p2   = pocket + 3 * idxpocket;
         dist[i]     = norm3df(p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]);
         flags[i]       = dist_predict[i] < dist_threshold ? 1 : 0;
     }
@@ -797,8 +800,8 @@ __device__ __forceinline__ void single_SF_loss(float *predict,            // npr
         int idxpred = floor(i * divpred);
         int remain  = i - idxpred * npred;
         if (remain < npred) {
-            float *p1   = predict + 3 * idxpred;
-            float *p2   = predict + 3 * remain;
+            const float *p1   = predict + 3 * idxpred;
+            const float *p2   = predict + 3 * remain;
             holo_dist[i] = norm3df(p1[0] - p2[0], p1[1] - p2[1], p1[2] - p2[2]);
         }
     }
@@ -825,19 +828,19 @@ __device__ __forceinline__ void single_SF_loss(float *predict,            // npr
 //          18 + max(9*nedge, 6 * npos),
 //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred * max(npred, npocket)
 //    )
-__global__ void dock_kernel(float *init_coord,
-                            float *pocket,
-                            float *pred_cross_dist,
-                            float *pred_holo_dist,
-                            float *values,
-                            int *torsions,
-                            uint8_t *masks,
+__global__ void dock_kernel(const float * REST init_coord,
+                            const float * REST pocket,
+                            const float * REST pred_cross_dist,
+                            const float * REST pred_holo_dist,
+                            const float * REST values,
+                            const int * REST torsions,
+                            const uint8_t * REST masks,
                             int npred,
                             int npocket,
                             int nval,
                             int ntorsion,
-                            float *loss, 
-                            float *dev) {
+                            OUT float * REST loss, 
+                            float * REST dev) {
     extern __shared__ float sm[];
 
     float *new_pos, *tmp;
@@ -857,20 +860,20 @@ __global__ void dock_kernel(float *init_coord,
     //    + npred * max(npred, npocket)
     single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss);
 }
-__global__ void dock_grad_kernel(float *init_coord,
-                                 float *pocket,
-                                 float *pred_cross_dist,
-                                 float *pred_holo_dist,
-                                 float *values,
-                                 int *torsions,
-                                 uint8_t *masks,
+__global__ void dock_grad_kernel(const float * REST init_coord,
+                                 const float * REST pocket,
+                                 const float * REST pred_cross_dist,
+                                 const float * REST  pred_holo_dist,
+                                 const float * REST values,
+                                 const int * REST torsions,
+                                 const uint8_t * REST masks,
                                  int npred,
                                  int npocket,
                                  int nval,
                                  int ngval,
                                  int ntorsion,
-                                 float *loss,
-                                 float *dev,
+                                 OUT float * REST loss,
+                                 float * REST dev,
                                  int blksz /*in floats*/) {
     extern __shared__ float sm[];
     int group      = blockIdx.x;
@@ -883,7 +886,7 @@ __global__ void dock_grad_kernel(float *init_coord,
         }
         new_pos = tmp, tmp += npred * 3;
 
-        float *vals = values + group * nval;
+        const float *vals = values + group * nval;
         if (group == 0) {
             DUMPARR(0, 0, "input masks", ntorsion, npred, masks);
         }

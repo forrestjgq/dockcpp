@@ -560,7 +560,6 @@ public:
             void *host   = cudaCtx->hostMemory(hostsz);
             auto stream  = cudaCtx->stream();
             int smsize   = cudaCtx->smsize();
-            auto start   = now();
             cudasz       = dock_grad_cpu_async(init_coord_,
                                          pocket_,
                                          pred_cross_dist_,
@@ -583,6 +582,7 @@ public:
             assert(cudasz >= 10);
             auto device  = cudaCtx->requireDeviceMemory(cudasz);
             assert(device != nullptr);
+            auto start   = now();
             for (auto i = 0; i < loop_; i++) {
                 dock_grad_cpu_async(init_coord_,
                                     pocket_,
@@ -611,6 +611,8 @@ public:
             auto end = now();
             auto du  = end - start;
             qps_ = loop_ * 1000 / du;
+            std::cout << "start " << start << " end " << end << " du " << du << " loop " << loop_
+                      << " QPS " << qps_ << std::endl;
         }
     }
     std::string getProp(const std::string &key) override {

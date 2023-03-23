@@ -6,7 +6,7 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 FILE(GLOB_RECURSE TEST_SRC_FILES  *.c *.cc *.cpp)
 # list(APPEND ${LNK_LIBS} pthread)
-
+add_definitions("-D_GLIBCXX_USE_CXX11_ABI=0")
 foreach(test_src ${TEST_SRC_FILES})
     GET_FILENAME_COMPONENT(ONE_TEST_TARGET ${test_src} NAME_WE)
     cuda_add_executable(${ONE_TEST_TARGET} ${test_src})
