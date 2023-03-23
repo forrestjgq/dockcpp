@@ -43,7 +43,7 @@ int main() {
                                                    NR_POCKET,
                                                    sizeof(values) / sizeof(values[0]),
                                                    sizeof(torsions) / (2 * sizeof(torsions[0])),
-                                                   /*100000*/1);
+                                                   100000);
 
     ctx->commit(req);
     std::cout << "QPS: " << req->getProp("qps") << std::endl;
