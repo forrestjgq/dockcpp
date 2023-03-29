@@ -9,7 +9,7 @@
 #define IN
 #define OUT
 namespace dock {
-#define DOCKDBG 1
+#define DOCKDBG 0
 #define GRIDIDX 0
 #define INGRID  (blockIdx.x == GRIDIDX)
 #if DOCKDBG
@@ -359,7 +359,7 @@ __device__ __forceinline__ void modify_conformer_torsion_angles_single(float *po
 // mask_rotate: edge_size * n bool mask
 // torsion_updates: 1D array, size <edge_size>
 // require tmp: 9 * nedge floats
-__device__ __forceinline__ void modify_conformer_torsion_angles(
+__device__ __forceinline__ void modify_conformer_torsion_angles_concurrent(
     const float *REST pos, OUT float *REST out, float *REST tmp, const uint8_t *REST mask_rotate,
     const int *REST edge_index, const float *REST torsion_updates, int n, int nedge) {
     float *rot_mats = tmp;
@@ -408,6 +408,50 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(
             }
         }
     }
+    __syncthreads();
+    DUMPARR(0, 0, "modify conformer ret pos", n, 3, out);
+}
+__device__ __forceinline__ void modify_conformer_torsion_angles(
+    const float *REST pos, OUT float *REST out, float *REST tmp, const uint8_t *REST mask_rotate,
+    const int *REST edge_index, const float *REST torsion_updates, int n, int nedge) {
+    float *rot_mats = tmp;
+    tmp += nedge * 9;
+    // copy to output
+    FOR_LOOP(i, n * 3) {
+        out[i] = pos[i];
+    }
+    __syncthreads();
+    if (IS_MAIN_THREAD()) {
+        for (int k = 0; k < nedge; k++ ) {
+            int idx_edge = k;
+            int u        = edge_index[idx_edge * 2];
+            int v        = edge_index[idx_edge * 2 + 1];
+
+            float theta     = torsion_updates[idx_edge];
+            const float *pu = pos + 3 * u;
+            const float *pv = pos + 3 * v;
+            float rot_vec[3];
+            float rot[9];
+            sub3p(pu, pv, rot_vec);
+            DUMP("rot vec", 1, 3, rot_vec);
+            float norm = rnorm3df(rot_vec[0], rot_vec[1], rot_vec[2]);
+            rot_vec[0] *= norm, rot_vec[1] *= norm, rot_vec[2] *= norm;
+            DUMP("rot vec norm", 1, 3, rot_vec);
+            gen_matrix_from_rot_vec3(rot_vec, rot, theta);
+            DUMP("rot mat", 3, 3, rot);
+            const uint8_t *mask = mask_rotate + n * k;
+            for (int i = 0; i < n; i++) {
+                if (mask[i] != 0) {
+                    float *outp = out + 3 * i;
+                    float tp[3];
+                    sub3p(outp, pv, tp);
+                    matmul<1, 3, 3, true>(tp, rot, outp);
+                    add3p(outp, pv);
+                }
+            }
+        }
+    }
+
     __syncthreads();
     DUMPARR(0, 0, "modify conformer ret pos", n, 3, out);
 }
