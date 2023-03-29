@@ -491,6 +491,26 @@ def rigid_transform_Kabsch_3D_torch(A, B):
     t = -R @ centroid_A + centroid_B
     return R, t
 #endif
+__device__ __forceinline__ int ensure_same(int id, float *src, float *dst, int n) {
+    int fail = 0;
+    for (int i = 0; i < n; i++) {
+        float diff = abs(src[i] - dst[i]);
+        if (diff >= 0.1) {
+            if (id > 1) {
+                diff = abs(-1.f * src[i] - dst[i]);
+            }
+        }
+        if (diff >= 0.1) {
+            printf("id %d diff %f i %d src %f dst %f\n", id, diff, i, src[i], dst[i]);
+            fail = 1;
+        }
+        src[i] = dst[i];
+    }
+    if (fail > 0) {
+        printf("fail for %d in block %d\n", id, blockIdx.x);
+    }
+    return fail;
+}
 // a, b: nx3, input
 // at, bt: 3xn, tmp mem
 // r: 3x3 output
@@ -500,7 +520,7 @@ def rigid_transform_Kabsch_3D_torch(A, B):
 __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const float *REST a,
                                                                 const float *REST b,
                                                                 float *REST tmp, OUT float *REST r,
-                                                                OUT float *REST t, int n) {
+                                                                OUT float *REST t, int n, float *svdhuv, int *failed) {
     // mean of a, b
 
     float *at, *bt;
@@ -539,16 +559,22 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const float *RES
 
     float h[9];
     matmul1<false>(at, bt, h, 3, n, 3);
+    float *svdh = svdhuv;
+    float *svdu = svdhuv + 9;
+    float *svdv = svdhuv + 18;
+    int fail = ensure_same(1, h, svdh, 9);
 
     float u[9], s[3], v[9], vt[9];
     DUMP("H", 3, 3, h);
-    svd(h, u, s, v);
+    svd(svdh, u, s, v);
     DUMP("U", 3, 3, u);
     DUMP("S", 1, 3, s);
     DUMP("V", 3, 3, v);
     // svd already output torch svd Vt.T
     // trans<float>(v, v, 3, 3);
     DUMP("Vt", 3, 3, v);
+    fail += ensure_same(2, u, svdu, 9);
+    fail += ensure_same(3, v, svdv, 9);
 
     matmul<3, 3, 3, true>(v, u, r);
     DUMP("r", 3, 3, r);
@@ -571,6 +597,11 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const float *RES
     t[2] += cb[2];
     DUMP("R", 3, 3, r);
     DUMP("t", 3, 3, t);
+    if (fail > 0) {
+        *failed = 1;
+    } else {
+        *failed = 0;
+    }
 }
 
 // pos: npos x 3
@@ -583,7 +614,7 @@ __device__ __forceinline__ void modify_conformer(const float *REST pos, OUT floa
                                                  const float *REST values,
                                                  const int *REST edge_index,
                                                  const uint8_t *REST mask_rotate, int npos,
-                                                 int nval, int nedge, float *REST tmp) {
+                                                 int nval, int nedge, float *REST tmp, float *svdhuv, int *failed) {
     float *center, *rot_mat, *tr, *rot;
     center         = tmp, tmp += 3;
     rot_mat        = tmp, tmp += 9;
@@ -644,7 +675,7 @@ __device__ __forceinline__ void modify_conformer(const float *REST pos, OUT floa
           newpos, flexpos, tmp, mask_rotate, edge_index, values + 6, npos, nedge);
         if (IS_MAIN_THREAD()) {
             // require 2 x npos x 3 floats
-            rigid_transform_Kabsch_3D_torch(flexpos, newpos,  tmp, r, t, npos);
+            rigid_transform_Kabsch_3D_torch(flexpos, newpos,  tmp, r, t, npos, svdhuv, failed);
             matmul1<true>(flexpos, r, newpos, npos, 3, 3);
             FOR_LOOP(n, npos) {
                 float *outp = newpos + n * 3;
@@ -837,7 +868,7 @@ __global__ void dock_kernel(const float *REST init_coord, const float *REST pock
     }
 
     // require 18 + max(9*nedge, 6 * npos) floats
-    modify_conformer(init_coord, new_pos, values, torsions, masks, npred, nval, ntorsion, tmp);
+    modify_conformer(init_coord, new_pos, values, torsions, masks, npred, nval, ntorsion, tmp, nullptr, nullptr);
     // require tmp npred *(npocket + npred + max(npred, npocket)+ 2) * float + npred*npocket
     // require tmp :
     //   npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
@@ -852,7 +883,7 @@ __global__ void dock_grad_kernel(const float *REST init_coord, const float *REST
                                  const float *REST pred_holo_dist, const float *REST values,
                                  const int *REST torsions, const uint8_t *REST masks, int npred,
                                  int npocket, int nval, int ngval, int ntorsion,
-                                 OUT float *REST loss, float *REST dev, int blksz /*in floats*/) {
+                                 OUT float *REST loss, float *REST dev, int blksz /*in floats*/, float *svds, int *fails) {
 #if 1
     const float *sm_init_coord = init_coord, *sm_pocket = pocket, *sm_pred_cross_dist = pred_cross_dist, *sm_pred_holo_dist = pred_holo_dist;
     const int  *sm_torsions = torsions;
@@ -922,7 +953,11 @@ __global__ void dock_grad_kernel(const float *REST init_coord, const float *REST
         new_pos = tmp, tmp += npred * 3;
 
         const float *vals = values + group * nval;
-        modify_conformer(sm_init_coord, new_pos, vals, sm_torsions, sm_masks, npred, nval, ntorsion, tmp);
+        float *svdhuv = nullptr;
+        if (svds != nullptr) {
+            svdhuv =svds + group * 27;
+        }
+        modify_conformer(sm_init_coord, new_pos, vals, sm_torsions, sm_masks, npred, nval, ntorsion, tmp, svdhuv, fails + group);
         single_SF_loss(
           new_pos, sm_pocket, sm_pred_cross_dist, sm_pred_holo_dist, 6, npred, npocket, tmp, loss + group);
     }
@@ -986,7 +1021,7 @@ void dock_grad_gpu(float *init_coord, float *pocket, float *pred_cross_dist, flo
                    float *loss,  // ngval float array
                    float *dev,
                    int &devSize,  // in bytes
-                   cudaStream_t stream, int smMaxSize) {
+                   cudaStream_t stream, int smMaxSize, float *svds, int *fails) {
     //    npred * 3 + max(
     //          18 + max(9*nedge, 6 * npos),
     //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
@@ -1019,6 +1054,6 @@ void dock_grad_gpu(float *init_coord, float *pocket, float *pred_cross_dist, flo
     dim3 grid(ngval);
     dock_grad_kernel<<<grid, block, 0, stream>>>(
         init_coord, pocket, pred_cross_dist, pred_holo_dist, values, torsions, masks, npred,
-        npocket, nval, ngval, ntorsion, loss, tmp, blksz / sizeof(float));
+        npocket, nval, ngval, ntorsion, loss, tmp, blksz / sizeof(float), svds, fails);
 }
 }  // namespace dock

@@ -61,13 +61,13 @@ std::shared_ptr<dock::Request> dock_create_session(std::shared_ptr<dock::Context
     return nullptr;
 }
 std::tuple<Tensor, bool> dock_submit(std::shared_ptr<dock::Context> ctx,
-                                   std::shared_ptr<dock::Request> session, Tensor values) {
+                                   std::shared_ptr<dock::Request> session, Tensor values, Tensor svds) {
     
 
     int nval    = values.sizes()[0];
     auto losses = std::shared_ptr<float>(new float[nval + 1]);
     memset(losses.get(), 0, (nval + 1)*sizeof(float));
-    auto req    = dock::createCudaDockGradSubmitRequest(session, (float *)values.data_ptr(), losses.get());
+    auto req    = dock::createCudaDockGradSubmitRequest(session, (float *)values.data_ptr(), losses.get(), (float *)svds.data_ptr());
     ctx->commit(req);
 
     torch::Tensor t;

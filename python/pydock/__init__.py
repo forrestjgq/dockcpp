@@ -37,7 +37,7 @@ class CudaContext:
         torsions = torch.tensor(torsions, dtype=torch.int)
         return _cu.create_dock_session(self._cu_ctx, init_coord, pocket_coords, pred_cross_dist, pred_holo_dist, torsions, masks, eps, nval)
 
-    def session_submit(self, session, vt):
+    def session_submit(self, session, vt, svd):
         """_summary_
 
         Args:
@@ -49,7 +49,7 @@ class CudaContext:
             torch.Tensor: 1 dimension tensor, length should be vt.shape[0]+1 the first element should be the loss, 
                           the rest will be the grad value for each value in vt 
         """
-        return _cu.dock_submit(self._cu_ctx, session, vt);
+        return _cu.dock_submit(self._cu_ctx, session, vt, svd);
         
     def dock_grad(self, vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, eps=0.001):
         """calculate loss and related grad

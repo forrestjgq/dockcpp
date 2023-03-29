@@ -2,10 +2,11 @@
 本脚本用于对单个口袋和多个小分子（smiles或带初始构象的mol文件）进行对接
 """
 import torch
+import copy
 import math
 import os
 import numpy as np
-from dist_to_coords_utils import modify_conformer
+from dist_to_coords_utils import modify_conformer, modify_conformer_svd
 import sys
 import torch.nn.functional as F
 import pydock
@@ -151,16 +152,28 @@ def test_seq(seq, ctx):
     t, ok = ctx.dock(vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist)
     assert ok
     print(f't={t}')
-
+def get_svd(init_coord, vt, torsions, masks):
+    h, u, v = modify_conformer_svd(init_coord, vt, torsions, masks)
+    h = h.reshape(-1)
+    u = u.reshape(-1)
+    v = v.reshape(-1)
+    return torch.cat((h, u, v))
 
 def test_session_seq(seq, ctx):
+    eps = 0.01
     vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, gt = loadtensors(seq)
-    s = ctx.new_session(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, len(vt))
+    svd = get_svd(init_coord, vt, torsions, masks)
+    for i in range(len(vt)):
+        t = copy.deepcopy(vt)
+        t[i] += eps
+        svd1 = get_svd(init_coord, t, torsions, masks)
+        svd = torch.cat((svd, svd1))
+    s = ctx.new_session(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, len(vt), eps=eps)
     # gt = [1.7734, 1.7735, 1.7734, 1.7738, 1.7739, 1.7743, 1.7733, 1.7734, 2.5332]
     # gt = [1.7734, 1.7734, 1.7735, 1.7734, 1.7738, 1.7739, 1.7743, 1.7733, 1.7734]
     gt = [ 1.7734,  0.0138,  0.0484, -0.0246,  0.4230,  0.5088,  0.8847, -0.0858, -0.0420]
-    for i in range(10000):
-        t, ok = ctx.session_submit(s, vt)
+    for i in range(1):
+        t, ok = ctx.session_submit(s, vt, svd)
         assert ok
         # print(f'i={i} t={t}')
         failed = False

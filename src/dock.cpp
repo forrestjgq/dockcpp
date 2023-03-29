@@ -49,7 +49,7 @@ void dock_grad_gpu(float *init_coord, float *pocket, float *pred_cross_dist, flo
                    float *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
                    int ngval, int ntorsion,
                    float *loss,  // ngval float array
-                   float *dev, int &devSize, cudaStream_t stream, int smsize);
+                   float *dev, int &devSize, cudaStream_t stream, int smsize, float *svds, int *fails);
 static std::uint64_t now() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::high_resolution_clock::now().time_since_epoch())
@@ -168,10 +168,10 @@ void dock_grad_session(float *&init_coord,       // npred * 3 floats
     int smsize = 0; // eval how much tmp memory required for dock_grad_gpu
     dock_grad_gpu(nullptr, nullptr, nullptr, nullptr,
                   nullptr, nullptr, nullptr, npred, npocket, nval, nval + 1, ntorsion,
-                  nullptr,  nullptr, smsize, nullptr, 0);
+                  nullptr,  nullptr, smsize, nullptr, 0, nullptr, nullptr);
     int valuesz = nval * (nval + 1) * sizeof(float); // in bytes, for values
     int losssz = (nval + 1) * sizeof(float); // for output loss
-    hostsz = hdrsz + valuesz + losssz;
+    hostsz = hdrsz + valuesz + losssz + (nval+1) * 27 * sizeof(float);
     cudasz = smsize + hostsz;
     return;
 }
@@ -186,7 +186,7 @@ void dock_grad_exec(float *init_coord,       // npred * 3 floats
                         int npred, int npocket, int nval, int ntorsion, float eps,
                         float *&outloss,  // output losses on pin memory
                         void *host,     // cuda host memory
-                        void *device, int cudasz, cudaStream_t stream, int smsize) {
+                        void *device, int cudasz, cudaStream_t stream, int smsize, float *svds, int * outfails) {
     // std::cout << "cudasz in exec " << cudasz << std::endl;
     cudaMemsetAsync(device, 0, cudasz, stream);
     uint8_t *tmp     = (uint8_t *)device;
@@ -206,20 +206,30 @@ void dock_grad_exec(float *init_coord,       // npred * 3 floats
     valueBatch = (float *)tmp; // set to device memory
     hosttmp += cpsize, tmp += cpsize;
 
+    int svdsz = (nval+1) * sizeof(float) * 27;
+    cudaMemcpyAsync(tmp, svds, svdsz, cudaMemcpyHostToDevice, stream);
+    svds = (float *)tmp, tmp += svdsz;
+
+    int failsz = (nval+1) * sizeof(int);
+    cudaMemsetAsync(tmp, failsz, 0);
+    int *devfails = (int *)tmp;
+    tmp += failsz;
+
     float *loss; // output
     int losssz = (nval + 1) * sizeof(float);
     loss = (float *)tmp, tmp += losssz;
 
     // how much left for kernel tmp cuda mem
-    int devsize = cudasz - cpsize - losssz;
+    int devsize = cudasz - cpsize - losssz - svdsz;
 
     // must be last one to copy for alignment
     dock_grad_gpu(init_coord, pocket, pred_cross_dist, pred_holo_dist,
                   valueBatch, torsions, masks, npred, npocket, nval, nval + 1, ntorsion,
-                  loss, (float *)tmp, devsize, stream, smsize);
+                  loss, (float *)tmp, devsize, stream, smsize, svds, devfails);
     
     outloss = (float *)hosttmp;
     cudaMemcpyAsync(outloss, loss, (nval + 1) * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(outfails, devfails, (nval + 1) * sizeof(int), cudaMemcpyDeviceToHost);
 }
 // return 1 for lacking of host memory
 int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
@@ -289,7 +299,7 @@ int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
     // must be last one to copy for alignment
     dock_grad_gpu(gpu_init_coord, gpu_pocket, gpu_pred_cross_dist, gpu_pred_holo_dist,
                   gpu_valueBatch, gpu_torsions, gpu_masks, npred, npocket, nval, nval + 1, ntorsion,
-                  loss, eval ? nullptr : (float *)tmp, devsize, stream, smsize);
+                  loss, eval ? nullptr : (float *)tmp, devsize, stream, smsize, nullptr, nullptr);
     if (!eval) {
         cudaMemcpyAsync(losses, loss, (nval + 1) * sizeof(float), cudaMemcpyDeviceToHost);
         return 0;
@@ -469,10 +479,11 @@ std::shared_ptr<Request> createCudaDockGradSessionRequest(
 #define OFFSETPTR(p, n)  ((void *)(((uint8_t*)(p)) + (n)))
 class CudaDockGradSubmitRequest : public Request {
 public:
-    explicit CudaDockGradSubmitRequest(std::shared_ptr<Request> session, float *values, float *losses) {
+    explicit CudaDockGradSubmitRequest(std::shared_ptr<Request> session, float *values, float *losses, float *svds) {
         session_ = std::dynamic_pointer_cast<CudaDockGradSessionRequest>(session);
         values_ = values;
         losses_ = losses;
+        svds_ = svds;
     }
     ~CudaDockGradSubmitRequest() override = default;
     void run(Context *ctx) override {
@@ -487,24 +498,40 @@ public:
             auto stream = cudaCtx->stream();
             int smsize  = cudaCtx->smsize();
             float *outloss = nullptr;
+            int ng = session_->nval_+1;
+            int *fails = new int[ng];
+            memset(fails, 0, sizeof(int) * ng);
             dock_grad_exec(session_->init_coord_, session_->pocket_, session_->pred_cross_dist_,
                            session_->pred_holo_dist_, values_, session_->torsions_,
                            session_->masks_, session_->npred_, session_->npocket_, session_->nval_,
                            session_->ntorsion_, session_->eps_, outloss,
                            OFFSETPTR(session_->host_, session_->hdr_size_),
                            OFFSETPTR(session_->device_, session_->hdr_size_),
-                           session_->cuda_size_ - session_->hdr_size_, stream, smsize);
+                           session_->cuda_size_ - session_->hdr_size_, stream, smsize, svds_, fails);
 
             auto err = cudaCtx->sync();
             if (cudaSuccess != err) {
                 std::cerr << "cuda err " << err << " msg: " << cudaGetErrorString(err) << std::endl;
                 result_ = RequestResult::Fail;
             } else {
-                auto eps = session_->eps_;
-                for (auto i = 1; i < session_->nval_+1; i++) {
-                    outloss[i] = (outloss[i] - outloss[0]) / eps;
+                bool failed = false;
+                for (int i = 0; i < ng; i++) {
+                    if (fails[i] > 0) {
+                        std::cerr << "fail at " << i << " val " << fails[i] << std::endl;
+                        failed = true;
+                        break;
+                    }
                 }
-                memcpy(losses_, outloss, (session_->nval_+1) * sizeof(float));
+                if (failed) {
+                    result_ = RequestResult::Fail;
+                } else {
+                    auto eps = session_->eps_;
+                    for (auto i = 1; i < session_->nval_+1; i++) {
+                        outloss[i] = (outloss[i] - outloss[0]) / eps;
+                    }
+                    memcpy(losses_, outloss, (session_->nval_+1) * sizeof(float));
+
+                }
             }
 
         }
@@ -513,11 +540,12 @@ public:
 private:
     float *values_ = nullptr;
     float *losses_ = nullptr;
+    float *svds_ = nullptr;
     std::shared_ptr<CudaDockGradSessionRequest> session_;
 };
 std::shared_ptr<Request> createCudaDockGradSubmitRequest(std::shared_ptr<Request> request,
-                                                         float *values, float *losses) {
-    return std::make_shared<CudaDockGradSubmitRequest>(request, values, losses);
+                                                         float *values, float *losses, float *svds) {
+    return std::make_shared<CudaDockGradSubmitRequest>(request, values, losses, svds);
 }
 class CudaDockGradRequest : public Request {
 public:

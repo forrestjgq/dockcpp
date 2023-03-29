@@ -21,24 +21,24 @@ def axis_angle_to_quaternion(axis_angle):
     angles = torch.norm(axis_angle, p=2, dim=-1, keepdim=True)
     half_angles = 0.5 * angles
     eps = 1e-6
-    print(f'axis {axis_angle} angles {angles} half {half_angles}')
+    # print(f'axis {axis_angle} angles {angles} half {half_angles}')
     small_angles = angles.abs() < eps
-    print(f'small angles {small_angles}')
+    # print(f'small angles {small_angles}')
     sin_half_angles_over_angles = torch.empty_like(angles)
     sin_half_angles_over_angles[~small_angles] = (
             torch.sin(half_angles[~small_angles]) / angles[~small_angles]
     )
-    print(f'sins 1 {sin_half_angles_over_angles}')
+    # print(f'sins 1 {sin_half_angles_over_angles}')
     # for x small, sin(x/2) is about x/2 - (x/2)^3/6
     # so sin(x/2)/x is about 1/2 - (x*x)/48
     sin_half_angles_over_angles[small_angles] = (
             0.5 - (angles[small_angles] * angles[small_angles]) / 48
     )
-    print(f'sins 2 {sin_half_angles_over_angles}')
+    # print(f'sins 2 {sin_half_angles_over_angles}')
     quaternions = torch.cat(
         [torch.cos(half_angles), axis_angle * sin_half_angles_over_angles], dim=-1
     )
-    print(f'qu: {quaternions}')
+    # print(f'qu: {quaternions}')
     return quaternions
 
 
@@ -86,6 +86,39 @@ def axis_angle_to_matrix(axis_angle):
     """
     return quaternion_to_matrix(axis_angle_to_quaternion(axis_angle))
 
+def rigid_transform_Kabsch_3D_torch_svd(A, B):
+    # R = 3x3 rotation matrix, t = 3x1 column vector
+    # This already takes residue identity into account.
+    # print(f'SVD A shape {A.shape} B shape {B.shape}')
+
+    assert A.shape[1] == B.shape[1]
+    num_rows, num_cols = A.shape
+    if num_rows != 3:
+        raise Exception(f"matrix A is not 3xN, it is {num_rows}x{num_cols}")
+    num_rows, num_cols = B.shape
+    if num_rows != 3:
+        raise Exception(f"matrix B is not 3xN, it is {num_rows}x{num_cols}")
+
+    # print(f'A {A}\nB {B}')
+    # find mean column wise: 3 x 1
+    centroid_A = torch.mean(A, axis=1, keepdims=True)
+    centroid_B = torch.mean(B, axis=1, keepdims=True)
+
+    # subtract mean
+    Am = A - centroid_A
+    Bm = B - centroid_B
+
+    H = Am @ Bm.T
+
+    # print(f'Center A {centroid_A} B {centroid_B}')
+    # print(f'Am {Am}\nBm {Bm}')
+    print(f'H={H}')
+    # find rotation
+    U, S, Vt = torch.linalg.svd(H)
+    Vt = Vt.T.clone()
+    print(f'U={U}')
+    print(f'V={Vt}')
+    return H, U, Vt
 
 def rigid_transform_Kabsch_3D_torch(A, B):
     # R = 3x3 rotation matrix, t = 3x1 column vector
@@ -135,6 +168,35 @@ def rigid_transform_Kabsch_3D_torch(A, B):
     print(f't {t}')
     return R, t
 
+def modify_conformer_svd(coords, values, edge_index, mask_rotate):
+    # print(f'coords {coords}')
+    # print(f'values {values}')
+    # print(f'values {values.shape}')
+    # print(f'edge {edge_index}')
+    # print(f'mask {len(mask_rotate)} {[s.shape for s in mask_rotate]}')
+    tr_update = (torch.sigmoid(values[:3]) - 0.5) * 10
+    rot_update = (torch.sigmoid(values[3:6]) - 0.5) * np.pi * 2
+    # torsion_updates = (torch.sigmoid(values[6:]) - 0.5) * np.pi * 2
+    # rot_update = values[3:6]
+    torsion_updates = values[6:]
+
+
+    # print(f'rot update {rot_update} sq {rot_update.squeeze()}')
+    lig_center = torch.mean(coords, dim=0, keepdim=True)
+    # print(f'lig center {lig_center.shape} {lig_center}')
+    rot_mat = axis_angle_to_matrix(rot_update.squeeze())
+    rigid_new_pos = (coords - lig_center) @ rot_mat.T + tr_update + lig_center
+    # print(f'tr update {tr_update} + center {tr_update + lig_center}')
+    # print(f'rot update {rot_update}')
+    # print(f'lig center {lig_center}')
+    # print(f'rot_mat {rot_mat}')
+    # print(f'rigid new pos {rigid_new_pos}')
+
+    flexible_new_pos = modify_conformer_torsion_angles(rigid_new_pos,
+                                                        edge_index,
+                                                        mask_rotate,
+                                                        torsion_updates).to(rigid_new_pos.device)
+    return rigid_transform_Kabsch_3D_torch_svd(flexible_new_pos.T, rigid_new_pos.T)
 
 def modify_conformer(coords, values, edge_index, mask_rotate):
     print(f'coords {coords}')
@@ -216,19 +278,19 @@ def modify_conformer_torsion_angles(pos, edge_index, mask_rotate, torsion_update
         # assert mask_rotate[idx_edge, v]
 
         rot_vec = pos[u] - pos[v]  # convention: positive rotation if pointing inwards
-        print(f'idx edge {idx_edge} u {u} v {v} rot_vec {rot_vec}')
+        # print(f'idx edge {idx_edge} u {u} v {v} rot_vec {rot_vec}')
         rot_vec = rot_vec / torch.norm(rot_vec)  # idx_edge!
-        print(f'rot_vec norm {rot_vec}')
-        print(f'torsion updates {torsion_updates}')
+        # print(f'rot_vec norm {rot_vec}')
+        # print(f'torsion updates {torsion_updates}')
         rot_mat = gen_matrix_from_rot_vec(rot_vec, torsion_updates[idx_edge])
-        print(f'rot_mat {rot_mat}')
+        # print(f'rot_mat {rot_mat}')
 
-        print(f'idx {idx_edge} before {pos}\nmask {mask_rotate[idx_edge]}')
+        # print(f'idx {idx_edge} before {pos}\nmask {mask_rotate[idx_edge]}')
 
         pos[mask_rotate[idx_edge]] = (pos[mask_rotate[idx_edge]] - pos[v]) @ rot_mat.T + pos[v]
-        print(f'idx {idx_edge} after {pos}')
+        # print(f'idx {idx_edge} after {pos}')
 
-    print(f'modify conformer ret pos {pos}')
+    # print(f'modify conformer ret pos {pos}')
     return pos
 
 
@@ -236,11 +298,11 @@ def gen_matrix_from_rot_vec(k, theta):
     K = torch.zeros((3, 3), device=k.device)
     K[[1, 2, 0], [2, 0, 1]] = -k
     K[[2, 0, 1], [1, 2, 0]] = k
-    print(f"theta {theta} K: {K}")
-    print(f'eye {torch.eye(3)} sin {torch.sin(theta)} cos {torch.cos(theta)} 1-cos {1 - torch.cos(theta)}')
-    print(f"KK {torch.matmul(K, K)}")
+    # print(f"theta {theta} K: {K}")
+    # print(f'eye {torch.eye(3)} sin {torch.sin(theta)} cos {torch.cos(theta)} 1-cos {1 - torch.cos(theta)}')
+    # print(f"KK {torch.matmul(K, K)}")
     R = torch.eye(3) + K * torch.sin(theta) + (1 - torch.cos(theta)) * torch.matmul(K, K)
-    print(f"R {R}")
+    # print(f"R {R}")
     return R
 
 

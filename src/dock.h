@@ -58,6 +58,6 @@ std::shared_ptr<Request> createCudaDockGradSessionRequest(
     int npred, int npocket, int nval, int ntorsion, float eps
 );
 std::shared_ptr<Request> createCudaDockGradSubmitRequest(std::shared_ptr<Request> request,
-                                                         float *values, float *losses);
+                                                         float *values, float *losses, float *svds);
 }  // namespace dock
 #endif
