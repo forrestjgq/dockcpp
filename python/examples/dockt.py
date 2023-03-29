@@ -2,6 +2,7 @@
 本脚本用于对单个口袋和多个小分子（smiles或带初始构象的mol文件）进行对接
 """
 import torch
+import math
 import os
 import numpy as np
 from dist_to_coords_utils import modify_conformer
@@ -36,7 +37,8 @@ def loadtensors(seq):
         "pred_holo_dist",
         "loss"
     ]
-    path = "/home/forrest/project/dockcpp/python/examples/tensors"
+    path = "/home/jgq/src/tensors"
+    # path = "/home/forrest/project/dockcpp/python/examples/tensors"
     return (torch.load(os.path.join(path, str(seq), name)) for name in target)
         
         
@@ -146,11 +148,27 @@ def test_grad_seq(seq, ctx):
     
 def test_seq(seq, ctx):
     vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, gt = loadtensors(seq)
-    ctx = pydock.CudaContext(0) # cuda context on device 0
     t, ok = ctx.dock(vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist)
     assert ok
     print(f't={t}')
 
+
+def test_session_seq(seq, ctx):
+    vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, gt = loadtensors(seq)
+    s = ctx.new_session(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, len(vt))
+    # gt = [1.7734, 1.7735, 1.7734, 1.7738, 1.7739, 1.7743, 1.7733, 1.7734, 2.5332]
+    # gt = [1.7734, 1.7734, 1.7735, 1.7734, 1.7738, 1.7739, 1.7743, 1.7733, 1.7734]
+    gt = [ 1.7734,  0.0138,  0.0484, -0.0246,  0.4230,  0.5088,  0.8847, -0.0858, -0.0420]
+    for i in range(10000):
+        t, ok = ctx.session_submit(s, vt)
+        assert ok
+        # print(f'i={i} t={t}')
+        failed = False
+        for i in range(len(gt)):
+            if math.isnan(t[i]) or abs(gt[i] - t[i]) > 0.0001:
+                print(f'i: {i}, gt {gt[i]} t {t[i]}')
+                failed = True
+        assert not failed, (i, t)
 
 if __name__ == '__main__':
     assert len(sys.argv) >= 3
@@ -160,7 +178,7 @@ if __name__ == '__main__':
         end = int(sys.argv[3]) + 1
     else:
         end = start+1
-    ctx = pydock.CudaContext(0)
+    ctx = pydock.CudaContext(6)
     for seq in range(start, end):
         print(f'\n\n==== test {seq} ====')
         if action == 'py':
@@ -172,3 +190,6 @@ if __name__ == '__main__':
         elif action == 'grad':
             # Cuda calculates loss and grads
             test_grad_seq(seq, ctx)
+        elif action == 'session':
+            # Cuda calculates loss and grads
+            test_session_seq(seq, ctx)

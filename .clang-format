@@ -15,19 +15,21 @@ AllowShortFunctionsOnASingleLine: false
 AlignTrailingComments: true
 SpacesBeforeTrailingComments: 2
 PenaltyReturnTypeOnItsOwnLine: 200
-AllowAllParametersOfDeclarationOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: true
+AllowAllArgumentsOnNextLine: false
 AllowShortIfStatementsOnASingleLine: false
 AllowShortLoopsOnASingleLine: false
 BinPackParameters: false
 BreakBeforeBinaryOperators: true
 BreakBeforeTernaryOperators: true
-ContinuationIndentWidth: 2
+ContinuationIndentWidth: 4
 AlwaysBreakAfterDefinitionReturnType: None
 AlwaysBreakAfterReturnType: None
 AlwaysBreakBeforeMultilineStrings: No
 AlwaysBreakTemplateDeclarations: Yes
 AlignEscapedNewlines: DontAlign
-BinPackArguments: false
+BinPackArguments: true
+BinPackParameters: true
 BraceWrapping:
   AfterClass:      false
   AfterControlStatement: false
