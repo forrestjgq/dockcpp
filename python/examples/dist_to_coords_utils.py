@@ -161,7 +161,7 @@ def modify_conformer(coords, values, edge_index, mask_rotate):
     print(f'rigid new pos {rigid_new_pos}')
 
     if values.shape[0] > 6:
-        flexible_new_pos = modify_conformer_torsion_angles(rigid_new_pos,
+        flexible_new_pos = modify_conformer_torsion_angles(rigid_new_pos.clone(),
                                                            edge_index,
                                                            mask_rotate,
                                                            torsion_updates).to(rigid_new_pos.device)
@@ -204,7 +204,6 @@ def modify_conformer2(coords, values, edge_index, mask_rotate):
 
 
 def modify_conformer_torsion_angles(pos, edge_index, mask_rotate, torsion_updates):
-    pos = copy.deepcopy(pos)
 
     for idx_edge, e in enumerate(edge_index):
         # if torsion_updates[idx_edge] == 0:

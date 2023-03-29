@@ -9,8 +9,8 @@
 #define IN
 #define OUT
 namespace dock {
-#define DOCKDBG 0
-#define GRIDIDX 8
+#define DOCKDBG 1
+#define GRIDIDX 0
 #define INGRID  (blockIdx.x == GRIDIDX)
 #if DOCKDBG
 # define SDBG(x1, y1, ...) \
