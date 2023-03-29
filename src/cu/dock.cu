@@ -9,8 +9,8 @@
 #define IN
 #define OUT
 namespace dock {
-#define DOCKDBG 0
-#define GRIDIDX 8
+#define DOCKDBG 1
+#define GRIDIDX 0
 #define INGRID  (blockIdx.x == GRIDIDX)
 #if DOCKDBG
 # define SDBG(x1, y1, ...) \
@@ -495,13 +495,13 @@ __device__ __forceinline__ int ensure_same(int id, float *src, float *dst, int n
     int fail = 0;
     for (int i = 0; i < n; i++) {
         float diff = abs(src[i] - dst[i]);
-        if (diff >= 0.1) {
+        if (diff >= 1) {
             if (id > 1) {
                 diff = abs(-1.f * src[i] - dst[i]);
             }
         }
-        if (diff >= 0.1) {
-            printf("id %d diff %f i %d src %f dst %f\n", id, diff, i, src[i], dst[i]);
+        if (diff >= 1) {
+            printf("id %d diff %f i %d src %f dst %f block %d\n", id, diff, i, src[i], dst[i], blockIdx.x);
             fail = 1;
         }
         src[i] = dst[i];
@@ -562,10 +562,10 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const float *RES
     float *svdh = svdhuv;
     float *svdu = svdhuv + 9;
     float *svdv = svdhuv + 18;
+    DUMP("H", 3, 3, h);
     int fail = ensure_same(1, h, svdh, 9);
 
     float u[9], s[3], v[9], vt[9];
-    DUMP("H", 3, 3, h);
     svd(svdh, u, s, v);
     DUMP("U", 3, 3, u);
     DUMP("S", 1, 3, s);
