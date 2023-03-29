@@ -76,9 +76,14 @@ __device__ void dumparr(int m, int n, const float * REST p) {
     dumparr(m, n, p); \
    } \
   } while (0)
+#define PRINT(...) do {\
+    if (INGRID) printf(__VA_ARGS__);\
+} while(0)
+
 #else
 #define DUMP(hdr, m, n, p) 
 #define DUMPARR(x1, y1, hdr, m, n, p) 
+#define PRINT(...)
 #endif
 # define DUMPARR1(hdr, m, n, p) \
   do { \
@@ -428,10 +433,13 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(
             int v        = edge_index[idx_edge * 2 + 1];
 
             float theta     = torsion_updates[idx_edge];
-            const float *pu = pos + 3 * u;
-            const float *pv = pos + 3 * v;
+            const float *pu = out + 3 * u;
+            const float *pv1 = out + 3 * v;
+            float pv[3]; // must be copied
+            pv[0] = pv1[0], pv[1] = pv1[1], pv[2] = pv1[2];
             float rot_vec[3];
             float rot[9];
+            PRINT("idx edge %d\n", k);
             sub3p(pu, pv, rot_vec);
             DUMP("rot vec", 1, 3, rot_vec);
             float norm = rnorm3df(rot_vec[0], rot_vec[1], rot_vec[2]);
@@ -439,14 +447,21 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(
             DUMP("rot vec norm", 1, 3, rot_vec);
             gen_matrix_from_rot_vec3(rot_vec, rot, theta);
             DUMP("rot mat", 3, 3, rot);
+            DUMP("posv", 1, 3, pv);
             const uint8_t *mask = mask_rotate + n * k;
             for (int i = 0; i < n; i++) {
                 if (mask[i] != 0) {
                     float *outp = out + 3 * i;
+                    PRINT("change pos %d\n", i);
+                    DUMP("Before", 1, 3, outp);
                     float tp[3];
                     sub3p(outp, pv, tp);
+                    DUMP("Tp", 1, 3, tp);
                     matmul<1, 3, 3, true>(tp, rot, outp);
+                    DUMP("TpMul", 1, 3, outp);
+                    DUMP("TpMulPv", 1, 3, pv);
                     add3p(outp, pv);
+                    DUMP("After", 1, 3, outp);
                 }
             }
         }
