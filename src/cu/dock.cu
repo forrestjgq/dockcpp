@@ -178,11 +178,11 @@ __device__ __forceinline__ float4 axis_angle_to_quaternion(float3 axis) {
     if (angle < 1e-6) {
         sins = 0.5f - (angle * angle) * 0.020833333333333332;  // 1/48 = 0.020833333333333332
     } else {
-        sins = sinf(half) * reciprocal(angle);
+        sins = sin(half) * reciprocal(angle);
     }
     DBG("sins %f \n", sins);
     float4 ret;
-    ret.x = cosf(half);
+    ret.x = cos(half);
     ret.y = axis.x * sins;
     ret.z = axis.y * sins;
     ret.w = axis.z * sins;
@@ -302,18 +302,18 @@ def gen_matrix_from_rot_vec(k, theta):
     return R
 #endif
 template <int n>
-__device__ __forceinline__ void gen_matrix_from_rot_vec(const float * REST k, float * REST out, float theta) {
-    float sin = sinf(theta);
-    float cos = 1.0 - cosf(theta);
+__device__ __forceinline__ void gen_matrix_from_rot_vec(const float * REST k, float * REST out, double theta) {
+    float tsin = sin(theta);
+    float tcos = 1.0 - cos(theta);
     DUMPARR(0, 0, "K", 3, 3, k);
     matmul<n, n, n, false>(k, k, out);
-    DUMPARR(0, 0, "sin", 1, 1, &sin);
-    DUMPARR(0, 0, "cos", 1, 1, &cos);
+    DUMPARR(0, 0, "sin", 1, 1, &tsin);
+    DUMPARR(0, 0, "cos", 1, 1, &tcos);
     DUMPARR(0, 0, "KK", 3, 3, out);
     int idx = 0;
     for (int r = 0; r < n; r++) {
         for (int c = 0; c < n; c++) {
-            out[idx] = out[idx] * cos + sin * k[idx] + (r == c ? 1. : 0.);
+            out[idx] = out[idx] * tcos + tsin * k[idx] + (r == c ? 1. : 0.);
             idx++;
         }
     }
