@@ -218,9 +218,10 @@ def modify_conformer_torsion_angles(pos, edge_index, mask_rotate, torsion_update
         print(f'idx edge {idx_edge} u {u} v {v} rot_vec {rot_vec}')
         rot_vec = rot_vec / torch.norm(rot_vec)  # idx_edge!
         print(f'rot_vec norm {rot_vec}')
-        print(f'torsion updates {torsion_updates}')
+        print(f'torsion updates {torsion_updates[idx_edge]}')
         rot_mat = gen_matrix_from_rot_vec(rot_vec, torsion_updates[idx_edge])
         print(f'rot_mat {rot_mat}')
+        print(f'posv {pos[v]}')
 
         print(f'idx {idx_edge} before {pos}\nmask {mask_rotate[idx_edge]}')
 

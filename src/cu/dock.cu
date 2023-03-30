@@ -41,24 +41,26 @@ namespace dock {
 __device__ void dumparr(int m, int n, const uint8_t * REST p) {
     printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
     for (int i = 0; i < m; i++) {
-        printf("%d: ", i);
+        printf("\t%d:\t", i);
         const uint8_t *p1 = p + i * n;
         for (int j = 0; j < n; j++) {
             printf("%d ", int(p1[j]));
         }
         printf("\n");
     }
+    printf("\n");
 }
 __device__ void dumparr(int m, int n, const float * REST p) {
     printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
     for (int i = 0; i < m; i++) {
-        printf("%d: ", i);
+        printf("\t%d:\t" , i);
         const float *p1 = p + i * n;
         for (int j = 0; j < n; j++) {
             printf("%f ", p1[j]);
         }
         printf("\n");
     }
+    printf("\n");
 }
 #if DOCKDBG
 # define DUMP(hdr, m, n, p) \
@@ -303,11 +305,11 @@ template <int n>
 __device__ __forceinline__ void gen_matrix_from_rot_vec(const float * REST k, float * REST out, float theta) {
     float sin = sinf(theta);
     float cos = 1.0 - cosf(theta);
-    DUMPARR(1, 0, "K", 3, 3, k);
+    DUMPARR(0, 0, "K", 3, 3, k);
     matmul<n, n, n, false>(k, k, out);
-    DUMPARR(1, 0, "sin", 1, 1, &sin);
-    DUMPARR(1, 0, "cos", 1, 1, &cos);
-    DUMPARR(1, 0, "KK", 3, 3, out);
+    DUMPARR(0, 0, "sin", 1, 1, &sin);
+    DUMPARR(0, 0, "cos", 1, 1, &cos);
+    DUMPARR(0, 0, "KK", 3, 3, out);
     int idx = 0;
     for (int r = 0; r < n; r++) {
         for (int c = 0; c < n; c++) {
@@ -315,7 +317,7 @@ __device__ __forceinline__ void gen_matrix_from_rot_vec(const float * REST k, fl
             idx++;
         }
     }
-    DUMPARR(1, 0, "R", 3, 3, out);
+    DUMPARR(0, 0, "R", 3, 3, out);
 }
 __device__ __forceinline__ void gen_matrix_from_rot_vec3(const float * REST k, float * REST out, float theta) {
     float K[3][3] = { { 0., -k[2], k[1] }, { k[2], 0., -k[0] }, { -k[1], k[0], 0. } };
@@ -387,6 +389,7 @@ __device__ __forceinline__ void modify_conformer_torsion_angles_concurrent(
             float norm = rnorm3df(rot_vec[0], rot_vec[1], rot_vec[2]);
             rot_vec[0] *= norm, rot_vec[1] *= norm, rot_vec[2] *= norm;
             DUMPARR(1, 0, "rot vec norm", 1, 3, rot_vec);
+            DBG("torsion updates %f\n", theta);
             gen_matrix_from_rot_vec3(rot_vec, rot, theta);
             DUMPARR(1, 0, "rot mat", 3, 3, rot);
         }
@@ -445,6 +448,7 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(
             float norm = rnorm3df(rot_vec[0], rot_vec[1], rot_vec[2]);
             rot_vec[0] *= norm, rot_vec[1] *= norm, rot_vec[2] *= norm;
             DUMP("rot vec norm", 1, 3, rot_vec);
+            DBG("torsion updates %f\n", theta);
             gen_matrix_from_rot_vec3(rot_vec, rot, theta);
             DUMP("rot mat", 3, 3, rot);
             DUMP("posv", 1, 3, pv);

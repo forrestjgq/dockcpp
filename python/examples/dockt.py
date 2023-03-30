@@ -32,14 +32,14 @@ def loadtensors(seq):
         "init_coord",
         "torsions",
         "masks",
-        "pocket",
+        "pocket_coords",
         "pred_cross_dist",
         "pred_holo_dist",
         # "loss"
     ]
     path = "/home/jgq/src/docking-master/failed"
     # path = "/home/forrest/project/dockcpp/python/examples/tensors"
-    return (torch.load(os.path.join(path, name)) for name in target)
+    return (torch.load(os.path.join(path, f'{seq}_{name}')) for name in target)
         
         
 def dumpcpp(seq, values, init_coord, torsions, masks, pocket, pred_cross_dist, pred_holo_dist, loss):
