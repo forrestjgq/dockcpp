@@ -41,24 +41,26 @@ namespace dock {
 __device__ void dumparr(int m, int n, const uint8_t * REST p) {
     printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
     for (int i = 0; i < m; i++) {
-        printf("%d: ", i);
+        printf("\t%d:\t", i);
         const uint8_t *p1 = p + i * n;
         for (int j = 0; j < n; j++) {
             printf("%d ", int(p1[j]));
         }
         printf("\n");
     }
+    printf("\n");
 }
 __device__ void dumparr(int m, int n, const float * REST p) {
     printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
     for (int i = 0; i < m; i++) {
-        printf("%d: ", i);
+        printf("\t%d:\t" , i);
         const float *p1 = p + i * n;
         for (int j = 0; j < n; j++) {
             printf("%f ", p1[j]);
         }
         printf("\n");
     }
+    printf("\n");
 }
 #if DOCKDBG
 # define DUMP(hdr, m, n, p) \
@@ -76,10 +78,22 @@ __device__ void dumparr(int m, int n, const float * REST p) {
     dumparr(m, n, p); \
    } \
   } while (0)
+#define PRINT(...) do {\
+    if (INGRID) printf(__VA_ARGS__);\
+} while(0)
+
 #else
 #define DUMP(hdr, m, n, p) 
 #define DUMPARR(x1, y1, hdr, m, n, p) 
+#define PRINT(...)
 #endif
+# define DUMPARR1(hdr, m, n, p) \
+  do { \
+   if (blockIdx.x == 3 && threadIdx.x == 0 && threadIdx.y == 0) { \
+    printf(hdr); \
+    dumparr(m, n, p); \
+   } \
+  } while (0)
 
 __device__ __forceinline__ float3 sub3(float3 a, float3 b) {
     return make_float3(a.x - b.x, a.y - b.y, a.z - b.z);
@@ -291,11 +305,11 @@ template <int n>
 __device__ __forceinline__ void gen_matrix_from_rot_vec(const float * REST k, float * REST out, float theta) {
     float sin = sinf(theta);
     float cos = 1.0 - cosf(theta);
-    DUMPARR(1, 0, "K", 3, 3, k);
+    DUMPARR(0, 0, "K", 3, 3, k);
     matmul<n, n, n, false>(k, k, out);
-    DUMPARR(1, 0, "sin", 1, 1, &sin);
-    DUMPARR(1, 0, "cos", 1, 1, &cos);
-    DUMPARR(1, 0, "KK", 3, 3, out);
+    DUMPARR(0, 0, "sin", 1, 1, &sin);
+    DUMPARR(0, 0, "cos", 1, 1, &cos);
+    DUMPARR(0, 0, "KK", 3, 3, out);
     int idx = 0;
     for (int r = 0; r < n; r++) {
         for (int c = 0; c < n; c++) {
@@ -303,7 +317,7 @@ __device__ __forceinline__ void gen_matrix_from_rot_vec(const float * REST k, fl
             idx++;
         }
     }
-    DUMPARR(1, 0, "R", 3, 3, out);
+    DUMPARR(0, 0, "R", 3, 3, out);
 }
 __device__ __forceinline__ void gen_matrix_from_rot_vec3(const float * REST k, float * REST out, float theta) {
     float K[3][3] = { { 0., -k[2], k[1] }, { k[2], 0., -k[0] }, { -k[1], k[0], 0. } };
@@ -352,14 +366,9 @@ __device__ __forceinline__ void modify_conformer_torsion_angles_single(float *po
 // mask_rotate: edge_size * n bool mask
 // torsion_updates: 1D array, size <edge_size>
 // require tmp: 9 * nedge floats
-__device__ __forceinline__ void modify_conformer_torsion_angles(const float * REST pos,
-                                                                OUT float * REST out,
-                                                                float * REST tmp,
-                                                                const uint8_t * REST mask_rotate,
-                                                                const int * REST edge_index,
-                                                                const float * REST torsion_updates,
-                                                                int n,
-                                                                int nedge) {
+__device__ __forceinline__ void modify_conformer_torsion_angles_concurrent(
+    const float *REST pos, OUT float *REST out, float *REST tmp, const uint8_t *REST mask_rotate,
+    const int *REST edge_index, const float *REST torsion_updates, int n, int nedge) {
     float *rot_mats = tmp;
     tmp += nedge * 9;
     FOR_LOOP(i, n) {
@@ -380,6 +389,7 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(const float * RE
             float norm = rnorm3df(rot_vec[0], rot_vec[1], rot_vec[2]);
             rot_vec[0] *= norm, rot_vec[1] *= norm, rot_vec[2] *= norm;
             DUMPARR(1, 0, "rot vec norm", 1, 3, rot_vec);
+            DBG("torsion updates %f\n", theta);
             gen_matrix_from_rot_vec3(rot_vec, rot, theta);
             DUMPARR(1, 0, "rot mat", 3, 3, rot);
         }
@@ -406,6 +416,61 @@ __device__ __forceinline__ void modify_conformer_torsion_angles(const float * RE
             }
         }
     }
+    __syncthreads();
+    DUMPARR(0, 0, "modify conformer ret pos", n, 3, out);
+}
+__device__ __forceinline__ void modify_conformer_torsion_angles(
+    const float *REST pos, OUT float *REST out, float *REST tmp, const uint8_t *REST mask_rotate,
+    const int *REST edge_index, const float *REST torsion_updates, int n, int nedge) {
+    float *rot_mats = tmp;
+    tmp += nedge * 9;
+    // copy to output
+    FOR_LOOP(i, n * 3) {
+        out[i] = pos[i];
+    }
+    __syncthreads();
+    if (IS_MAIN_THREAD()) {
+        for (int k = 0; k < nedge; k++ ) {
+            int idx_edge = k;
+            int u        = edge_index[idx_edge * 2];
+            int v        = edge_index[idx_edge * 2 + 1];
+
+            float theta     = torsion_updates[idx_edge];
+            const float *pu = out + 3 * u;
+            const float *pv1 = out + 3 * v;
+            float pv[3]; // must be copied
+            pv[0] = pv1[0], pv[1] = pv1[1], pv[2] = pv1[2];
+            float rot_vec[3];
+            float rot[9];
+            PRINT("idx edge %d\n", k);
+            sub3p(pu, pv, rot_vec);
+            DUMP("rot vec", 1, 3, rot_vec);
+            float norm = rnorm3df(rot_vec[0], rot_vec[1], rot_vec[2]);
+            rot_vec[0] *= norm, rot_vec[1] *= norm, rot_vec[2] *= norm;
+            DUMP("rot vec norm", 1, 3, rot_vec);
+            DBG("torsion updates %f\n", theta);
+            gen_matrix_from_rot_vec3(rot_vec, rot, theta);
+            DUMP("rot mat", 3, 3, rot);
+            DUMP("posv", 1, 3, pv);
+            const uint8_t *mask = mask_rotate + n * k;
+            for (int i = 0; i < n; i++) {
+                if (mask[i] != 0) {
+                    float *outp = out + 3 * i;
+                    PRINT("change pos %d\n", i);
+                    DUMP("Before", 1, 3, outp);
+                    float tp[3];
+                    sub3p(outp, pv, tp);
+                    DUMP("Tp", 1, 3, tp);
+                    matmul<1, 3, 3, true>(tp, rot, outp);
+                    DUMP("TpMul", 1, 3, outp);
+                    DUMP("TpMulPv", 1, 3, pv);
+                    add3p(outp, pv);
+                    DUMP("After", 1, 3, outp);
+                }
+            }
+        }
+    }
+
     __syncthreads();
     DUMPARR(0, 0, "modify conformer ret pos", n, 3, out);
 }
@@ -495,12 +560,10 @@ def rigid_transform_Kabsch_3D_torch(A, B):
 // t: 3x1 output
 // n: num of input coords a and b
 // called in main thread, require memory 2xnx3
-__device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const float * REST a,
-                                                                const float * REST b,
-                                                                float * REST tmp,
-                                                                OUT float * REST r,
-                                                                OUT float * REST t,
-                                                                int n) {
+__device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const float *REST a,
+                                                                const float *REST b,
+                                                                float *REST tmp, OUT float *REST r,
+                                                                OUT float *REST t, int n) {
     // mean of a, b
 
     float *at, *bt;
@@ -579,15 +642,11 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const float * RE
 // edge_index: nedge x 2
 // mask_rotate: npos
 // tmp: tmp memory, 18 + max(9*nedge, 6 * npos) floats
-__device__ __forceinline__ void modify_conformer(const float * REST pos,
-                                                 OUT float * REST newpos,
-                                                 const float * REST values,
-                                                 const int * REST edge_index,
-                                                 const uint8_t * REST mask_rotate,
-                                                 int npos,
-                                                 int nval,
-                                                 int nedge,
-                                                 float * REST tmp) {
+__device__ __forceinline__ void modify_conformer(const float *REST pos, OUT float *REST newpos,
+                                                 const float *REST values,
+                                                 const int *REST edge_index,
+                                                 const uint8_t *REST mask_rotate, int npos,
+                                                 int nval, int nedge, float *REST tmp) {
     float *center, *rot_mat, *tr, *rot;
     center         = tmp, tmp += 3;
     rot_mat        = tmp, tmp += 9;
@@ -700,14 +759,9 @@ __device__ __forceinline__ float smooth_l1_loss(float a, float b, float beta, fl
 // flags, nullptr or flag indicates if corresponding a and b should be calculated
 // mean: true for smooth with mean, or false for sum
 template <bool mean>
-__device__ __forceinline__ void smooth_l1_loss(const float * REST a,
-                                               const float * REST b,
-                                               float * REST tmp,
-                                               float beta,
-                                               int m,
-                                               int n,
-                                               const uint8_t * REST flags,
-                                               float * REST out) {
+__device__ __forceinline__ void smooth_l1_loss(const float *REST a, const float *REST b,
+                                               float *REST tmp, float beta, int m, int n,
+                                               const uint8_t *REST flags, float *REST out) {
     float rebeta = reciprocal(beta);
     FOR_LOOP(i, m * n) {
         if (flags == nullptr || flags[i] != 0) {
@@ -764,15 +818,12 @@ def single_SF_loss(
 // require tmp :
 //   npred * ncross + npred * npred + 2 + ((npred * ncross + 3) >> 2)
 //    + npred * max(npred, ncross)
-__device__ __forceinline__ void single_SF_loss(const float * REST predict,            // npredx3
-                                               const float * REST pocket,             // npocketx3
-                                               const float * REST dist_predict,       // npred x npocket
-                                               const float * REST holo_dist_predict,  // npred x npred
-                                               float dist_threshold,
-                                               int npred,
-                                               int npocket,
-                                               float * REST tmp,
-                                               float * REST out) {
+__device__ __forceinline__ void single_SF_loss(
+    const float *REST predict,            // npredx3
+    const float *REST pocket,             // npocketx3
+    const float *REST dist_predict,       // npred x npocket
+    const float *REST holo_dist_predict,  // npred x npred
+    float dist_threshold, int npred, int npocket, float *REST tmp, float *REST out) {
     int ncross = npred * npocket;
     int nsq    = npred * npred;
     float *dist, *holo_dist, *cross_dist_score, *dist_score;
@@ -821,26 +872,22 @@ __device__ __forceinline__ void single_SF_loss(const float * REST predict,      
         DUMPARR(0, 0, "dist score", 1, 1, dist_score);
         DUMPARR(0, 0, "loss", 1, 1, out);
         // printf("grid %d loss %p %f\n", blockIdx.x, out, *out);
+        // printf("cross dist score %f dist score %f loss %f\n", *cross_dist_score, *dist_score, *out);
     }
+    // if (blockIdx.x == 3 && threadIdx.x == 0) {
+    //     printf("cross dist score %f dist score %f loss %f\n", *cross_dist_score, *dist_score, *out);
+    // }
 }
 // mem req:
 //    npred * 3 + max(
 //          18 + max(9*nedge, 6 * npos),
 //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred * max(npred, npocket)
 //    )
-__global__ void dock_kernel(const float * REST init_coord,
-                            const float * REST pocket,
-                            const float * REST pred_cross_dist,
-                            const float * REST pred_holo_dist,
-                            const float * REST values,
-                            const int * REST torsions,
-                            const uint8_t * REST masks,
-                            int npred,
-                            int npocket,
-                            int nval,
-                            int ntorsion,
-                            OUT float * REST loss, 
-                            float * REST dev) {
+__global__ void dock_kernel(const float *REST init_coord, const float *REST pocket,
+                            const float *REST pred_cross_dist, const float *REST pred_holo_dist,
+                            const float *REST values, const int *REST torsions,
+                            const uint8_t *REST masks, int npred, int npocket, int nval,
+                            int ntorsion, OUT float *REST loss, float *REST dev) {
     extern __shared__ float sm[];
 
     float *new_pos, *tmp;
@@ -860,24 +907,59 @@ __global__ void dock_kernel(const float * REST init_coord,
     //    + npred * max(npred, npocket)
     single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss);
 }
-__global__ void dock_grad_kernel(const float * REST init_coord,
-                                 const float * REST pocket,
-                                 const float * REST pred_cross_dist,
-                                 const float * REST  pred_holo_dist,
-                                 const float * REST values,
-                                 const int * REST torsions,
-                                 const uint8_t * REST masks,
-                                 int npred,
-                                 int npocket,
-                                 int nval,
-                                 int ngval,
-                                 int ntorsion,
-                                 OUT float * REST loss,
-                                 float * REST dev,
-                                 int blksz /*in floats*/) {
+__device__ __forceinline__ void sm_copy(float *dst, float *src, int sz) {
+}
+
+__global__ void dock_grad_kernel(const float *REST init_coord, const float *REST pocket,
+                                 const float *REST pred_cross_dist,
+                                 const float *REST pred_holo_dist, const float *REST values,
+                                 const int *REST torsions, const uint8_t *REST masks, int npred,
+                                 int npocket, int nval, int ngval, int ntorsion,
+                                 OUT float *REST loss, float *REST dev, int blksz /*in floats*/) {
+#if 1
+    const float *sm_init_coord = init_coord, *sm_pocket = pocket, *sm_pred_cross_dist = pred_cross_dist, *sm_pred_holo_dist = pred_holo_dist;
+    const int  *sm_torsions = torsions;
+    const uint8_t *sm_masks = masks;
+#else // this tries to use sm to speed up, but there is a risk that sm might not be enough, so disable it
     extern __shared__ float sm[];
-    int group      = blockIdx.x;
-    if (group < ngval) {
+    float *sm_init_coord, *sm_pocket, *sm_pred_cross_dist, *sm_pred_holo_dist;
+    int  *sm_torsions;
+    uint8_t *sm_masks;
+    int n = 0, sz = 0;
+
+    sz = npred * 3, sm_init_coord = &sm[n], n += sz;
+    FOR_LOOP(i, sz) {
+        sm_init_coord[i] = init_coord[i];
+    }
+    sz = npocket * 3, sm_pocket = &sm[n], n += sz;
+    FOR_LOOP(i, sz) {
+        sm_pocket[i] = pocket[i];
+    }
+    sz = npred * npocket, sm_pred_cross_dist = &sm[n], n += sz;
+    FOR_LOOP(i, sz) {
+        sm_pred_cross_dist[i] = pred_cross_dist[i];
+    }
+    sz = npred * npred, sm_pred_holo_dist = &sm[n], n += sz;
+    FOR_LOOP(i, sz) {
+        sm_pred_holo_dist[i] = pred_holo_dist[i];
+    }
+    sz = ntorsion * 2, sm_torsions = (int *)&sm[n], n += sz;
+    FOR_LOOP(i, sz) {
+        sm_torsions[i] = torsions[i];
+    }
+    int msz = (npred * ntorsion + 3) >> 2; // how many 4 bytes in masks
+    int *dmasks, *smasks;
+    sz = msz, smasks = (int *)masks, dmasks = (int *)&sm[n], n += sz;
+    FOR_LOOP(i, sz) {
+        dmasks[i] = smasks[i];
+    }
+    sm_masks = (uint8_t *)dmasks;
+    __syncthreads();
+#endif
+
+    #if 0 // debug: all runs in block #0, to avoid concurrency between blocks
+    if (blockIdx.x == 0) {
+        for (int group = 0; group < ngval; group++) {
         float *new_pos, *tmp;
         if (dev == nullptr) {
             tmp = &sm[blksz * group];  // require float * npred * 3
@@ -890,10 +972,24 @@ __global__ void dock_grad_kernel(const float * REST init_coord,
         if (group == 0) {
             DUMPARR(0, 0, "input masks", ntorsion, npred, masks);
         }
-        modify_conformer(init_coord, new_pos, vals, torsions, masks, npred, nval, ntorsion, tmp);
+        modify_conformer(sm_init_coord, new_pos, vals, sm_torsions, sm_masks, npred, nval, ntorsion, tmp);
         single_SF_loss(
-          new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss + group);
+          new_pos, sm_pocket, sm_pred_cross_dist, sm_pred_holo_dist, 6, npred, npocket, tmp, loss + group);
+        // DUMPARR1("loss", 1, nval+1, loss+group);
+    }}
+    #else
+    int group      = blockIdx.x;
+    if (group < ngval) {
+        float *new_pos, *tmp;
+        tmp = dev + blksz * group; 
+        new_pos = tmp, tmp += npred * 3;
+
+        const float *vals = values + group * nval;
+        modify_conformer(sm_init_coord, new_pos, vals, sm_torsions, sm_masks, npred, nval, ntorsion, tmp);
+        single_SF_loss(
+          new_pos, sm_pocket, sm_pred_cross_dist, sm_pred_holo_dist, 6, npred, npocket, tmp, loss + group);
     }
+    #endif
 }
 #if 0
 __global__ void sched(float *data) {
@@ -914,21 +1010,9 @@ void sm_init(int device) {
     }
     sm_max_size = prop.sharedMemPerBlock;
 }
-void dock_gpu(float *init_coord,
-              float *pocket,
-              float *pred_cross_dist,
-              float *pred_holo_dist,
-              float *values,
-              int *torsions,
-              uint8_t *masks,
-              int npred,
-              int npocket,
-              int nval,
-              int ntorsion,
-              float *loss,
-              float *dev,
-              int &devSize,
-              cudaStream_t stream,
+void dock_gpu(float *init_coord, float *pocket, float *pred_cross_dist, float *pred_holo_dist,
+              float *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
+              int ntorsion, float *loss, float *dev, int &devSize, cudaStream_t stream,
               int smMaxSize) {
     //    npred * 3 + max(
     //          18 + max(9*nedge, 6 * npos),
@@ -951,40 +1035,21 @@ void dock_gpu(float *init_coord,
         smsize = 0;
     }
 
-    std::cout << "npred " << npred << " npocket " << npocket << " mem " << smsize << std::endl;
+    // std::cout << "npred " << npred << " npocket " << npocket << " mem " << smsize << std::endl;
 
     dim3 block(npred);
     dim3 grid(1, 1, 1);
-    dock_kernel<<<grid, block, smsize, stream>>>(init_coord,
-                                                 pocket,
-                                                 pred_cross_dist,
-                                                 pred_holo_dist,
-                                                 values,
-                                                 torsions,
-                                                 masks,
-                                                 npred,
-                                                 npocket,
-                                                 nval,
-                                                 ntorsion,
-                                                 loss, tmp);
+    dock_kernel<<<grid, block, smsize, stream>>>(init_coord, pocket, pred_cross_dist,
+                                                 pred_holo_dist, values, torsions, masks, npred,
+                                                 npocket, nval, ntorsion, loss, tmp);
 }
-void dock_grad_gpu(float *init_coord,
-                   float *pocket,
-                   float *pred_cross_dist,
-                   float *pred_holo_dist,
-                   float *values,
-                   int *torsions,
-                   uint8_t *masks,
-                   int npred,
-                   int npocket,
-                   int nval,
-                   int ngval,
-                   int ntorsion,
+void dock_grad_gpu(float *init_coord, float *pocket, float *pred_cross_dist, float *pred_holo_dist,
+                   float *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
+                   int ngval, int ntorsion,
                    float *loss,  // ngval float array
                    float *dev,
                    int &devSize,  // in bytes
-                   cudaStream_t stream,
-                   int smMaxSize) {
+                   cudaStream_t stream, int smMaxSize) {
     //    npred * 3 + max(
     //          18 + max(9*nedge, 6 * npos),
     //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
@@ -994,11 +1059,13 @@ void dock_grad_gpu(float *init_coord,
                             npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
                               + npred * std::max(npred, npocket));
     smsize *= sizeof(float);
+    // smsize += 1024 * 1024;
     int blksz = smsize;  // in bytes
     smsize *= ngval;
 
     // get required memories
     if (dev == nullptr) {
+        // std::cout << "eval blksz " << blksz << std::endl;
         devSize = smsize;
         return;
     }
@@ -1006,27 +1073,15 @@ void dock_grad_gpu(float *init_coord,
     float *tmp = nullptr;
     if (smsize > smMaxSize) {
         tmp = dev;
+        // std::cout << "blksize " << blksz << " smsize " << smsize << " max sm " << smMaxSize << std::endl;
         assert(smsize <= devSize);
-        smsize = 0;
     }
     assert(ntorsion + 6 == nval);
 
     dim3 block(npred);
     dim3 grid(ngval);
-    dock_grad_kernel<<<grid, block, smsize, stream>>>(init_coord,
-                                                      pocket,
-                                                      pred_cross_dist,
-                                                      pred_holo_dist,
-                                                      values,
-                                                      torsions,
-                                                      masks,
-                                                      npred,
-                                                      npocket,
-                                                      nval,
-                                                      ngval,
-                                                      ntorsion,
-                                                      loss,
-                                                      tmp,
-                                                      blksz / sizeof(float));
+    dock_grad_kernel<<<grid, block, 0, stream>>>(
+        init_coord, pocket, pred_cross_dist, pred_holo_dist, values, torsions, masks, npred,
+        npocket, nval, ngval, ntorsion, loss, tmp, blksz / sizeof(float));
 }
 }  // namespace dock

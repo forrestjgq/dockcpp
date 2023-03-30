@@ -33,8 +33,10 @@ public:
             e_.wait();
             e_.reset();
             if (running_) {
+                // std::cerr << "running now " << std::endl;
                 return true;
             }
+            // std::cerr << "NOT RUNNING" << std::endl;
             t_->join();
             t_.reset();
             return false;
@@ -61,16 +63,32 @@ public:
     cudaError_t sync() {
         auto err = cudaStreamSynchronize(stream_);
         while (cuda_memories_.size() > 1) {
-            auto p = cuda_memories_.front();
             cuda_memories_.pop_front();
-            cudaFree(p);
+        }
+        while (pin_memories_.size() > 1) {
+            pin_memories_.pop_front();
+        }
+        while (host_memories_.size() > 1) {
+            host_memories_.pop_front();
         }
         return err;
+    }
+    void *requireHostMemory(int size) {
+        if (size == 0) {
+            return nullptr;
+        }
+
+        // auto p = requirePinMemory(size);
+        // if (!p) {
+            auto p = requireCpuMemory(size);
+            assert(p);
+        // }
+        return p;
     }
     void *requireDeviceMemory(int size) {
         if (device_size_ >= size) {
             assert(!cuda_memories_.empty());
-            return cuda_memories_.back();
+            return cuda_memories_.back().get();
         }
         void *p = nullptr;
         size    = (size + 4095) / 4096 * 4096;  // 4K aligned
@@ -80,12 +98,61 @@ public:
                       << cudaGetErrorString(err) << std::endl;
             return nullptr;
         }
-        cuda_memories_.push_back(p);
+        auto sp = std::shared_ptr<void>(p, [](void *p1) {
+            if (p1) {
+                cudaFree(p1);
+            }
+        });
+        cuda_memories_.push_back(sp);
         device_size_ = size;
         return p;
     }
 
 private:
+    void *requireCpuMemory(int size) {
+        if (host_size_ >= size) {
+            assert(!host_memories_.empty());
+            return host_memories_.back().get();
+        }
+        size    = (size + 4095) / 4096 * 4096;  // 4K aligned
+        void *p = malloc(size);
+        auto sp = std::shared_ptr<void>(p, [](void *p1) {
+            if (p1) {
+                free(p1);
+            }
+        });
+        host_memories_.push_back(sp);
+        host_size_ = size;
+        return p;
+
+    }
+    void *requirePinMemory(int size) {
+        if (pin_size_ >= size) {
+            assert(!pin_memories_.empty());
+            return pin_memories_.back().get();
+        }
+        void *p = nullptr;
+        size    = (size + 4095) / 4096 * 4096;  // 4K aligned
+        auto err = cudaHostAlloc(&p, size, 0);
+        if (err != cudaSuccess) {
+            std::cerr << "malloc cuda memory fail, size " << size << " err " << err << " msg "
+                      << cudaGetErrorString(err) << std::endl;
+            return nullptr;
+        }
+        // std::cerr << "Alloc pin buffer " << size << " ptr " << p << std::endl;
+        auto sp = std::shared_ptr<void>(p, [](void *p1) {
+            if (p1) {
+                auto e = cudaFreeHost(p1);
+                if (e != cudaSuccess) {
+                    std::cerr << "Cuda free fail " << e << " " << cudaGetErrorString(e) << std::endl;
+                }
+            }
+        });
+        pin_memories_.push_back(sp);
+        pin_size_ = size;
+        return p;
+
+    }
     void run() {
         std::vector<std::function<void()>> cleanups;
         cleanups.push_back([this]() { this->e_.set(); });
@@ -104,16 +171,8 @@ private:
         }
         cleanups.push_back([this]() { cudaStreamDestroy(this->stream_); });
 
-        err = cudaHostAlloc(&host_, host_size_, 0);
-        if (err != cudaSuccess) {
-            std::cerr << "create host memory at device " << device_id_ << " fail, err: " << err << ", "
-                      << cudaGetErrorString(err) << std::endl;
-            return;
-        }
-        cleanups.push_back([this]() { cudaFree(this->host_); });
-
-        e_.set();
         running_ = true;
+        e_.set();
         while (true) {
             auto req = q_->pop();
             if (!req) {
@@ -122,9 +181,9 @@ private:
             req->run(this);
             req->signal();
         }
-        for (auto p : cuda_memories_) {
-            cudaFree(p);
-        }
+        cuda_memories_.clear();
+        pin_memories_.clear();
+        host_memories_.clear();
         running_ = false;
     }
 
@@ -135,11 +194,14 @@ public:
     Event e_;
     bool running_        = false;
     void *host_          = nullptr;
-    int host_size_ = 512*1024;
+    int host_size_       = 0;
+    int pin_size_       = 0;
     int device_size_     = 0;
     int sm_max_size_     = 0;  // max sm size on this device
     cudaStream_t stream_ = nullptr;
-    std::list<void *> cuda_memories_;
+    std::list<std::shared_ptr<void>> cuda_memories_;
+    std::list<std::shared_ptr<void>> host_memories_;
+    std::list<std::shared_ptr<void>> pin_memories_;
 };
 };
 #endif
