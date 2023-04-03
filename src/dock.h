@@ -3,43 +3,44 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "context.h"
+#include "dtype.h"
 
 namespace dock {
 extern std::shared_ptr<dock::Request> createCudaDockRequest(
-  float *init_coord,       // npred * 3 floats
-  float *pocket,           // npocket * 3 floats
-  float *pred_cross_dist,  // npred * npocket floats
-  float *pred_holo_dist,   // npred * npred floats
-  float *values,           // nval float, as x in f(x)
+  dtype *init_coord,       // npred * 3 dtypes
+  dtype *pocket,           // npocket * 3 dtypes
+  dtype *pred_cross_dist,  // npred * npocket dtypes
+  dtype *pred_holo_dist,   // npred * npred dtypes
+  dtype *values,           // nval dtype, as x in f(x)
   int *torsions,           // ntorsion * 2 ints
   uint8_t *masks,          // npred * ntorsion masks
   int npred,
   int npocket,
   int nval,
   int ntorsion,
-  float *loss  // should be 1 floats, output
+  dtype *loss  // should be 1 dtypes, output
 );
 extern std::shared_ptr<dock::Request> createCudaDockGradRequest(
-  float *init_coord,       // npred * 3 floats
-  float *pocket,           // npocket * 3 floats
-  float *pred_cross_dist,  // npred * npocket floats
-  float *pred_holo_dist,   // npred * npred floats
-  float *values,           // nval float, as x in f(x)
+  dtype *init_coord,       // npred * 3 dtypes
+  dtype *pocket,           // npocket * 3 dtypes
+  dtype *pred_cross_dist,  // npred * npocket dtypes
+  dtype *pred_holo_dist,   // npred * npred dtypes
+  dtype *values,           // nval dtype, as x in f(x)
   int *torsions,           // ntorsion * 2 ints
   uint8_t *masks,          // npred * ntorsion masks
   int npred,
   int npocket,
   int nval,
   int ntorsion,
-  float eps,
-  float *losses  // should be nval+1 floats, output
+  dtype eps,
+  dtype *losses  // should be nval+1 dtypes, output
 );
 std::shared_ptr<Request> createCudaDockGradPerfRequest(
-  float *init_coord,       // npred * 3 floats
-  float *pocket,           // npocket * 3 floats
-  float *pred_cross_dist,  // npred * npocket floats
-  float *pred_holo_dist,   // npred * npred floats
-  float *values,           // nval float, as x in f(x)
+  dtype *init_coord,       // npred * 3 dtypes
+  dtype *pocket,           // npocket * 3 dtypes
+  dtype *pred_cross_dist,  // npred * npocket dtypes
+  dtype *pred_holo_dist,   // npred * npred dtypes
+  dtype *values,           // nval dtype, as x in f(x)
   int *torsions,           // ntorsion * 2 ints
   uint8_t *masks,          // npred * ntorsion masks
   int npred,
@@ -49,15 +50,15 @@ std::shared_ptr<Request> createCudaDockGradPerfRequest(
   int loop
 );
 std::shared_ptr<Request> createCudaDockGradSessionRequest(
-    float *init_coord,       // npred * 3 floats
-    float *pocket,           // npocket * 3 floats
-    float *pred_cross_dist,  // npred * npocket floats
-    float *pred_holo_dist,   // npred * npred floats
+    dtype *init_coord,       // npred * 3 dtypes
+    dtype *pocket,           // npocket * 3 dtypes
+    dtype *pred_cross_dist,  // npred * npocket dtypes
+    dtype *pred_holo_dist,   // npred * npred dtypes
     int *torsions,           // ntorsion * 2 ints
     uint8_t *masks,          // npred * ntorsion masks
-    int npred, int npocket, int nval, int ntorsion, float eps
+    int npred, int npocket, int nval, int ntorsion, dtype eps
 );
 std::shared_ptr<Request> createCudaDockGradSubmitRequest(std::shared_ptr<Request> request,
-                                                         float *values, float *losses);
+                                                         dtype *values, dtype *losses);
 }  // namespace dock
 #endif

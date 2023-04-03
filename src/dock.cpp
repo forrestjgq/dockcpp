@@ -6,6 +6,7 @@
 
 #include "cuda_context.h"
 #include "cuda_runtime_api.h"
+#include "dtype.h"
 
 namespace dock {
 
@@ -21,11 +22,11 @@ static void dumparr(int m, int n, uint8_t *p) {
         printf("\n");
     }
 }
-static void dumparr(int m, int n, float *p) {
+static void dumparr(int m, int n, dtype *p) {
     printf(" ====== host(%dx%d) ======\n", m, n);
     for (int i = 0; i < m; i++) {
         printf("%d: ", i);
-        float *p1 = p + i * n;
+        dtype *p1 = p + i * n;
         for (int j = 0; j < n; j++) {
             printf("%f ", p1[j]);
         }
@@ -33,33 +34,33 @@ static void dumparr(int m, int n, float *p) {
     }
 }
 #endif
-extern void dock_gpu(float *init_coord,       // npred *3
-                     float *pocket,           // npocket * 3
-                     float *pred_cross_dist,  // npred x npocket
-                     float *pred_holo_dist,   // npred x npred
-                     float *values,           // nval
+extern void dock_gpu(dtype *init_coord,       // npred *3
+                     dtype *pocket,           // npocket * 3
+                     dtype *pred_cross_dist,  // npred x npocket
+                     dtype *pred_holo_dist,   // npred x npred
+                     dtype *values,           // nval
                      int *torsions,           // ntorsion x 2
                      uint8_t *masks,          // ntorsion x npred
                      int npred, int npocket, int nval, int ntorsion,
-                     float *loss,   // output, scalar
-                     float *dev,    // input device mem
+                     dtype *loss,   // output, scalar
+                     dtype *dev,    // input device mem
                      int &devSize,  // dev size in byte
                      cudaStream_t stream, int smsize);
-void dock_grad_gpu(float *init_coord, float *pocket, float *pred_cross_dist, float *pred_holo_dist,
-                   float *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
+void dock_grad_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dtype *pred_holo_dist,
+                   dtype *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
                    int ngval, int ntorsion,
-                   float *loss,  // ngval float array
-                   float *dev, int &devSize, cudaStream_t stream, int smsize);
+                   dtype *loss,  // ngval dtype array
+                   dtype *dev, int &devSize, cudaStream_t stream, int smsize);
 static std::uint64_t now() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::high_resolution_clock::now().time_since_epoch())
         .count();
 }
 
-int dock_cpu_async(float *init_coord, float *pocket, float *pred_cross_dist, float *pred_holo_dist,
-                   float *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
+int dock_cpu_async(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dtype *pred_holo_dist,
+                   dtype *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
                    int ntorsion, void *dev, int devsize, void *host, int &hostsize,
-                   cudaStream_t stream, int smsize, float *outloss) {
+                   cudaStream_t stream, int smsize, dtype *outloss) {
     bool eval        = dev == nullptr;
     uint8_t *tmp     = (uint8_t *)dev;
     uint8_t *hosttmp = (uint8_t *)host;
@@ -70,18 +71,18 @@ int dock_cpu_async(float *init_coord, float *pocket, float *pred_cross_dist, flo
  tp *gpu_##val  = (tp *)tmp; \
  tp *host_##val = (tp *)hosttmp; \
  tsz            = sizeof(tp) * blksz; \
- asz            = (tsz + 3) / 4 * 4; \
+ asz            = (tsz + 3) / sizeof(dtype) * sizeof(dtype); \
  hosttmp += asz; \
  tmp += asz; \
  hsize += asz; \
  if (!eval) \
   memcpy(host_##val, val, tsz);
 
-    COPY(init_coord, float, npred * 3);
-    COPY(pocket, float, npocket * 3);
-    COPY(pred_cross_dist, float, npred *npocket);
-    COPY(pred_holo_dist, float, npred *npred);
-    COPY(values, float, nval);
+    COPY(init_coord, dtype, npred * 3);
+    COPY(pocket, dtype, npocket * 3);
+    COPY(pred_cross_dist, dtype, npred *npocket);
+    COPY(pred_holo_dist, dtype, npred *npred);
+    COPY(values, dtype, nval);
     COPY(torsions, int, ntorsion * 2);
     COPY(masks, uint8_t, ntorsion * npred);
 #undef COPY
@@ -93,8 +94,8 @@ int dock_cpu_async(float *init_coord, float *pocket, float *pred_cross_dist, flo
         hostsize = hsize;
     }
 
-    float *loss;
-    loss        = (float *)tmp, tmp += sizeof(float);
+    dtype *loss;
+    loss        = (dtype *)tmp, tmp += sizeof(dtype);
     int tmpsz   = 0;
     int cudahdr = int(tmp - (uint8_t *)dev);
     if (!eval) {
@@ -104,10 +105,10 @@ int dock_cpu_async(float *init_coord, float *pocket, float *pred_cross_dist, flo
     // must be last one to copy for alignment
     dock_gpu(gpu_init_coord, gpu_pocket, gpu_pred_cross_dist, gpu_pred_holo_dist, gpu_values,
              gpu_torsions, gpu_masks, npred, npocket, nval, ntorsion, loss,
-             eval ? nullptr : (float *)tmp, tmpsz, stream, smsize);
+             eval ? nullptr : (dtype *)tmp, tmpsz, stream, smsize);
 
     if (!eval) {
-        cudaMemcpyAsync(outloss, loss, sizeof(float), cudaMemcpyDeviceToHost, stream);
+        cudaMemcpyAsync(outloss, loss, sizeof(dtype), cudaMemcpyDeviceToHost, stream);
         return 0;
     }
     return tmpsz + cudahdr;
@@ -115,7 +116,7 @@ int dock_cpu_async(float *init_coord, float *pocket, float *pred_cross_dist, flo
 template<typename T>
 int copy_data(T *&val, uint8_t *&tmp, uint8_t *&hosttmp, int blksz, bool eval) {
     int tsz = sizeof(T) * blksz; // actual size
-    int asize = (tsz + 3)/4*4; // offset size, for 4 bytes alignment
+    int asize = (tsz + sizeof(dtype) - 1)/sizeof(dtype)*sizeof(dtype); // offset size, for 4 bytes alignment
 
     if (!eval) {
         memcpy(hosttmp, val, tsz);
@@ -134,10 +135,10 @@ int copy_data(T *&val, uint8_t *&tmp, uint8_t *&hosttmp, int blksz, bool eval) {
 //     - copy input header data to host
 //     - async copy pin header to cuda header
 //     - set input pointers to cuda pointers
-void dock_grad_session(float *&init_coord,       // npred * 3 floats
-                       float *&pocket,           // npocket * 3 floats
-                       float *&pred_cross_dist,  // npred * npocket floats
-                       float *&pred_holo_dist,   // npred * npred floats
+void dock_grad_session(dtype *&init_coord,       // npred * 3 dtypes
+                       dtype *&pocket,           // npocket * 3 dtypes
+                       dtype *&pred_cross_dist,  // npred * npocket dtypes
+                       dtype *&pred_holo_dist,   // npred * npred dtypes
                        int *&torsions,           // ntorsion * 2 ints
                        uint8_t *&masks,          // npred * ntorsion masks
                        int npred, int npocket, int nval, int ntorsion,
@@ -149,10 +150,10 @@ void dock_grad_session(float *&init_coord,       // npred * 3 floats
     int hsize = 0; // hdr size 
 #define COPY(val, tp, blksz) hsize += copy_data<tp>(val, devtmp, hosttmp, blksz, eval)
     // copy hdr to pin memory
-    COPY(init_coord, float, npred * 3);
-    COPY(pocket, float, npocket * 3);
-    COPY(pred_cross_dist, float, npred *npocket);
-    COPY(pred_holo_dist, float, npred *npred);
+    COPY(init_coord, dtype, npred * 3);
+    COPY(pocket, dtype, npocket * 3);
+    COPY(pred_cross_dist, dtype, npred *npocket);
+    COPY(pred_holo_dist, dtype, npred *npred);
     COPY(torsions, int, ntorsion * 2);
     COPY(masks, uint8_t, ntorsion * npred);
 #undef COPY
@@ -169,22 +170,22 @@ void dock_grad_session(float *&init_coord,       // npred * 3 floats
     dock_grad_gpu(nullptr, nullptr, nullptr, nullptr,
                   nullptr, nullptr, nullptr, npred, npocket, nval, nval + 1, ntorsion,
                   nullptr,  nullptr, smsize, nullptr, 0);
-    int valuesz = nval * (nval + 1) * sizeof(float); // in bytes, for values
-    int losssz = (nval + 1) * sizeof(float); // for output loss
+    int valuesz = nval * (nval + 1) * sizeof(dtype); // in bytes, for values
+    int losssz = (nval + 1) * sizeof(dtype); // for output loss
     hostsz = hdrsz + valuesz + losssz;
     cudasz = smsize + hostsz;
     return;
 }
 // header already be copied, now copy values to cuda memory and start kernel, then copy losses out
-void dock_grad_exec(float *init_coord,       // npred * 3 floats
-                        float *pocket,           // npocket * 3 floats
-                        float *pred_cross_dist,  // npred * npocket floats
-                        float *pred_holo_dist,   // npred * npred floats
-                        float *values,           // nval float, as x in f(x), host memory
+void dock_grad_exec(dtype *init_coord,       // npred * 3 dtypes
+                        dtype *pocket,           // npocket * 3 dtypes
+                        dtype *pred_cross_dist,  // npred * npocket dtypes
+                        dtype *pred_holo_dist,   // npred * npred dtypes
+                        dtype *values,           // nval dtype, as x in f(x), host memory
                         int *torsions,           // ntorsion * 2 ints
                         uint8_t *masks,          // npred * ntorsion masks
-                        int npred, int npocket, int nval, int ntorsion, float eps,
-                        float *&outloss,  // output losses on pin memory
+                        int npred, int npocket, int nval, int ntorsion, dtype eps,
+                        dtype *&outloss,  // output losses on pin memory
                         void *host,     // cuda host memory
                         void *device, int cudasz, cudaStream_t stream, int smsize) {
     // std::cout << "cudasz in exec " << cudasz << std::endl;
@@ -193,8 +194,8 @@ void dock_grad_exec(float *init_coord,       // npred * 3 floats
     uint8_t *hosttmp = (uint8_t *)host;
 
     // copy values
-    int valuelen = nval * sizeof(float);
-    float *valueBatch = (float *)hosttmp;
+    int valuelen = nval * sizeof(dtype);
+    dtype *valueBatch = (dtype *)hosttmp;
     memcpy(valueBatch, values, valuelen);
     valueBatch += nval;
     for (int i = 0; i < nval; i++, valueBatch += nval) {
@@ -203,12 +204,12 @@ void dock_grad_exec(float *init_coord,       // npred * 3 floats
     }
     int cpsize            = (nval + 1) * valuelen;
     cudaMemcpyAsync(tmp, hosttmp, cpsize, cudaMemcpyHostToDevice, stream);
-    valueBatch = (float *)tmp; // set to device memory
+    valueBatch = (dtype *)tmp; // set to device memory
     hosttmp += cpsize, tmp += cpsize;
 
-    float *loss; // output
-    int losssz = (nval + 1) * sizeof(float);
-    loss = (float *)tmp, tmp += losssz;
+    dtype *loss; // output
+    int losssz = (nval + 1) * sizeof(dtype);
+    loss = (dtype *)tmp, tmp += losssz;
 
     // how much left for kernel tmp cuda mem
     int devsize = cudasz - cpsize - losssz;
@@ -216,21 +217,21 @@ void dock_grad_exec(float *init_coord,       // npred * 3 floats
     // must be last one to copy for alignment
     dock_grad_gpu(init_coord, pocket, pred_cross_dist, pred_holo_dist,
                   valueBatch, torsions, masks, npred, npocket, nval, nval + 1, ntorsion,
-                  loss, (float *)tmp, devsize, stream, smsize);
+                  loss, (dtype *)tmp, devsize, stream, smsize);
     
-    outloss = (float *)hosttmp;
-    cudaMemcpyAsync(outloss, loss, (nval + 1) * sizeof(float), cudaMemcpyDeviceToHost);
+    outloss = (dtype *)hosttmp;
+    cudaMemcpyAsync(outloss, loss, (nval + 1) * sizeof(dtype), cudaMemcpyDeviceToHost);
 }
 // return 1 for lacking of host memory
-int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
-                        float *pocket,           // npocket * 3 floats
-                        float *pred_cross_dist,  // npred * npocket floats
-                        float *pred_holo_dist,   // npred * npred floats
-                        float *values,           // nval float, as x in f(x)
+int dock_grad_cpu_async(dtype *init_coord,       // npred * 3 dtypes
+                        dtype *pocket,           // npocket * 3 dtypes
+                        dtype *pred_cross_dist,  // npred * npocket dtypes
+                        dtype *pred_holo_dist,   // npred * npred dtypes
+                        dtype *values,           // nval dtype, as x in f(x)
                         int *torsions,           // ntorsion * 2 ints
                         uint8_t *masks,          // npred * ntorsion masks
-                        int npred, int npocket, int nval, int ntorsion, float eps,
-                        float *losses,  // should be nval+1 floats, output
+                        int npred, int npocket, int nval, int ntorsion, dtype eps,
+                        dtype *losses,  // should be nval+1 dtypes, output
                         void *host,     // cuda host memory
                         int &hostsz, void *device, int cudasz, cudaStream_t stream, int smsize) {
     bool eval        = device == nullptr;
@@ -243,29 +244,29 @@ int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
  tp *gpu_##val  = (tp *)tmp; \
  tp *host_##val = (tp *)hosttmp; \
  tsz            = sizeof(tp) * blksz; \
- asize          = (tsz + 3) / 4 * 4; \
+ asize          = (tsz + sizeof(dtype)-1) / sizeof(dtype) * sizeof(dtype); \
  hosttmp += asize; \
  tmp += asize; \
  hsize += asize; \
  if (!eval) \
   memcpy(host_##val, val, tsz);
 
-    COPY(init_coord, float, npred * 3);
-    COPY(pocket, float, npocket * 3);
-    COPY(pred_cross_dist, float, npred *npocket);
-    COPY(pred_holo_dist, float, npred *npred);
+    COPY(init_coord, dtype, npred * 3);
+    COPY(pocket, dtype, npocket * 3);
+    COPY(pred_cross_dist, dtype, npred *npocket);
+    COPY(pred_holo_dist, dtype, npred *npred);
 
-    float *valueBatch = (float *)hosttmp;
+    dtype *valueBatch = (dtype *)hosttmp;
     if (!eval) {
-        memcpy(valueBatch, values, nval * sizeof(float));
+        memcpy(valueBatch, values, nval * sizeof(dtype));
         for (int i = 0; i < nval; i++) {
-            float *start = valueBatch + (i + 1) * nval;
-            memcpy(start, values, nval * sizeof(float));
+            dtype *start = valueBatch + (i + 1) * nval;
+            memcpy(start, values, nval * sizeof(dtype));
             start[i] += eps;
         }
     }
-    int cpsize            = (nval + 1) * nval * sizeof(float);
-    float *gpu_valueBatch = (float *)tmp;
+    int cpsize            = (nval + 1) * nval * sizeof(dtype);
+    dtype *gpu_valueBatch = (dtype *)tmp;
     hosttmp += cpsize;
     tmp += cpsize;
     hsize += cpsize;
@@ -278,39 +279,39 @@ int dock_grad_cpu_async(float *init_coord,       // npred * 3 floats
         cudaMemcpyAsync(device, host, hsize, cudaMemcpyHostToDevice, stream);
     }
 
-    float *loss;
-    loss = (float *)tmp, tmp += (nval + 1) * sizeof(float);
+    dtype *loss;
+    loss = (dtype *)tmp, tmp += (nval + 1) * sizeof(dtype);
     // how much left for kernel tmp cuda mem
     int devsize = 0;
     if (!eval) {
-        devsize = cudasz - hsize - (nval + 1) * sizeof(float);
+        devsize = cudasz - hsize - (nval + 1) * sizeof(dtype);
     }
 
     // must be last one to copy for alignment
     dock_grad_gpu(gpu_init_coord, gpu_pocket, gpu_pred_cross_dist, gpu_pred_holo_dist,
                   gpu_valueBatch, gpu_torsions, gpu_masks, npred, npocket, nval, nval + 1, ntorsion,
-                  loss, eval ? nullptr : (float *)tmp, devsize, stream, smsize);
+                  loss, eval ? nullptr : (dtype *)tmp, devsize, stream, smsize);
     if (!eval) {
-        cudaMemcpyAsync(losses, loss, (nval + 1) * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpyAsync(losses, loss, (nval + 1) * sizeof(dtype), cudaMemcpyDeviceToHost);
         return 0;
     }
-    int valuesz = nval * (nval + 1) * sizeof(float); // in bytes, for values
-    int losssz = (nval + 1) * sizeof(float); // for output loss
+    int valuesz = nval * (nval + 1) * sizeof(dtype); // in bytes, for values
+    int losssz = (nval + 1) * sizeof(dtype); // for output loss
     hostsz = hsize + valuesz + losssz;
     return devsize + hostsz;
 }
 
 class CudaDockRequest : public Request {
 public:
-    explicit CudaDockRequest(float *init_coord,       // npred * 3 floats
-                             float *pocket,           // npocket * 3 floats
-                             float *pred_cross_dist,  // npred * npocket floats
-                             float *pred_holo_dist,   // npred * npred floats
-                             float *values,           // nval float, as x in f(x)
+    explicit CudaDockRequest(dtype *init_coord,       // npred * 3 dtypes
+                             dtype *pocket,           // npocket * 3 dtypes
+                             dtype *pred_cross_dist,  // npred * npocket dtypes
+                             dtype *pred_holo_dist,   // npred * npred dtypes
+                             dtype *values,           // nval dtype, as x in f(x)
                              int *torsions,           // ntorsion * 2 ints
                              uint8_t *masks,          // npred * ntorsion masks
                              int npred, int npocket, int nval, int ntorsion,
-                             float *loss  // should be 1 floats, output
+                             dtype *loss  // should be 1 dtypes, output
 
     ) {
         init_coord_      = init_coord;
@@ -355,28 +356,28 @@ public:
     }
 
 private:
-    float *init_coord_;
-    float *pocket_;
-    float *pred_cross_dist_;
-    float *pred_holo_dist_;
-    float *values_;
+    dtype *init_coord_;
+    dtype *pocket_;
+    dtype *pred_cross_dist_;
+    dtype *pred_holo_dist_;
+    dtype *values_;
     int *torsions_;
     uint8_t *masks_;
     int npred_;
     int npocket_;
     int nval_;
     int ntorsion_;
-    float *loss_;
+    dtype *loss_;
 };
-std::shared_ptr<Request> createCudaDockRequest(float *init_coord,       // npred * 3 floats
-                                               float *pocket,           // npocket * 3 floats
-                                               float *pred_cross_dist,  // npred * npocket floats
-                                               float *pred_holo_dist,   // npred * npred floats
-                                               float *values,           // nval float, as x in f(x)
+std::shared_ptr<Request> createCudaDockRequest(dtype *init_coord,       // npred * 3 dtypes
+                                               dtype *pocket,           // npocket * 3 dtypes
+                                               dtype *pred_cross_dist,  // npred * npocket dtypes
+                                               dtype *pred_holo_dist,   // npred * npred dtypes
+                                               dtype *values,           // nval dtype, as x in f(x)
                                                int *torsions,           // ntorsion * 2 ints
                                                uint8_t *masks,          // npred * ntorsion masks
                                                int npred, int npocket, int nval, int ntorsion,
-                                               float *loss  // should be 1 floats, output
+                                               dtype *loss  // should be 1 dtypes, output
 ) {
     return std::make_shared<CudaDockRequest>(init_coord, pocket, pred_cross_dist, pred_holo_dist,
                                              values, torsions, masks, npred, npocket, nval,
@@ -384,13 +385,13 @@ std::shared_ptr<Request> createCudaDockRequest(float *init_coord,       // npred
 }
 class CudaDockGradSessionRequest : public Request {
 public:
-    explicit CudaDockGradSessionRequest(float *init_coord,       // npred * 3 floats
-                                 float *pocket,           // npocket * 3 floats
-                                 float *pred_cross_dist,  // npred * npocket floats
-                                 float *pred_holo_dist,   // npred * npred floats
+    explicit CudaDockGradSessionRequest(dtype *init_coord,       // npred * 3 dtypes
+                                 dtype *pocket,           // npocket * 3 dtypes
+                                 dtype *pred_cross_dist,  // npred * npocket dtypes
+                                 dtype *pred_holo_dist,   // npred * npred dtypes
                                  int *torsions,           // ntorsion * 2 ints
                                  uint8_t *masks,          // npred * ntorsion masks
-                                 int npred, int npocket, int nval, int ntorsion, float eps
+                                 int npred, int npocket, int nval, int ntorsion, dtype eps
 
     ) {
         init_coord_      = init_coord;
@@ -435,17 +436,17 @@ public:
     }
 
 public:
-    float *init_coord_;
-    float *pocket_;
-    float *pred_cross_dist_;
-    float *pred_holo_dist_;
+    dtype *init_coord_;
+    dtype *pocket_;
+    dtype *pred_cross_dist_;
+    dtype *pred_holo_dist_;
     int *torsions_;
     uint8_t *masks_;
     int npred_;
     int npocket_;
     int nval_;
     int ntorsion_;
-    float eps_;
+    dtype eps_;
     void *device_ = nullptr;
     void *host_ = nullptr;
     int hdr_size_ = 0;
@@ -453,13 +454,13 @@ public:
     int host_size_ = 0;
 };
 std::shared_ptr<Request> createCudaDockGradSessionRequest(
-    float *init_coord,       // npred * 3 floats
-    float *pocket,           // npocket * 3 floats
-    float *pred_cross_dist,  // npred * npocket floats
-    float *pred_holo_dist,   // npred * npred floats
+    dtype *init_coord,       // npred * 3 dtypes
+    dtype *pocket,           // npocket * 3 dtypes
+    dtype *pred_cross_dist,  // npred * npocket dtypes
+    dtype *pred_holo_dist,   // npred * npred dtypes
     int *torsions,           // ntorsion * 2 ints
     uint8_t *masks,          // npred * ntorsion masks
-    int npred, int npocket, int nval, int ntorsion, float eps
+    int npred, int npocket, int nval, int ntorsion, dtype eps
 ) {
     return std::make_shared<CudaDockGradSessionRequest>(init_coord, pocket, pred_cross_dist,
                                                  pred_holo_dist,  torsions, masks, npred,
@@ -469,7 +470,7 @@ std::shared_ptr<Request> createCudaDockGradSessionRequest(
 #define OFFSETPTR(p, n)  ((void *)(((uint8_t*)(p)) + (n)))
 class CudaDockGradSubmitRequest : public Request {
 public:
-    explicit CudaDockGradSubmitRequest(std::shared_ptr<Request> session, float *values, float *losses) {
+    explicit CudaDockGradSubmitRequest(std::shared_ptr<Request> session, dtype *values, dtype *losses) {
         session_ = std::dynamic_pointer_cast<CudaDockGradSessionRequest>(session);
         values_ = values;
         losses_ = losses;
@@ -486,7 +487,7 @@ public:
             // void *host  = cudaCtx->hostMemory(hostsz);
             auto stream = cudaCtx->stream();
             int smsize  = cudaCtx->smsize();
-            float *outloss = nullptr;
+            dtype *outloss = nullptr;
             dock_grad_exec(session_->init_coord_, session_->pocket_, session_->pred_cross_dist_,
                            session_->pred_holo_dist_, values_, session_->torsions_,
                            session_->masks_, session_->npred_, session_->npocket_, session_->nval_,
@@ -504,32 +505,32 @@ public:
                 for (auto i = 1; i < session_->nval_+1; i++) {
                     outloss[i] = (outloss[i] - outloss[0]) / eps;
                 }
-                memcpy(losses_, outloss, (session_->nval_+1) * sizeof(float));
+                memcpy(losses_, outloss, (session_->nval_+1) * sizeof(dtype));
             }
 
         }
     }
 
 private:
-    float *values_ = nullptr;
-    float *losses_ = nullptr;
+    dtype *values_ = nullptr;
+    dtype *losses_ = nullptr;
     std::shared_ptr<CudaDockGradSessionRequest> session_;
 };
 std::shared_ptr<Request> createCudaDockGradSubmitRequest(std::shared_ptr<Request> request,
-                                                         float *values, float *losses) {
+                                                         dtype *values, dtype *losses) {
     return std::make_shared<CudaDockGradSubmitRequest>(request, values, losses);
 }
 class CudaDockGradRequest : public Request {
 public:
-    explicit CudaDockGradRequest(float *init_coord,       // npred * 3 floats
-                                 float *pocket,           // npocket * 3 floats
-                                 float *pred_cross_dist,  // npred * npocket floats
-                                 float *pred_holo_dist,   // npred * npred floats
-                                 float *values,           // nval float, as x in f(x)
+    explicit CudaDockGradRequest(dtype *init_coord,       // npred * 3 dtypes
+                                 dtype *pocket,           // npocket * 3 dtypes
+                                 dtype *pred_cross_dist,  // npred * npocket dtypes
+                                 dtype *pred_holo_dist,   // npred * npred dtypes
+                                 dtype *values,           // nval dtype, as x in f(x)
                                  int *torsions,           // ntorsion * 2 ints
                                  uint8_t *masks,          // npred * ntorsion masks
-                                 int npred, int npocket, int nval, int ntorsion, float eps,
-                                 float *losses  // should be nval+1 floats, output
+                                 int npred, int npocket, int nval, int ntorsion, dtype eps,
+                                 dtype *losses  // should be nval+1 dtypes, output
 
     ) {
         init_coord_      = init_coord;
@@ -585,30 +586,30 @@ public:
     }
 
 private:
-    float *init_coord_;
-    float *pocket_;
-    float *pred_cross_dist_;
-    float *pred_holo_dist_;
-    float *values_;
+    dtype *init_coord_;
+    dtype *pocket_;
+    dtype *pred_cross_dist_;
+    dtype *pred_holo_dist_;
+    dtype *values_;
     int *torsions_;
     uint8_t *masks_;
     int npred_;
     int npocket_;
     int nval_;
     int ntorsion_;
-    float eps_;
-    float *losses_;
+    dtype eps_;
+    dtype *losses_;
 };
 std::shared_ptr<Request> createCudaDockGradRequest(
-    float *init_coord,       // npred * 3 floats
-    float *pocket,           // npocket * 3 floats
-    float *pred_cross_dist,  // npred * npocket floats
-    float *pred_holo_dist,   // npred * npred floats
-    float *values,           // nval float, as x in f(x)
+    dtype *init_coord,       // npred * 3 dtypes
+    dtype *pocket,           // npocket * 3 dtypes
+    dtype *pred_cross_dist,  // npred * npocket dtypes
+    dtype *pred_holo_dist,   // npred * npred dtypes
+    dtype *values,           // nval dtype, as x in f(x)
     int *torsions,           // ntorsion * 2 ints
     uint8_t *masks,          // npred * ntorsion masks
-    int npred, int npocket, int nval, int ntorsion, float eps,
-    float *losses  // should be nval+1 floats, output
+    int npred, int npocket, int nval, int ntorsion, dtype eps,
+    dtype *losses  // should be nval+1 dtypes, output
 
 ) {
     return std::make_shared<CudaDockGradRequest>(init_coord, pocket, pred_cross_dist,
@@ -617,11 +618,11 @@ std::shared_ptr<Request> createCudaDockGradRequest(
 }
 class CudaDockGradPerfRequest : public Request {
 public:
-    explicit CudaDockGradPerfRequest(float *init_coord,       // npred * 3 floats
-                                     float *pocket,           // npocket * 3 floats
-                                     float *pred_cross_dist,  // npred * npocket floats
-                                     float *pred_holo_dist,   // npred * npred floats
-                                     float *values,           // nval float, as x in f(x)
+    explicit CudaDockGradPerfRequest(dtype *init_coord,       // npred * 3 dtypes
+                                     dtype *pocket,           // npocket * 3 dtypes
+                                     dtype *pred_cross_dist,  // npred * npocket dtypes
+                                     dtype *pred_holo_dist,   // npred * npred dtypes
+                                     dtype *values,           // nval dtype, as x in f(x)
                                      int *torsions,           // ntorsion * 2 ints
                                      uint8_t *masks,          // npred * ntorsion masks
                                      int npred, int npocket, int nval, int ntorsion, int loop
@@ -638,7 +639,7 @@ public:
         npocket_         = npocket;
         nval_            = nval;
         ntorsion_        = ntorsion;
-        losses_          = new float[nval + 1];
+        losses_          = new dtype[nval + 1];
         loop_            = loop;
     }
     ~CudaDockGradPerfRequest() override = default;
@@ -680,27 +681,27 @@ public:
     }
 
 private:
-    float *init_coord_;
-    float *pocket_;
-    float *pred_cross_dist_;
-    float *pred_holo_dist_;
-    float *values_;
+    dtype *init_coord_;
+    dtype *pocket_;
+    dtype *pred_cross_dist_;
+    dtype *pred_holo_dist_;
+    dtype *values_;
     int *torsions_;
     uint8_t *masks_;
     int npred_;
     int npocket_;
     int nval_;
     int ntorsion_;
-    float *losses_;
+    dtype *losses_;
     int loop_ = 0;
     int qps_  = 0;
 };
 std::shared_ptr<Request> createCudaDockGradPerfRequest(
-    float *init_coord,       // npred * 3 floats
-    float *pocket,           // npocket * 3 floats
-    float *pred_cross_dist,  // npred * npocket floats
-    float *pred_holo_dist,   // npred * npred floats
-    float *values,           // nval float, as x in f(x)
+    dtype *init_coord,       // npred * 3 dtypes
+    dtype *pocket,           // npocket * 3 dtypes
+    dtype *pred_cross_dist,  // npred * npocket dtypes
+    dtype *pred_holo_dist,   // npred * npred dtypes
+    dtype *values,           // nval dtype, as x in f(x)
     int *torsions,           // ntorsion * 2 ints
     uint8_t *masks,          // npred * ntorsion masks
     int npred, int npocket, int nval, int ntorsion, int loop

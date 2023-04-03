@@ -2,6 +2,7 @@
 本脚本用于对单个口袋和多个小分子（smiles或带初始构象的mol文件）进行对接
 """
 import torch
+import copy
 import math
 import os
 import numpy as np
@@ -121,17 +122,21 @@ def single_SF_loss(
 ):
     # dist = dist.unsqueeze(0)
     dist = torch.norm(predict_coords.unsqueeze(1) - pocket_coords.unsqueeze(0), dim=-1)
-    t = dist.reshape(-1)[0:80*8].reshape((80,8))
-    print(f'dist {t}')
+    print(f'dist shape {dist.shape}:')
+    for i in range(dist.shape[0]):
+        print(f'{i}: {str(dist[i])}')
     holo_dist = torch.norm(
         predict_coords.unsqueeze(1) - predict_coords.unsqueeze(0), dim=-1
     )
+    print(f'holo dist shape {holo_dist.shape}:')
+    for i in range(holo_dist.shape[0]):
+        print(f'{i}: {str(holo_dist[i])}')
     distance_mask = distance_predict < dist_threshold
     cross_dist_score = F.smooth_l1_loss(distance_predict[distance_mask], dist[distance_mask])
     sum_cross_dist_score = F.smooth_l1_loss(distance_predict[distance_mask], dist[distance_mask], reduction='sum')
-    print(f'sum {sum_cross_dist_score}')
     dist_score = F.smooth_l1_loss(holo_distance_predict, holo_dist)
-    loss = cross_dist_score * 1.0 + dist_score * 5.0
+    print(f'cross score {cross_dist_score} dist score {dist_score}')
+    loss = cross_dist_score * 1.0 + dist_score * 1.0
     return loss
 
 def test_py(seq):
@@ -139,6 +144,22 @@ def test_py(seq):
     new_pos = modify_conformer(init_coord, vt, torsions, masks)
     loss = single_SF_loss(new_pos, pocket_coords, pred_cross_dist, pred_holo_dist)
     print(f'loss {loss}')
+
+def test_grad_py(seq):
+    vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist = loadtensors(seq)
+    new_pos = modify_conformer(init_coord, vt, torsions, masks)
+    loss = single_SF_loss(new_pos, pocket_coords, pred_cross_dist, pred_holo_dist)
+
+    t = [loss.item()]
+    for i in range(len(vt)):
+        l = copy.deepcopy(vt.tolist())
+        l[i] += 0.05
+        v = torch.tensor(l)
+        new_pos = modify_conformer(init_coord, v, torsions, masks)
+        loss1 = single_SF_loss(new_pos, pocket_coords, pred_cross_dist, pred_holo_dist)
+        t.append((loss1.item() - loss.item())/0.05)
+    print(f't={t}')
+
 
 def test_grad_seq(seq, ctx):
     vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, gt = loadtensors(seq)
@@ -190,6 +211,9 @@ if __name__ == '__main__':
         if action == 'py':
             # python version of conformance test
             test_py(seq)
+        elif action == 'gpy':
+            # Cuda calculates a single loss
+            test_grad_py(seq)
         elif action == 'one':
             # Cuda calculates a single loss
             test_seq(seq, ctx)

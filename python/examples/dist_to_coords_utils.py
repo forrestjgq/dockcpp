@@ -117,7 +117,7 @@ def rigid_transform_Kabsch_3D_torch(A, B):
     # find rotation
     U, S, Vt = torch.linalg.svd(H)
     # print(f'shape U {U.shape} S {S.shape} Vt {Vt.shape}')
-    print(f'SVD: \nU={U}\nS={S}\nVt={Vt}')
+    print(f'SVD: \nU={U}\nS={S}\nVt={Vt.T.clone()}')
 
     R = Vt.T @ U.T
     print(f'r {R}')
