@@ -20,7 +20,7 @@ namespace cudock {
 
 using Tensor = torch::Tensor;
 
-#if USING_DOUBLE
+#if USE_DOUBLE
 std::shared_ptr<dtype> copy_float_tensor(Tensor &t, int &sz) {
     sz = 1;
     auto szs = t.sizes();

@@ -2,17 +2,15 @@
 #include <iostream>
 #include <assert.h>
 
-#include <cuda_runtime.h>
+#include "dockcu.h"
 
 #include "math.h"
 #define REST __restrict__
 #define IN
 #define OUT
 
-#define USING_DOUBLE 1
 
-#if USING_DOUBLE
-typedef double dtype;
+#if USE_DOUBLE
 typedef double3 dtype3;
 typedef double4 dtype4;
 #define EXP(x) exp(x)
@@ -23,7 +21,6 @@ typedef double4 dtype4;
 #define make_dtype3 make_double3
 #define make_dtype4 make_double4
 #else
-typedef float dtype;
 typedef float3 dtype3;
 typedef float4 dtype4;
 #define EXP(x) expf(x)
@@ -986,81 +983,35 @@ __global__ void dock_grad_kernel(const dtype *REST init_coord, const dtype *REST
                                  const dtype *REST pred_holo_dist, const dtype *REST values,
                                  const int *REST torsions, const uint8_t *REST masks, int npred,
                                  int npocket, int nval, int ngval, int ntorsion,
-                                 OUT dtype *REST loss, dtype *REST dev, int blksz /*in dtypes*/) {
-#if 1
-    const dtype *sm_init_coord = init_coord, *sm_pocket = pocket, *sm_pred_cross_dist = pred_cross_dist, *sm_pred_holo_dist = pred_holo_dist;
-    const int  *sm_torsions = torsions;
-    const uint8_t *sm_masks = masks;
-#else // this tries to use sm to speed up, but there is a risk that sm might not be enough, so disable it
+                                 OUT dtype *REST loss, dtype *REST dev, int blksz /*in dtypes*/, dtype eps) {
     extern __shared__ dtype sm[];
-    dtype *sm_init_coord, *sm_pocket, *sm_pred_cross_dist, *sm_pred_holo_dist;
-    int  *sm_torsions;
-    uint8_t *sm_masks;
-    int n = 0, sz = 0;
-
-    sz = npred * 3, sm_init_coord = &sm[n], n += sz;
-    FOR_LOOP(i, sz) {
-        sm_init_coord[i] = init_coord[i];
-    }
-    sz = npocket * 3, sm_pocket = &sm[n], n += sz;
-    FOR_LOOP(i, sz) {
-        sm_pocket[i] = pocket[i];
-    }
-    sz = npred * npocket, sm_pred_cross_dist = &sm[n], n += sz;
-    FOR_LOOP(i, sz) {
-        sm_pred_cross_dist[i] = pred_cross_dist[i];
-    }
-    sz = npred * npred, sm_pred_holo_dist = &sm[n], n += sz;
-    FOR_LOOP(i, sz) {
-        sm_pred_holo_dist[i] = pred_holo_dist[i];
-    }
-    sz = ntorsion * 2, sm_torsions = (int *)&sm[n], n += sz;
-    FOR_LOOP(i, sz) {
-        sm_torsions[i] = torsions[i];
-    }
-    int msz = (npred * ntorsion + 3) >> 2; // how many 4 bytes in masks
-    int *dmasks, *smasks;
-    sz = msz, smasks = (int *)masks, dmasks = (int *)&sm[n], n += sz;
-    FOR_LOOP(i, sz) {
-        dmasks[i] = smasks[i];
-    }
-    sm_masks = (uint8_t *)dmasks;
-    __syncthreads();
-#endif
 
     #if 0 // debug: all runs in block #0, to avoid concurrency between blocks
-    if (blockIdx.x == 0) {
-        for (int group = 0; group < ngval; group++) {
-        dtype *new_pos, *tmp;
-        if (dev == nullptr) {
-            tmp = &sm[blksz * group];  // require dtype * npred * 3
-        } else {
-            tmp = dev + blksz * group;  // require dtype * npred * 3
-        }
-        new_pos = tmp, tmp += npred * 3;
-
-        const dtype *vals = values + group * nval;
-        if (group == 0) {
-            DUMPARR(0, 0, "input masks", ntorsion, npred, masks);
-        }
-        modify_conformer(sm_init_coord, new_pos, vals, sm_torsions, sm_masks, npred, nval, ntorsion, tmp);
-        single_SF_loss(
-          new_pos, sm_pocket, sm_pred_cross_dist, sm_pred_holo_dist, 6, npred, npocket, tmp, loss + group);
-        // DUMPARR1("loss", 1, nval+1, loss+group);
-    }}
+    if (blockIdx.x == 0) 
+        for (int group = 0; group < ngval; group++) 
     #else
     int group      = blockIdx.x;
-    if (group < ngval) {
-        dtype *new_pos, *tmp;
+    if (group < ngval) 
+    #endif
+    {
+        dtype *new_pos, *tmp, *vals;
         tmp = dev + blksz * group; 
         new_pos = tmp, tmp += npred * 3;
 
-        const dtype *vals = values + group * nval;
-        modify_conformer(sm_init_coord, new_pos, vals, sm_torsions, sm_masks, npred, nval, ntorsion, tmp);
-        single_SF_loss(
-          new_pos, sm_pocket, sm_pred_cross_dist, sm_pred_holo_dist, 6, npred, npocket, tmp, loss + group);
+        // prepare values
+        vals = sm + group * nval;
+        FOR_LOOP(i, nval) {
+            vals[i] = values[i];
+            if (group > 0) {
+                vals[group - 1] += eps;
+            }
+        }
+        __syncthreads();
+
+        modify_conformer(init_coord, new_pos, vals, torsions, masks, npred, nval, ntorsion, tmp);
+        single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp,
+                       loss + group);
     }
-    #endif
 }
 #if 0
 __global__ void sched(dtype *data) {
@@ -1081,39 +1032,44 @@ void sm_init(int device) {
     }
     sm_max_size = prop.sharedMemPerBlock;
 }
-void dock_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dtype *pred_holo_dist,
-              dtype *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
-              int ntorsion, dtype *loss, dtype *dev, int &devSize, cudaStream_t stream,
-              int smMaxSize) {
+int dock_grad_gpu_block_size(int npred, int npocket, int ntorsion) {
     //    npred * 3 + max(
     //          18 + max(9*nedge, 6 * npos),
     //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
     //          max(npred, npocket)
-    int smsize = npred * 3
+    int blksz = npred * 3
                  + std::max(18 + std::max(9 * ntorsion, 6 * npred),
                             npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
                               + npred * std::max(npred, npocket));
-    smsize *= sizeof(dtype);
+    blksz *= sizeof(dtype);
+    return blksz;
+}
+int dock_grad_gpu_mem_size(int npred, int npocket, int nval, int ntorsion) {
+    int ngval = nval + 1; // calc loss and grads for each x in values
+    int blksz = dock_grad_gpu_block_size(npred, npocket, ntorsion);
+    return blksz * ngval;
+}
 
-    if (dev == nullptr) {
-        devSize = smsize;
-        return;
-    }
-    dtype *tmp = nullptr;
-    if (smsize > smMaxSize) {
-        tmp = dev;
-        assert(smsize <= devSize);
-        smsize = 0;
-    }
-
-    // std::cout << "npred " << npred << " npocket " << npocket << " mem " << smsize << std::endl;
+// values should be nval dtypes
+void dock_grad_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dtype *pred_holo_dist,
+                   dtype *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
+                   int ntorsion,
+                   dtype *loss,  // ngval dtype array
+                   dtype *dev,
+                   int devSize,  // in bytes
+                   cudaStream_t stream, int smMaxSize, dtype eps) {
+    assert(ntorsion + 6 == nval);
+    int ngval = nval + 1; // calc loss and grads for each x in values
+    int blksz = dock_grad_gpu_block_size(npred, npocket, ntorsion);
+    int smsize = nval * ngval * sizeof(dtype); // for values
 
     dim3 block(npred);
-    dim3 grid(1, 1, 1);
-    dock_kernel<<<grid, block, smsize, stream>>>(init_coord, pocket, pred_cross_dist,
-                                                 pred_holo_dist, values, torsions, masks, npred,
-                                                 npocket, nval, ntorsion, loss, tmp);
+    dim3 grid(ngval);
+    dock_grad_kernel<<<grid, block, smsize, stream>>>(
+        init_coord, pocket, pred_cross_dist, pred_holo_dist, values, torsions, masks, npred,
+        npocket, nval, ngval, ntorsion, loss, dev, blksz / sizeof(dtype), eps);
 }
+#if 0
 void dock_grad_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dtype *pred_holo_dist,
                    dtype *values, int *torsions, uint8_t *masks, int npred, int npocket, int nval,
                    int ngval, int ntorsion,
@@ -1155,4 +1111,6 @@ void dock_grad_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dty
         init_coord, pocket, pred_cross_dist, pred_holo_dist, values, torsions, masks, npred,
         npocket, nval, ngval, ntorsion, loss, tmp, blksz / sizeof(dtype));
 }
+#endif
+
 };  // namespace dock

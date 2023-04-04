@@ -1,3 +1,7 @@
+option(USE_DOUBLE "using double instead of float in calc" ON)
+
+
+
 #  Build cudock pybind based package
 #=======================================================================
 set(PYDOCK_VERSION "0.1")
@@ -58,6 +62,12 @@ list(APPEND SRC_FILES
 )
 cuda_add_library(${PROJECT_NAME} STATIC ${SRC_FILES})
 target_link_libraries(${PROJECT_NAME} ${LINK_LIBS} -lpthread)   
+
+if (USE_DOUBLE)
+target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DOUBLE=1)
+else()
+target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DOUBLE=0)
+endif()
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 #=======================================================================
@@ -99,6 +109,11 @@ list(APPEND INCDIRS ${CMAKE_CURRENT_SOURCE_DIR})
 
 include_directories(${INCDIRS})
 target_link_libraries(cudock PRIVATE ${LNKLIBS} ${PROJECT_NAME})
+if (USE_DOUBLE)
+target_compile_definitions(cudock PRIVATE USE_DOUBLE=1)
+else()
+target_compile_definitions(cudock PRIVATE USE_DOUBLE=0)
+endif()
 
 set(PYTHON_PACKAGE_SRC_DIR "${PROJECT_SOURCE_DIR}/python")
 set(PYTHON_PACKAGE_DST_DIR "${CMAKE_BINARY_DIR}/lib/python_package")
