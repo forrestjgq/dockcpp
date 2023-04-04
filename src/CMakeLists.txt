@@ -1,6 +1,6 @@
 #  Build cudock pybind based package
 #=======================================================================
-set(PYDOCK_VERSION "0.1")
+set(PYDOCK_VERSION "0.2")
 
 # Setup Python executable
 if(NOT DEFINED Python3_FIND_REGISTRY)
