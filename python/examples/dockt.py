@@ -27,6 +27,20 @@ def savetensors(seq, values, init_coord, torsions, masks, pocket, pred_cross_dis
     }
     for k, v in target.items():
         torch.save(v, os.path.join(path, k))
+def loadtensors1(seq):
+    target = [
+        "values",
+        "init_coord",
+        "torsions",
+        "masks",
+        "pocket",
+        "pred_cross_dist",
+        "pred_holo_dist",
+        # "loss"
+    ]
+    path = f"/home/jgq/src/docking-master/failed/{seq}"
+    # path = "/home/forrest/project/dockcpp/python/examples/tensors"
+    return (torch.load(os.path.join(path, f'{name}')) for name in target)
 def loadtensors(seq):
     target = [
         "values",
@@ -38,7 +52,7 @@ def loadtensors(seq):
         "pred_holo_dist",
         # "loss"
     ]
-    path = "/home/jgq/src/docking-master/failed"
+    path = f"/home/jgq/src/docking-master/failed"
     # path = "/home/forrest/project/dockcpp/python/examples/tensors"
     return (torch.load(os.path.join(path, f'{seq}_{name}')) for name in target)
         
@@ -191,11 +205,19 @@ def test_session_seq1(seq, ctx):
         assert not failed, (i, t)
 
 def test_session_seq(seq, ctx):
-    vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist = loadtensors(seq)
+    vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist = loadtensors1(seq)
+    vt = torch.tensor([0.117664,-0.482597,-0.596182,-0.782030,-1.486720,0.675532,0.307211])
     s = ctx.new_session(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, len(vt))
     t, ok = ctx.session_submit(s, vt)
     print(f't={t}')
     assert ok
+
+def test_lbfgsb_seq(seq):
+    vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist = loadtensors1(seq)
+    values = torch.zeros(vt.shape[0], device=init_coord.device, requires_grad=False)
+    t, best, ok = pydock.lbfgsb(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, values)
+    assert ok
+    print(f'best = {best} t={t}')
 
 if __name__ == '__main__':
     assert len(sys.argv) >= 3
@@ -223,3 +245,5 @@ if __name__ == '__main__':
         elif action == 'session':
             # Cuda calculates loss and grads
             test_session_seq(seq, ctx)
+        elif action == 'lb':
+            test_lbfgsb_seq(seq)

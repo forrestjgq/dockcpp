@@ -928,6 +928,7 @@ __device__ __forceinline__ void single_SF_loss(
     __syncthreads();
     DUMPARR(0, 0, "dist", npred, npocket, dist);
     DUMPARR(0, 0, "holo dist", npred, npred, holo_dist);
+    DUMPARR(0, 0, "holo dist pred", npred, npred, holo_dist_predict);
 
     // require npred x npocket dtypes
     smooth_l1_loss<true>(dist_predict, dist, tmp, 1.0, npred, npocket, flags, cross_dist_score);
@@ -941,6 +942,7 @@ __device__ __forceinline__ void single_SF_loss(
         DUMPARR(0, 0, "cross dist score", 1, 1, cross_dist_score);
         DUMPARR(0, 0, "dist score", 1, 1, dist_score);
         DUMPARR(0, 0, "loss", 1, 1, out);
+        // printf("%d: %f\n", blockIdx.x, *out);
         // printf("grid %d loss %p %f\n", blockIdx.x, out, *out);
         // printf("cross dist score %f dist score %f loss %f\n", *cross_dist_score, *dist_score, *out);
     }

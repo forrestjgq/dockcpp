@@ -6,6 +6,7 @@
 #include <iostream>
 #include "context.h"
 #include "dock.h"
+#include "optimizer.h"
 
 template <typename T>
 using Ptr = std::shared_ptr<T>;
@@ -16,6 +17,9 @@ Ptr<T> MakePtr(Args &&...args) {
 #define CLASS(cls, doc)            py::class_<cls, Ptr<cls>>(m, #cls, doc)
 #define SUBCLASS(cls, parent, doc) py::class_<cls, parent, Ptr<cls>>(m, #cls, doc)
 
+namespace dock {
+extern void checkGpuMem(std::string file, int line);
+};
 namespace cudock {
 
 using Tensor = torch::Tensor;
@@ -113,6 +117,41 @@ std::tuple<Tensor, bool> dock_submit(std::shared_ptr<dock::Context> ctx,
     std::cerr << "Request submit failed" << std::endl;
     return std::tuple<torch::Tensor, bool>(t, false);
 }
+std::tuple<Tensor, float, bool> lbfgsb(Tensor init_coord, Tensor pocket, Tensor pred_cross_dist,
+                                       Tensor pred_holo_dist, Tensor torsions, Tensor masks,
+                                       Tensor values, float eps) {
+    int npred, npocket, itmp, ntorsions, nval;
+    auto sp_values = copy_float_tensor(values, nval);
+    auto sp_init_coord = copy_float_tensor(init_coord, npred);
+    auto sp_pocket = copy_float_tensor(pocket, npocket);
+    auto sp_pred_cross_dist = copy_float_tensor(pred_cross_dist, itmp);
+    auto sp_pred_holo_dist = copy_float_tensor(pred_holo_dist, itmp);
+
+    npred /= 3;
+    npocket /= 3;
+    ntorsions = torsions.sizes()[0];
+
+    dtype best = 0;
+    auto out = std::shared_ptr<dtype>(new dtype[nval]);
+    auto outf = std::shared_ptr<float>(new float[nval]);
+    auto o = dock::create_lbfgsb_dock(
+        sp_init_coord.get(), sp_pocket.get(), sp_pred_cross_dist.get(), sp_pred_holo_dist.get(),
+        (int *)torsions.data_ptr(), (uint8_t *)masks.data_ptr(), npred, npocket, ntorsions);
+
+    torch::Tensor t;
+    auto ret = o->run(sp_values.get(), out.get(), &best, eps, nval);
+    if (ret == 0) {
+        auto p = out.get();
+        auto pf = outf.get();
+        for (auto i = 0; i < nval; i++) {
+            pf[i] = (float)p[i];
+        }
+        auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCPU);
+        t = torch::from_blob(pf, nval, options).clone();
+        return std::tuple<torch::Tensor, float, bool>(t, (float)best, true);
+    }
+    return std::tuple<torch::Tensor, float, bool>(t, 0, false);
+}
 
 PYBIND11_MODULE(cudock, m) {
     CLASS(dock::Context, "Dock context")
@@ -123,5 +162,11 @@ PYBIND11_MODULE(cudock, m) {
     m.def("create_cuda_context", &dock::createCudaContext, "create a cuda context on specified device");
     m.def("create_dock_session", &dock_create_session, "create a cuda dock grad session, for subsequent submittion by dock_submit");
     m.def("dock_submit", &dock_submit, "submit a request on a session and get loss value and grads");
+
+        CLASS(dock::Optimizer, "optimizer algs")
+      .def(py::init<>())
+      .def("run", &dock::Optimizer::run, "run a optimizing session");
+    m.def("lbfgsb", &lbfgsb, "run lbfgsb optmizer");
+    m.def("checkgpu", &dock::checkGpuMem, "run lbfgsb optmizer");
 }
 };  // namespace cudock

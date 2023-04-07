@@ -51,3 +51,29 @@ class CudaContext:
         """
         return _cu.dock_submit(self._cu_ctx, session, vt);
         
+def lbfgsb(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, init_values, eps=0.01):
+    """create a session for one optimization
+
+    Args:
+        init_coord (torch.Tensor): initial ligand position, dim: (N, 3)
+        torsions (list): M x 2 int list for torsion angle, dim 0 for start node index, dim 1 for end node index
+        masks (list of torch.Tensor(dtype=bool)): torsion masks, length should be M, sub length should be N
+        pocket_coords (torch.Tensor): pocket positions, K x 3 float tensors
+        pred_cross_dist (torch.Tensor): predicted distance from ligand to pociekts, N x K
+        pred_holo_dist (torch.Tensor): predicted ligand holo distance, N X N
+        nval (int): length of values (x in f(x))
+        eps (float): delta x for dy/dx
+
+    Returns:
+        _cu.Request: session handle
+    """
+    masks = [[1 if m else 0 for m in item] for item in masks]
+    masks = torch.tensor(masks,dtype=torch.uint8)
+    torsions = torch.tensor(torsions, dtype=torch.int)
+    # print(f'pocket type {type(pocket_coords)} shape {pocket_coords.shape}')
+    # print(f'pred cross dist type {type(pred_cross_dist)} shape {pred_cross_dist.shape}')
+    # print(f'pred holo dist type {type(pred_holo_dist)} shape {pred_holo_dist.shape}')
+    return _cu.lbfgsb(init_coord, pocket_coords, pred_cross_dist, pred_holo_dist, torsions, masks, init_values, eps)
+
+def checkGpuMem(file, line):
+    return _cu.checkgpu(file, line)
