@@ -90,10 +90,10 @@ public:
 
         lbfgsbcuda::lbfgsbdefaultoption<dtype>(lbfgsb_options);
         lbfgsb_options.mode          = LCM_CUDA;
-        lbfgsb_options.eps_f         = static_cast<dtype>(1e-4);
-        lbfgsb_options.eps_g         = static_cast<dtype>(1e-4);
-        lbfgsb_options.eps_x         = static_cast<dtype>(1e-4);
-        lbfgsb_options.max_iteration = 5000;
+        lbfgsb_options.eps_f         = static_cast<dtype>(1e-8);
+        lbfgsb_options.eps_g         = static_cast<dtype>(1e-8);
+        lbfgsb_options.eps_x         = static_cast<dtype>(1e-8);
+        lbfgsb_options.max_iteration = 1000;
 
         LBFGSB_CUDA_STATE<dtype> state;
         cublasStatus_t stat = cublasCreate(&(state.m_cublas_handle));

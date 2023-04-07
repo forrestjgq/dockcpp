@@ -135,7 +135,7 @@ inline cublasStatus_t cublasRdot<double>(cublasHandle_t handle, int n,
   return cublasDdot(handle, n, x, incx, y, incy, result);
 }
 
-#define _DEBUG
+// #define _DEBUG
 #ifdef _DEBUG
 #define debugSync() cutilSafeCall(cudaDeviceSynchronize())
 #else
