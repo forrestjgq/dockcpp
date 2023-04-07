@@ -493,7 +493,7 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
            const int& head, real* p, real* c, real* v, int& nint,
            const real& sbgnrm, real* buf_s_r, real* buf_array_p, int* iwhere,
            const int& iPitch_normal, const real& machinemaximum,
-           cublasHandle_t cublas_handle, const cudaStream_t* streamPool) {
+           cublasHandle_t cublas_handle, const StreamPool* streamPool) {
   debugSync();
 
   if (sbgnrm <= 0) {
@@ -524,17 +524,17 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
   real* output1 = (nblock1 == 1) ? f1_d : buf_s_r;
   real* output2 = (nblock1 == 1) ? p : buf_array_p;
 
-  dynamicCall(kernel0, mi, real, nblock1, 1, streamPool[0],
+  dynamicCall(kernel0, mi, real, nblock1, 1, streamPool->stream(0),
               (nblock0, g, nbd, output0, x, u, l, iwhere, machinemaximum));
 
-  dynamicCall(kernel1, mi, real, nblock1, 1, streamPool[0],
+  dynamicCall(kernel1, mi, real, nblock1, 1, streamPool->stream(0),
               (nblock0, g, output1, iwhere));
 
   int op20 = (nblock1 == 1) ? 1 : iPitch_normal;
 
   if (col > 0) {
     dynamicCall(
-        kernel20, mi, real, nblock1, col * 2, streamPool[0],
+        kernel20, mi, real, nblock1, col * 2, streamPool->stream(0),
         (nblock0, head, m, col, iPitch, op20, g, output2, wy, ws, iwhere));
   }
   nblock0 = nblock1;
@@ -550,15 +550,15 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
     output1 = (nblock1 == 1) ? f1_d : (output1 + nblock0);
     output2 = (nblock1 == 1) ? p : (output2 + nblock0);
 
-    dynamicCall(kernel01, mi, real, nblock1, 1, streamPool[0],
+    dynamicCall(kernel01, mi, real, nblock1, 1, streamPool->stream(0),
                 (nblock0, input0, output0, machinemaximum));
 
-    dynamicCall(kernel21, mi, real, nblock1, 1, streamPool[1],
+    dynamicCall(kernel21, mi, real, nblock1, 1, streamPool->stream(1),
                 (nblock0, 1, 1, input1, output1));
 
     int op20 = (nblock1 == 1) ? 1 : iPitch_normal;
     if (col > 0) {
-      dynamicCall(kernel21, mi, real, nblock1, col * 2, streamPool[2],
+      dynamicCall(kernel21, mi, real, nblock1, col * 2, streamPool->stream(2),
                   (nblock0, iPitch_normal, op20, input2, output2));
     }
 
@@ -567,7 +567,7 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
 
   if (col > 0 && theta != 1) {
     debugSync();
-    kernel22<real><<<dim3(1), dim3(col), 0, streamPool[2]>>>(col, p + col, theta);
+    kernel22<real><<<dim3(1), dim3(col), 0, streamPool->stream(2)>>>(col, p + col, theta);
 
     debugSync();
   }
@@ -575,16 +575,16 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
   *fd_h = 0;
 
   if (col > 0) {
-    bmv::prog0<real>(sy, col, iPitch, p, v, streamPool[2]);
+    bmv::prog0<real>(sy, col, iPitch, p, v, streamPool->stream(2));
 
     debugSync();
-    bmv::prog1<real>(wt, col, iPitch, p, v, cublas_handle, streamPool[2]);
+    bmv::prog1<real>(wt, col, iPitch, p, v, cublas_handle, streamPool->stream(2));
 
     debugSync();
-    bmv::prog2<real>(sy, wt, col, iPitch, p, v, streamPool[2]);
+    bmv::prog2<real>(sy, wt, col, iPitch, p, v, streamPool->stream(2));
 
     debugSync();
-    cublasSetStream(cublas_handle, streamPool[2]);
+    cublasSetStream(cublas_handle, streamPool->stream(2));
 
     cublasRdot<real>(cublas_handle, col * 2, v, 1, p, 1, fd_h);
 
@@ -599,12 +599,12 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
   real dtm = std::min(*bkmin_h, dt);
   dtm = std::max(static_cast<real>(0.0), dtm);
 
-  kernel3<real><<<dim3(iDivUp(n, 512)), dim3(512), 0, streamPool[0]>>>(
+  kernel3<real><<<dim3(iDivUp(n, 512)), dim3(512), 0, streamPool->stream(0)>>>(
       n, x, g, xcp, xcpb, dtm, iwhere);
 
   if (col > 0) {
     kernel4<real>
-        <<<dim3(1), dim3(col * 2), 0, streamPool[1]>>>(col * 2, p, c, dtm);
+        <<<dim3(1), dim3(col * 2), 0, streamPool->stream(1)>>>(col * 2, p, c, dtm);
   }
 }
 
@@ -614,7 +614,7 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
       const real*, real*, real*, real*, const int&, const real*, const real*, \
       const real*, const int, real*, const real&, const int&, const int&,     \
       real*, real*, real*, int&, const real&, real*, real*, int*, const int&, \
-      const real&, cublasHandle_t, const cudaStream_t*);
+      const real&, cublasHandle_t, const StreamPool*);
 
 INST_HELPER(double);
 INST_HELPER(float);

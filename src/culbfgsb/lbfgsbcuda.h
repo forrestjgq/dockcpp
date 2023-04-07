@@ -299,7 +299,7 @@ void lbfgsbcauchy(const int& n, const real* x, const real* l, const real* u,
                   const real& sbgnrm, real* buf_s_r, real* buf_array_p,
                   int* iwhere, const int& iPitch_normal,
                   const real& machinemaximum, cublasHandle_t cublas_handle,
-                  const cudaStream_t* streamPool, int& info);
+                  const StreamPool* streamPool, int& info);
 
 template <typename real>
 void lbfgsbcmprlb(const int& n, const int& m, const real* x, const real* g,
@@ -320,13 +320,13 @@ void lbfgsbformk(const int& n, const int& nsub, const int* ind,
                  real* buf_array_super, const int& iPitch_wn,
                  const int& iPitch_ws, const int& iPitch_super,
                  const int& iPitch_normal, const real& machineepsilon,
-                 cublasHandle_t cublas_handle, const cudaStream_t* streamPool);
+                 cublasHandle_t cublas_handle, const StreamPool* streamPool);
 
 template <typename real>
 void lbfgsbformt(const int& m, real* wt, const real* sy, const real* ss,
                  const int& col, const real& theta, int& info,
                  const int& iPitch, const real& machineepsilon,
-                 const cudaStream_t* streamPool);
+                 const StreamPool* streamPool);
 
 template <typename real>
 void lbfgsblnsrlb(const int& n, const real* l, const real* u, const int* nbd,
@@ -336,7 +336,7 @@ void lbfgsblnsrlb(const int& n, const real* l, const real* u, const int* nbd,
                   const real& stpscaling, const int& iter, int& ifun,
                   int& iback, int& nfgv, int& info, int& task, int& csave,
                   int* isave, real* dsave, real* buf_s_r,
-                  cublasHandle_t cublas_handle, const cudaStream_t* streamPool);
+                  cublasHandle_t cublas_handle, const StreamPool* streamPool);
 
 template <typename real>
 void lbfgsbmatupdsub(const int& n, const int& m, real* wy, real* sy,
@@ -351,7 +351,7 @@ void lbfgsbmatupd(const int& n, const int& m, real* ws, real* wy, real* sy,
                   const int& iupdat, int& col, int& head, real& theta,
                   const real& rr, const real& dr, const real& stp,
                   const real& dtd, const int& iPitch, real* buf_array_p,
-                  const int& iPitch_normal, const cudaStream_t* streamPool);
+                  const int& iPitch_normal, const StreamPool* streamPool);
 
 template <typename real>
 void lbfgsbprojgr(const int& n, const real* l, const real* u, const int* nbd,
@@ -425,7 +425,7 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
            const int& head, real* p, real* c, real* v, int& nint,
            const real& sbgnrm, real* buf_s_r, real* buf_array_p, int* iwhere,
            const int& iPitch_normal, const real& machinemaximum,
-           cublasHandle_t cublas_handle, const cudaStream_t* streamPool);
+           cublasHandle_t cublas_handle, const StreamPool* streamPool);
 };
 namespace freev {
 void prog0(const int& n, int& nfree, int* index, int& nenter, int& ileave,
@@ -436,48 +436,48 @@ void prog0(const int& n, int& nfree, int* index, int& nenter, int& ileave,
 };
 namespace formk {
 template <typename real>
-void prog0(real* wn1, int m, int iPitch_wn, const cudaStream_t* streamPool);
+void prog0(real* wn1, int m, int iPitch_wn, const StreamPool* streamPool);
 
 template <typename real>
 void prog1(const int n, const int nsub, const int ipntr, const int* ind,
            real* wn1, real* buf_array_p, const real* ws, const real* wy,
            const int head, const int m, const int col, const int iPitch_ws,
            const int iPitch_wn, const int iPitch_normal,
-           const cudaStream_t* streamPool);
+           const StreamPool* streamPool);
 
 template <typename real>
 void prog2(real* wn1, const int col, const int m, const int iPitch_wn,
-           const cudaStream_t* streamPool);
+           const StreamPool* streamPool);
 
 template <typename real>
 void prog3(const int* ind, const int jpntr, const int head, const int m,
            const int col, const int n, const int nsub, const int iPitch_ws,
            const int iPitch_wn, const int jy, const real* ws, const real* wy,
            real* buf_array_p, real* wn1, const int iPitch_normal,
-           const cudaStream_t* streamPool);
+           const StreamPool* streamPool);
 
 template <typename real>
 void prog31(const int* indx2, const int head, const int m, const int upcl,
             const int col, const int nenter, const int ileave, const int n,
             const int iPitch_ws, const int iPitch_wn, const real* wy,
             real* buf_array_sup, real* wn1, const real scal,
-            const int iPitch_super, const cudaStream_t* streamPool);
+            const int iPitch_super, const StreamPool* streamPool);
 
 template <typename real>
 void prog32(const int* indx2, const int head, const int m, const int upcl,
             const int nenter, const int ileave, const int n,
             const int iPitch_ws, const int iPitch_wn, const real* wy,
             const real* ws, real* buf_array_sup, real* wn1,
-            const int iPitch_super, const cudaStream_t* streamPool);
+            const int iPitch_super, const StreamPool* streamPool);
 
 template <typename real>
 void prog4(const int col, const int iPitch_wn, const int iPitch_ws, const int m,
            const real* wn1, const real theta, const real* sy, real* wn,
-           const cudaStream_t* streamPool);
+           const StreamPool* streamPool);
 
 template <typename real>
 void prog5(const int col, const int iPitch_wn, real* wn,
-           cublasHandle_t cublas_handle, const cudaStream_t* streamPool);
+           cublasHandle_t cublas_handle, const StreamPool* streamPool);
 };  // namespace formk
 namespace cmprlb {
 template <typename real>

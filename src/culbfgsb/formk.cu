@@ -606,7 +606,7 @@ __global__ void kernel5(int col, int iPitch_wn, real* wn) {
 }
 
 template <typename real>
-void prog0(real* wn1, int m, int iPitch_wn, const cudaStream_t* streamPool) {
+void prog0(real* wn1, int m, int iPitch_wn, const StreamPool* streamPool) {
   kernel0<real><<<1, dim3(16, 16)>>>(wn1, m, iPitch_wn);
 }
 
@@ -615,7 +615,7 @@ void prog1(const int n, const int nsub, const int ipntr, const int* ind,
            real* wn1, real* buf_array_p, const real* ws, const real* wy,
            const int head, const int m, const int col, const int iPitch_ws,
            const int iPitch_wn, const int iPitch_normal,
-           const cudaStream_t* streamPool) {
+           const StreamPool* streamPool) {
   debugSync();
 
   {
@@ -626,7 +626,7 @@ void prog1(const int n, const int nsub, const int ipntr, const int* ind,
     real* output = (nblock1 == 1) ? (wn1 + (col - 1) * iPitch_wn) : buf_array_p;
     int op20 = (nblock1 == 1) ? 1 : iPitch_normal;
 
-    dynamicCall(kernel10, mi, real, nblock1, col, streamPool[0],
+    dynamicCall(kernel10, mi, real, nblock1, col, streamPool->stream(0),
                 (n, nsub, ipntr, output, wy, ind, head, m, iPitch_ws, op20));
 
     nblock0 = nblock1;
@@ -640,7 +640,7 @@ void prog1(const int n, const int nsub, const int ipntr, const int* ind,
 
       int op20 = (nblock1 == 1) ? 1 : iPitch_normal;
 
-      dynamicCall(kernel11, mi, real, nblock1, col, streamPool[0],
+      dynamicCall(kernel11, mi, real, nblock1, col, streamPool->stream(0),
                   (nblock0, iPitch_normal, op20, input, output));
 
       nblock0 = nblock1;
@@ -658,7 +658,7 @@ void prog1(const int n, const int nsub, const int ipntr, const int* ind,
                          : buf_array_p;
       int op20 = (nblock1 == 1) ? 1 : iPitch_normal;
 
-      dynamicCall(kernel101, mi, real, nblock1, col, streamPool[0],
+      dynamicCall(kernel101, mi, real, nblock1, col, streamPool->stream(0),
                   (n, nsub, ipntr, output, ws, ind, head, m, iPitch_ws, op20));
 
       /*
@@ -678,7 +678,7 @@ void prog1(const int n, const int nsub, const int ipntr, const int* ind,
 
         int op20 = (nblock1 == 1) ? 1 : iPitch_normal;
 
-        dynamicCall(kernel11, mi, real, nblock1, col, streamPool[0],
+        dynamicCall(kernel11, mi, real, nblock1, col, streamPool->stream(0),
                     (nblock0, iPitch_normal, op20, input, output));
 
         nblock0 = nblock1;
@@ -697,7 +697,7 @@ void prog1(const int n, const int nsub, const int ipntr, const int* ind,
       int op20 = (nblock1 == 1) ? 1 : iPitch_normal;
 
       dynamicCall(
-          kernel102, mi, real, nblock1, col, streamPool[0],
+          kernel102, mi, real, nblock1, col, streamPool->stream(0),
           (n, nsub, ipntr, output, ws, wy, ind, head, m, iPitch_ws, op20));
 
       /*
@@ -716,7 +716,7 @@ void prog1(const int n, const int nsub, const int ipntr, const int* ind,
 
         int op20 = (nblock1 == 1) ? 1 : iPitch_normal;
 
-        dynamicCall(kernel11, mi, real, nblock1, col, streamPool[0],
+        dynamicCall(kernel11, mi, real, nblock1, col, streamPool->stream(0),
                     (nblock0, iPitch_normal, op20, input, output));
 
         nblock0 = nblock1;
@@ -729,11 +729,11 @@ void prog1(const int n, const int nsub, const int ipntr, const int* ind,
 
 template <typename real>
 void prog2(real* wn1, const int col, const int m, const int iPitch_wn,
-           const cudaStream_t* streamPool) {
+           const StreamPool* streamPool) {
   int offset = (col + m - 1) * iPitch_wn;
 
-  cudaMemsetAsync(wn1 + offset + m, 0, col * sizeof(real), streamPool[1]);
-  cudaMemsetAsync(wn1 + offset, 0, col * sizeof(real), streamPool[1]);
+  cudaMemsetAsync(wn1 + offset + m, 0, col * sizeof(real), streamPool->stream(1));
+  cudaMemsetAsync(wn1 + offset, 0, col * sizeof(real), streamPool->stream(1));
 }
 
 template <typename real>
@@ -741,7 +741,7 @@ void prog3(const int* ind, const int jpntr, const int head, const int m,
            const int col, const int n, const int nsub, const int iPitch_ws,
            const int iPitch_wn, const int jy, const real* ws, const real* wy,
            real* buf_array_p, real* wn1, const int iPitch_normal,
-           const cudaStream_t* streamPool) {
+           const StreamPool* streamPool) {
   int nblock0 = nsub;
   int mi = log2Up(nblock0);
   int nblock1 = iDivUp2(nblock0, mi);
@@ -749,7 +749,7 @@ void prog3(const int* ind, const int jpntr, const int head, const int m,
   real* output = (nblock1 == 1) ? (wn1 + m * iPitch_wn + jy) : buf_array_p;
   int op20 = (nblock1 == 1) ? iPitch_wn : iPitch_normal;
 
-  dynamicCall(kernel30, mi, real, nblock1, col, streamPool[2],
+  dynamicCall(kernel30, mi, real, nblock1, col, streamPool->stream(2),
               (ind, jpntr, head, m, n, nsub, iPitch_ws, ws, wy, output, op20));
 
   nblock0 = nblock1;
@@ -761,7 +761,7 @@ void prog3(const int* ind, const int jpntr, const int head, const int m,
     output = (nblock1 == 1) ? (wn1 + m * iPitch_wn + jy) : (output + nblock0);
 
     int op20 = (nblock1 == 1) ? iPitch_wn : iPitch_normal;
-    dynamicCall(kernel11, mi, real, nblock1, col, streamPool[2],
+    dynamicCall(kernel11, mi, real, nblock1, col, streamPool->stream(2),
                 (nblock0, iPitch_normal, op20, input, output));
 
     nblock0 = nblock1;
@@ -974,7 +974,7 @@ void prog31(const int* indx2, const int head, const int m, const int upcl,
             const int col, const int nenter, const int ileave, const int n,
             const int iPitch_ws, const int iPitch_wn, const real* wy,
             real* buf_array_sup, real* wn1, const real scal,
-            const int iPitch_super, const cudaStream_t* streamPool) {
+            const int iPitch_super, const StreamPool* streamPool) {
   int nblock0 = n;
   int mi = log2Up(nblock0);
   int nblock1 = iDivUp2(nblock0, mi);
@@ -998,7 +998,7 @@ void prog31(const int* indx2, const int head, const int m, const int upcl,
   real* output = (nblock1 == 1) ? wn1 : buf_array_sup;
   int op20 = (nblock1 == 1) ? iPitch_wn : iPitch_super;
 
-  dynamicCall(kernel310, mi, real, nblock1, numline, streamPool[2],
+  dynamicCall(kernel310, mi, real, nblock1, numline, streamPool->stream(2),
               (indx2, head, m, n, nenter, ileave, iPitch_ws, pCoord_dev, wy,
                scal, output, op20));
 
@@ -1011,7 +1011,7 @@ void prog31(const int* indx2, const int head, const int m, const int upcl,
     output = (nblock1 == 1) ? wn1 : (output + nblock0);
 
     int op20 = (nblock1 == 1) ? iPitch_wn : iPitch_super;
-    dynamicCall(kernel311, mi, real, nblock1, numline, streamPool[2],
+    dynamicCall(kernel311, mi, real, nblock1, numline, streamPool->stream(2),
                 (nblock0, iPitch_super, op20, pCoord_dev, input, output));
 
     nblock0 = nblock1;
@@ -1026,7 +1026,7 @@ void prog32(const int* indx2, const int head, const int m, const int upcl,
             const int nenter, const int ileave, const int n,
             const int iPitch_ws, const int iPitch_wn, const real* wy,
             const real* ws, real* buf_array_sup, real* wn1,
-            const int iPitch_super, const cudaStream_t* streamPool) {
+            const int iPitch_super, const StreamPool* streamPool) {
   int nblock0 = n;
   int mi = log2Up(nblock0);
   int nblock1 = iDivUp2(nblock0, mi);
@@ -1035,7 +1035,7 @@ void prog32(const int* indx2, const int head, const int m, const int upcl,
   int op20 = (nblock1 == 1) ? iPitch_wn : iPitch_super;
 
   dynamicCall3D(
-      kernel320, mi, real, nblock1, upcl, upcl, streamPool[2],
+      kernel320, mi, real, nblock1, upcl, upcl, streamPool->stream(2),
       (indx2, head, m, n, nenter, ileave, iPitch_ws, ws, wy, output, op20));
 
   nblock0 = nblock1;
@@ -1047,7 +1047,7 @@ void prog32(const int* indx2, const int head, const int m, const int upcl,
     output = (nblock1 == 1) ? (wn1 + m * iPitch_wn) : (output + nblock0);
 
     int op20 = (nblock1 == 1) ? iPitch_wn : iPitch_super;
-    dynamicCall3D(kernel321, mi, real, nblock1, upcl, upcl, streamPool[2],
+    dynamicCall3D(kernel321, mi, real, nblock1, upcl, upcl, streamPool->stream(2),
                   (nblock0, iPitch_super, op20, input, output));
 
     nblock0 = nblock1;
@@ -1081,54 +1081,54 @@ __global__ void kernel4(const int col, const int iPitch_wn, const int iPitch_ws,
 template <typename real>
 void prog4(const int col, const int iPitch_wn, const int iPitch_ws, const int m,
            const real* wn1, const real theta, const real* sy, real* wn,
-           const cudaStream_t* streamPool) {
+           const StreamPool* streamPool) {
   int nblock = iDivUp(col * 2, 8);
-  kernel4<real><<<dim3(nblock, nblock), dim3(8, 8), 0, streamPool[2]>>>(
+  kernel4<real><<<dim3(nblock, nblock), dim3(8, 8), 0, streamPool->stream(2)>>>(
       col, iPitch_wn, iPitch_ws, m, wn1, theta, sy, wn);
 }
 
 template <typename real>
 void prog5(const int col, const int iPitch_wn, real* wn,
-           cublasHandle_t cublas_handle, const cudaStream_t* streamPool) {
+           cublasHandle_t cublas_handle, const StreamPool* streamPool) {
   real alpha = 1;
   if (col == 1) {
-    kernel50<<<1, 1, 0, streamPool[2]>>>(wn);
+    kernel50<<<1, 1, 0, streamPool->stream(2)>>>(wn);
   } else {
-    cublasSetStream(cublas_handle, streamPool[2]);
+    cublasSetStream(cublas_handle, streamPool->stream(2));
     cublasRtrsm<real>(cublas_handle, CUBLAS_SIDE_RIGHT, CUBLAS_FILL_MODE_LOWER,
                       CUBLAS_OP_T, CUBLAS_DIAG_NON_UNIT, col, col, &alpha, wn,
                       iPitch_wn, wn + col, iPitch_wn);
     cublasSetStream(cublas_handle, NULL);
     debugSync();
   }
-  kernel5<real><<<dim3(col), dim3(8, col), 0, streamPool[2]>>>(col, iPitch_wn, wn);
+  kernel5<real><<<dim3(col), dim3(8, col), 0, streamPool->stream(2)>>>(col, iPitch_wn, wn);
 }
 
 #define INST_HELPER(real)                                                      \
-  template void prog0<real>(real*, int, int, const cudaStream_t*);             \
+  template void prog0<real>(real*, int, int, const StreamPool*);             \
   template void prog1<real>(const int, const int, const int, const int*,       \
                             real*, real*, const real*, const real*, const int, \
                             const int, const int, const int, const int,        \
-                            const int, const cudaStream_t*);                   \
+                            const int, const StreamPool*);                   \
   template void prog2<real>(real*, const int, const int, const int,            \
-                            const cudaStream_t*);                              \
+                            const StreamPool*);                              \
   template void prog3<real>(const int*, const int, const int, const int,       \
                             const int, const int, const int, const int,        \
                             const int, const int, const real*, const real*,    \
-                            real*, real*, const int, const cudaStream_t*);     \
+                            real*, real*, const int, const StreamPool*);     \
   template void prog31<real>(const int*, const int, const int, const int,      \
                              const int, const int, const int, const int,       \
                              const int, const int, const real*, real*, real*,  \
-                             const real, const int, const cudaStream_t*);      \
+                             const real, const int, const StreamPool*);      \
   template void prog32<real>(const int*, const int, const int, const int,      \
                              const int, const int, const int, const int,       \
                              const int, const real*, const real*, real*,       \
-                             real*, const int, const cudaStream_t*);           \
+                             real*, const int, const StreamPool*);           \
   template void prog4<real>(const int, const int, const int, const int,        \
                             const real*, const real, const real*, real*,       \
-                            const cudaStream_t*);                              \
+                            const StreamPool*);                              \
   template void prog5<real>(const int, const int, real*, cublasHandle_t,       \
-                            const cudaStream_t*);
+                            const StreamPool*);
 
 INST_HELPER(double);
 INST_HELPER(float);

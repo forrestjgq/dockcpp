@@ -185,13 +185,6 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
 
   real epsx2 = option.eps_x * option.eps_x;
 
-  cudaStream_t streamPool[16] = {NULL};
-
-#ifdef USE_STREAM
-  const static int MAX_STREAM = 10;
-  for (int i = 0; i < MAX_STREAM; i++)
-    cutilSafeCall(cudaStreamCreate(streamPool + i));
-#endif
 
   debugSync();
   lbfgsbactive<real>(n, l, u, nbd, x, iwhere);
@@ -219,7 +212,7 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
                        theta, col, head, wa, wa + 2 * m, wa + 6 * m, nint,
                        sbgnrm, buf_n_r, buf_array_p1, iwhere, normalpitch,
                        option.machine_maximum, state.m_cublas_handle,
-                       streamPool + 3, internalinfo);
+                       state.m_pool.subStreamPool(3), internalinfo);
     if (internalinfo != 0) {
       internalinfo = 0;
       col = 0;
@@ -244,7 +237,7 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
                           internalinfo, workvec, workmat, buf_array_p,
                           buf_array_super, pitch1, pitch0, superpitch,
                           normalpitch, option.machine_epsilon,
-                          state.m_cublas_handle, streamPool);
+                          state.m_cublas_handle, &state.m_pool);
         if (internalinfo != 0) {
           internalinfo = 0;
           col = 0;
@@ -260,7 +253,7 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
       lbfgsbcmprlb<real>(n, m, x, g, ws, wy, sy, wt, zb, r, wa, index, theta,
                          col, head, nfree, true, internalinfo, workvec,
                          workvec2, pitch0, state.m_cublas_handle,
-                         streamPool[0]);
+                         state.m_pool.stream(0));
       if (internalinfo != 0) {
         internalinfo = 0;
         col = 0;
@@ -275,7 +268,7 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
       lbfgsbsubsm<real>(n, m, nfree, index, l, u, nbd, z, r, xp, ws, wy, theta,
                         x, g, col, head, wa, wn, internalinfo, pitch1, pitch0,
                         buf_array_p, buf_n_r, bufi_n_r, normalpitch,
-                        state.m_cublas_handle, streamPool[0]);
+                        state.m_cublas_handle, state.m_pool.stream(0));
 
       if (internalinfo != 0) {
         internalinfo = 0;
@@ -297,12 +290,12 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
                          stp, dnrm, dtd, xstep, stpmx, option.step_scaling,
                          iter, ifun, iback, nfgv, internalinfo, task, csave,
                          isave2, dsave13, buf_n_r, state.m_cublas_handle,
-                         streamPool);
+                         &state.m_pool);
       if (internalinfo != 0 || iback >= 20 || task != 1) {
         break;
       }
       if (state.m_funcgrad_callback)
-        state.m_funcgrad_callback(x, f, g, streamPool[1], summary);
+        state.m_funcgrad_callback(x, f, g, state.m_pool.stream(1), summary);
       debugSync();
     }
     iter = iter + 1;
@@ -312,16 +305,16 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
 
     DBG("projgr");
     lbfgsbprojgr<real>(n, l, u, nbd, x, g, buf_n_r, sbgnrm_h, sbgnrm_d,
-                       option.machine_maximum, streamPool[1]);
+                       option.machine_maximum, state.m_pool.stream(1));
 
     DBG("vdiffxchg_v");
-    minimize::vdiffxchg_v<real>(n, xdiff, xold, x, streamPool[2]);
+    minimize::vdiffxchg_v<real>(n, xdiff, xold, x, state.m_pool.stream(2));
     debugSync();
     minimize::vdot_vv<real>(n, xdiff, xdiff, tf, state.m_cublas_handle,
-                            streamPool[2]);
+                            state.m_pool.stream(2));
 
-    minimize::vsub_v<real>(n, g, r, r, streamPool[3]);
-    minimize::vdot_vv<real>(n, r, r, rr, state.m_cublas_handle, streamPool[3]);
+    minimize::vsub_v<real>(n, g, r, r, state.m_pool.stream(3));
+    minimize::vdot_vv<real>(n, r, r, rr, state.m_cublas_handle, state.m_pool.stream(3));
 
     ddum = fmaxf(fabs(fold), fmaxf(fabs(f), real(1)));
 
@@ -347,7 +340,7 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
       ddum = -gdold;
     } else {
       dr = (gd - gdold) * stp;
-      minimize::vmul_v<real>(n, d, stp, streamPool[1]);
+      minimize::vmul_v<real>(n, d, stp, state.m_pool.stream(1));
       ddum = -gdold * stp;
     }
     summary.residual_x = sqrt(tf);
@@ -373,16 +366,16 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
     DBG("matupd");
       lbfgsbmatupd<real>(n, m, ws, wy, sy, ss, d, r, itail, iupdat, col, head,
                          theta, rr, dr, stp, dtd, pitch0, buf_array_p,
-                         normalpitch, streamPool);
+                         normalpitch, &state.m_pool);
       lbfgsbformt<real>(m, wt, sy, ss, col, theta, internalinfo, pitch0,
-                        option.machine_epsilon, streamPool);
+                        option.machine_epsilon, &state.m_pool);
     }
 
     if (internalinfo != 0) {
       memCopyAsync(x, t, n * sizeof(real), cudaMemcpyDeviceToDevice,
-                   streamPool[1]);
+                   state.m_pool.stream(1));
       memCopyAsync(g, r, n * sizeof(real), cudaMemcpyDeviceToDevice,
-                   streamPool[1]);
+                   state.m_pool.stream(1));
       f = fold;
 
       if (col == 0) {
@@ -406,9 +399,6 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
   summary.num_iteration = iter;
   summary.info = 0;
 
-#ifdef USE_STREAM
-  for (int i = 0; i < MAX_STREAM; i++) cudaStreamDestroy(streamPool[i]);
-#endif
 
   memFree(workvec);
   memFree(workvec2);
@@ -486,7 +476,7 @@ void lbfgsbcauchy(const int& n, const real* x, const real* l, const real* u,
                   const real& sbgnrm, real* buf_s_r, real* buf_array_p,
                   int* iwhere, const int& iPitch_normal,
                   const real& machinemaximum, cublasHandle_t cublas_handle,
-                  const cudaStream_t* streamPool, int& info) {
+                  const StreamPool* streamPool, int& info) {
   info = 0;
   debugSync();
   cauchy::prog0<real>(n, x, l, u, nbd, g, t, xcp, xcpb, m, wy, ws, sy, iPitch,
@@ -527,7 +517,7 @@ void lbfgsbformk(const int& n, const int& nsub, const int* ind,
                  real* buf_array_super, const int& iPitch_wn,
                  const int& iPitch_ws, const int& iPitch_super,
                  const int& iPitch_normal, const real& machineepsilon,
-                 cublasHandle_t cublas_handle, const cudaStream_t* streamPool) {
+                 cublasHandle_t cublas_handle, const StreamPool* streamPool) {
   int upcl = col;
   if (updatd) {
     if (iupdat > m) {
@@ -582,13 +572,13 @@ void lbfgsbformk(const int& n, const int& nsub, const int* ind,
                      streamPool);
   debugSync();
 
-  dpofa::prog0<real>(wn, col, iPitch_wn, 0, machineepsilon, streamPool[2]);
+  dpofa::prog0<real>(wn, col, iPitch_wn, 0, machineepsilon, streamPool->stream(2));
   debugSync();
 
   formk::prog5<real>(col, iPitch_wn, wn, cublas_handle, streamPool);
   debugSync();
 
-  dpofa::prog0<real>(wn, col, iPitch_wn, col, machineepsilon, streamPool[2]);
+  dpofa::prog0<real>(wn, col, iPitch_wn, col, machineepsilon, streamPool->stream(2));
   debugSync();
 }
 
@@ -596,11 +586,11 @@ template <typename real>
 void lbfgsbformt(const int& m, real* wt, const real* sy, const real* ss,
                  const int& col, const real& theta, int& info,
                  const int& iPitch, const real& machineepsilon,
-                 const cudaStream_t* streamPool) {
+                 const StreamPool* streamPool) {
   debugSync();
-  formt::prog01<real>(col, sy, ss, wt, iPitch, theta, streamPool[0]);
+  formt::prog01<real>(col, sy, ss, wt, iPitch, theta, streamPool->stream(0));
   debugSync();
-  dpofa::prog0<real>(wt, col, iPitch, 0, machineepsilon, streamPool[0]);
+  dpofa::prog0<real>(wt, col, iPitch, 0, machineepsilon, streamPool->stream(0));
   debugSync();
 
   info = 0;
@@ -615,7 +605,7 @@ void lbfgsblnsrlb(const int& n, const real* l, const real* u, const int* nbd,
                   int& iback, int& nfgv, int& info, int& task, int& csave,
                   int* isave, real* dsave, real* buf_s_r,
                   cublasHandle_t cublas_handle,
-                  const cudaStream_t* streamPool) {
+                  const StreamPool* streamPool) {
   const static real big = 1.0E10;
   const static real ftol = 1.0E-3;
   const static real gtol = 0.9E0;
@@ -627,7 +617,7 @@ void lbfgsblnsrlb(const int& n, const real* l, const real* u, const int* nbd,
     cudaHostAlloc(&stpmx_host, sizeof(real), cudaHostAllocMapped);
     cudaHostGetDevicePointer(&stpmx_dev, stpmx_host, 0);
 
-    minimize::vdot_vv<real>(n, d, d, dtd, cublas_handle, streamPool[0]);
+    minimize::vdot_vv<real>(n, d, d, dtd, cublas_handle, streamPool->stream(0));
 
     *stpmx_host = stpmx = big;
 
@@ -635,19 +625,19 @@ void lbfgsblnsrlb(const int& n, const real* l, const real* u, const int* nbd,
       stpmx = 1;
     } else {
       lnsrlb::prog0<real>(n, d, nbd, u, x, l, buf_s_r, stpmx_host, stpmx_dev,
-                          streamPool[1]);
+                          streamPool->stream(1));
     }
 
     memCopyAsync(t, x, n * sizeof(real), cudaMemcpyDeviceToDevice,
-                 streamPool[2]);
+                 streamPool->stream(2));
     memCopyAsync(r, g, n * sizeof(real), cudaMemcpyDeviceToDevice,
-                 streamPool[3]);
+                 streamPool->stream(3));
     fold = f;
     ifun = 0;
     iback = 0;
     csave = 0;
   }
-  minimize::vdot_vv<real>(n, g, d, gd, cublas_handle, streamPool[4]);
+  minimize::vdot_vv<real>(n, g, d, gd, cublas_handle, streamPool->stream(4));
 
   cudaDeviceSynchronize();
 
@@ -680,9 +670,9 @@ void lbfgsblnsrlb(const int& n, const real* l, const real* u, const int* nbd,
     iback = ifun - 1;
     if (stp == 1) {
       memCopyAsync(x, z, n * sizeof(real), cudaMemcpyDeviceToDevice,
-                   streamPool[1]);
+                   streamPool->stream(1));
     } else {
-      lnsrlb::prog2<real>(n, x, d, t, stp, streamPool[1]);
+      lnsrlb::prog2<real>(n, x, d, t, stp, streamPool->stream(1));
     }
   } else {
     task = 5;
@@ -712,7 +702,7 @@ void lbfgsbmatupd(const int& n, const int& m, real* ws, real* wy, real* sy,
                   const int& iupdat, int& col, int& head, real& theta,
                   const real& rr, const real& dr, const real& stp,
                   const real& dtd, const int& iPitch, real* buf_array_p,
-                  const int& iPitch_normal, const cudaStream_t* streamPool) {
+                  const int& iPitch_normal, const StreamPool* streamPool) {
   if (iupdat <= m) {
     col = iupdat;
     itail = Modular((head + iupdat - 1), m);
@@ -723,11 +713,11 @@ void lbfgsbmatupd(const int& n, const int& m, real* ws, real* wy, real* sy,
   theta = rr / dr;
 
   matupd::prog0<real>(n, m, wy, sy, r, d, itail, iupdat, col, head, dr, iPitch,
-                      iPitch, 1, buf_array_p, iPitch_normal, streamPool[1]);
+                      iPitch, 1, buf_array_p, iPitch_normal, streamPool->stream(1));
 
   matupd::prog0<real>(n, m, ws, ss, d, d, itail, iupdat, col, head,
                       stp * stp * dtd, iPitch, 1, iPitch, buf_array_p + n / 2,
-                      iPitch_normal, streamPool[2]);
+                      iPitch_normal, streamPool->stream(2));
 }
 
 template <typename real>
@@ -1174,7 +1164,7 @@ void lbfgsbdtrsl(real* t, const int& n, const int& iPitch, real* b,
       const real*, real*, real*, real*, const int&, const real*, const real*,  \
       const real*, const int, real*, const real&, const int&, const int&,      \
       real*, real*, real*, int&, const real&, real*, real*, int*, const int&,  \
-      const real&, cublasHandle_t, const cudaStream_t*, int&);                 \
+      const real&, cublasHandle_t, const StreamPool*, int&);                 \
   template void lbfgsbcmprlb<real>(                                            \
       const int&, const int&, const real*, const real*, const real*,           \
       const real*, const real*, real*, const real*, real*, real*, const int*,  \
@@ -1185,16 +1175,16 @@ void lbfgsbdtrsl(real* t, const int& n, const int& iPitch, real* b,
       const int&, const bool&, real*, real*, const int&, const real*,          \
       const real*, const real*, const real&, const int&, const int&, int&,     \
       real*, real*, real*, real*, const int&, const int&, const int&,          \
-      const int&, const real&, cublasHandle_t, const cudaStream_t*);           \
+      const int&, const real&, cublasHandle_t, const StreamPool*);           \
   template void lbfgsbformt<real>(const int&, real*, const real*, const real*, \
                                   const int&, const real&, int&, const int&,   \
-                                  const real&, const cudaStream_t*);           \
+                                  const real&, const StreamPool*);           \
   template void lbfgsblnsrlb<real>(                                            \
       const int&, const real*, const real*, const int*, real*, const real&,    \
       real&, real&, real&, const real*, real*, real*, real*, const real*,      \
       real&, real&, real&, real&, real&, const real&, const int&, int&, int&,  \
       int&, int&, int&, int&, int*, real*, real*, cublasHandle_t,              \
-      const cudaStream_t*);                                                    \
+      const StreamPool*);                                                    \
   template void lbfgsbmatupdsub<real>(const int&, const int&, real*, real*,    \
                                       const real*, const real*, int&,          \
                                       const int&, int&, int&, const real&,     \
@@ -1203,7 +1193,7 @@ void lbfgsbdtrsl(real* t, const int& n, const int& iPitch, real* b,
       const int&, const int&, real*, real*, real*, real*, const real*,         \
       const real*, int&, const int&, int&, int&, real&, const real&,           \
       const real&, const real&, const real&, const int&, real*, const int&,    \
-      const cudaStream_t*);                                                    \
+      const StreamPool*);                                                    \
   template void lbfgsbprojgr<real>(                                            \
       const int&, const real*, const real*, const int*, const real*,           \
       const real*, real*, real*, real*, const real&, const cudaStream_t&);     \

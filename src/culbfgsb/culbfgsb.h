@@ -52,9 +52,21 @@ struct LBFGSB_CUDA_SUMMARY {
   int info;
 };
 
+struct StreamPool {
+  cudaStream_t m_stream;
+  cudaStream_t stream(int n) const {
+    return m_stream;
+  }
+  const StreamPool *subStreamPool(int offset) const {
+    // get a pool starting from offset
+    return this;
+  }
+};
+
 template <typename real>
 struct LBFGSB_CUDA_STATE {
   cublasContext* m_cublas_handle;
+  StreamPool m_pool;
   std::function<int(real*, real&, real*, const cudaStream_t&,
                     const LBFGSB_CUDA_SUMMARY<real>&)>
       m_funcgrad_callback;

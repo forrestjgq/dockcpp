@@ -96,13 +96,30 @@ public:
         lbfgsb_options.max_iteration = 1000;
 
         LBFGSB_CUDA_STATE<dtype> state;
-        cublasStatus_t stat = cublasCreate(&(state.m_cublas_handle));
+        int k = 0;
+        cublasContext* handle;
+        cublasStatus_t stat = cublasCreate(&handle);
         if (stat != 0) {
             std::cerr << "cublas handle create fail: " << stat << std::endl;
             return 1;
         }
-        std::shared_ptr<cublasContext> to_free_(state.m_cublas_handle, [](void *p){
-            auto err = cublasDestroy((cublasContext *)p);
+        state.m_cublas_handle = handle;
+        std::shared_ptr<int> to_free_(&k, [=](void *){
+            auto err = cublasDestroy(handle);
+            if (err != 0) {
+                std::cerr << "cublas destroy failed: " << err << std::endl;
+            }
+            CHECK_GPU_MEM();
+        });
+        cudaStream_t stream;
+        auto err = cudaStreamCreate(&stream);
+        if (err != cudaSuccess) {
+            std::cerr << "create cuda stream fail: " << cudaGetErrorString(err) << std::endl;
+            return 2;
+        }
+        state.m_pool.m_stream = stream;
+        std::shared_ptr<int> to_free_1_(&k, [=](void *){
+            auto err = cudaStreamDestroy(stream);
             if (err != 0) {
                 std::cerr << "cublas destroy failed: " << err << std::endl;
             }
