@@ -61,6 +61,18 @@ namespace dock {
 #define IS_MAIN_THREAD() IS_THREAD(0)
 #define PI               3.141592653589793
 
+__device__ void dumparr(int m, int n, const int * REST p) {
+    printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
+    for (int i = 0; i < m; i++) {
+        printf("\t%d:\t", i);
+        const int *p1 = p + i * n;
+        for (int j = 0; j < n; j++) {
+            printf("%d ", int(p1[j]));
+        }
+        printf("\n");
+    }
+    printf("\n");
+}
 __device__ void dumparr(int m, int n, const uint8_t * REST p) {
     printf(" ====== t[%d,%d] (%dx%d) ======\n", threadIdx.x, threadIdx.y, m, n);
     for (int i = 0; i < m; i++) {
@@ -124,7 +136,7 @@ __device__ void dumparr(int m, int n, const double * REST p) {
 #endif
 # define DUMPARR1(hdr, m, n, p) \
   do { \
-   if (blockIdx.x == 3 && threadIdx.x == 0 && threadIdx.y == 0) { \
+   if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) { \
     printf(hdr); \
     dumparr(m, n, p); \
    } \
@@ -1010,6 +1022,7 @@ __global__ void dock_grad_kernel(const dtype *REST init_coord, const dtype *REST
         }
         __syncthreads();
 
+        // DUMPARR1("torsion", ntorsion, 2, torsions);
         modify_conformer(init_coord, new_pos, vals, torsions, masks, npred, nval, ntorsion, tmp);
         single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp,
                        loss + group);

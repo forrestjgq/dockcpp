@@ -219,6 +219,16 @@ def test_lbfgsb_seq(seq):
     assert ok
     print(f'best = {best} t={t}')
 
+def test_lbfgsb_srv_seq(seq):
+    vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist = loadtensors1(seq)
+    print(f'torsions {torsions}')
+    values = torch.zeros(vt.shape[0], device=init_coord.device, requires_grad=False)
+    lb = pydock.LBFGSBServer(1, 6)
+    stub = lb.dock_optimize(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, values)
+    print(f'stub {stub}')
+    rsp = lb.poll()
+    print(f'rsp {rsp}')
+
 if __name__ == '__main__':
     assert len(sys.argv) >= 3
     action = sys.argv[1]
@@ -247,3 +257,5 @@ if __name__ == '__main__':
             test_session_seq(seq, ctx)
         elif action == 'lb':
             test_lbfgsb_seq(seq)
+        elif action == 'lbs':
+            test_lbfgsb_srv_seq(seq)
