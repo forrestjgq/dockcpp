@@ -70,6 +70,7 @@ public:
         LBFGSB_CUDA_STATE<dtype> state;
         state.m_pool.m_stream = cudaCtx->stream();
         state.m_cublas_handle = cublas_;
+        state.m_cuda_mem = cuda_mem_;
         state.m_funcgrad_callback = [=](dtype *x, dtype &f, dtype *g, const cudaStream_t &stream,
                                         const LBFGSB_CUDA_SUMMARY<dtype> &summary) {
             return this->lbfgsb_callback(x, f, g, stream);
@@ -79,9 +80,9 @@ public:
 
         lbfgsbcuda::lbfgsbdefaultoption<dtype>(lbfgsb_options);
         lbfgsb_options.mode          = LCM_CUDA;
-        lbfgsb_options.eps_f         = static_cast<dtype>(1e-8);
-        lbfgsb_options.eps_g         = static_cast<dtype>(1e-8);
-        lbfgsb_options.eps_x         = static_cast<dtype>(1e-8);
+        lbfgsb_options.eps_f         = static_cast<dtype>(1e-6);
+        lbfgsb_options.eps_g         = static_cast<dtype>(1e-6);
+        lbfgsb_options.eps_x         = static_cast<dtype>(1e-6);
         lbfgsb_options.max_iteration = 1000;
 
         LBFGSB_CUDA_SUMMARY<dtype> summary;
@@ -228,7 +229,11 @@ public:
             this->receiver_->notify(id_, req);
         });
         ctx_->commit(request);
+        cnt_++;
         return 0;
+    }
+    size_t count() {
+        return cnt_;
     }
 
 protected:
@@ -269,6 +274,7 @@ protected:
 
 public:
     int id_ = 0;
+    size_t cnt_ = 0;
     LBFGSBReceiver *receiver_ = nullptr;
     cublasContext* cublas_ = nullptr;
     std::shared_ptr<CudaContext> ctx_;
@@ -295,6 +301,9 @@ public:
     LBFGSBServer() {
     }
     ~LBFGSBServer() {
+        for (auto it = optimizers_.begin(); it != optimizers_.end(); ++it) {
+            std::cout << "op " << it->first << ": " << it->second->count() << std::endl;
+        }
     }
     int create(int n, int deviceId) {
         int cnt = 0;
@@ -596,6 +605,7 @@ public:
             std::cerr << "create cuda stream fail: " << cudaGetErrorString(err) << std::endl;
             return 2;
         }
+        // todo
         state.m_pool.m_stream = stream;
         std::shared_ptr<int> to_free_1_(&k, [=](void *){
             auto err = cudaStreamDestroy(stream);

@@ -27,6 +27,7 @@
 #include <cublas_v2.h>
 
 #include <functional>
+#include "mempool.h"
 
 enum LBFGSB_CUDA_MODE { LCM_NO_ACCELERATION, LCM_CUDA };
 
@@ -61,11 +62,19 @@ struct StreamPool {
     // get a pool starting from offset
     return this;
   }
+  cudaError_t syncAll() const {
+    // return cudaStreamSynchronize(m_stream);
+    return cudaDeviceSynchronize();
+  }
+  cudaError_t syncAllStream() const {
+    return cudaStreamSynchronize(m_stream);
+  }
 };
 
 template <typename real>
 struct LBFGSB_CUDA_STATE {
   cublasContext* m_cublas_handle;
+  dock::MemPool *m_cuda_mem;
   StreamPool m_pool;
   std::function<int(real*, real&, real*, const cudaStream_t&,
                     const LBFGSB_CUDA_SUMMARY<real>&)>

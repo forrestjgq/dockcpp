@@ -282,7 +282,7 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
 
 template <typename real>
 void lbfgsbactive(const int& n, const real* l, const real* u, const int* nbd,
-                  real* x, int* iwhere);
+                  real* x, int* iwhere, const cudaStream_t& stream);
 
 template <typename real>
 void lbfgsbbmv(const int& m, const real* sy, real* wt, const int& col,
@@ -407,7 +407,7 @@ void vdiffxchg_v(const int n, real* xdiff, real* xold, const real* x,
 namespace active {
 template <typename real>
 void prog0(const int& n, const real* l, const real* u, const int* nbd, real* x,
-           int* iwhere);
+           int* iwhere, const cudaStream_t& stream);
 };
 namespace projgr {
 template <typename real>
@@ -560,7 +560,19 @@ void prog0(real* m, int n, int pitch, int boffset, const real machineepsilon,
 };
 
 template <class T>
-inline int memAlloc(T** ptr, size_t length) {
+inline int memAllocImpl(dock::MemPool *pool, T** ptr, size_t length) {
+  void* ptr_ = pool->alloc(length * sizeof(T));
+  *ptr = (T*)ptr_;
+  if (ptr_ != NULL) {
+    return 0;
+  }
+  else
+    return -1;
+}
+#define memAlloc(T, pptr, length) memAllocImpl<T>(state.m_cuda_mem, pptr, length)
+
+template <class T>
+inline int memAlloc1(T** ptr, size_t length) {
   void* ptr_;
   cudaMalloc(&ptr_, length * sizeof(T));
   *ptr = (T*)ptr_;
@@ -587,7 +599,23 @@ inline int memAllocHost(T** ptr, T** ptr_dev, size_t length) {
 }
 
 template <class T>
-inline int memAllocPitch(T** ptr, size_t lx, size_t ly, size_t* pitch) {
+inline int memAllocPitchImpl(dock::MemPool *pool, T** ptr, size_t lx, size_t ly, size_t* pitch) {
+  int bl = lx * sizeof(T);
+  bl = iAlignUp(bl, 32);
+  if (pitch) *pitch = bl / sizeof(T);
+  int length = bl * ly;
+  void *ptr_ = (T *)pool->alloc(length);
+  *ptr = (T*)ptr_;
+
+  if (ptr_ != NULL) {
+    cudaMemset(*ptr, 0, length);
+    return 0;
+  } else
+    return -1;
+}
+#define memAllocPitch(T, pptr, lx, ly, pitch) memAllocPitchImpl<T>(state.m_cuda_mem, pptr, lx, ly, pitch)
+template <class T>
+inline int memAllocPitch1(T** ptr, size_t lx, size_t ly, size_t* pitch) {
   int bl = lx * sizeof(T);
   void* ptr_;
   bl = iAlignUp(bl, 32);
@@ -604,7 +632,11 @@ inline int memAllocPitch(T** ptr, size_t lx, size_t ly, size_t* pitch) {
     return -1;
 }
 
+#if 0
 inline void memFree(void* ptr) { cudaFree(ptr); }
+#else
+#define memFree(p)
+#endif
 
 inline void memFreeHost(void* ptr) { cudaFreeHost(ptr); }
 

@@ -127,52 +127,52 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
 
   int m = std::min(option.hessian_approximate_dimension, 8);
 
-  memAlloc<real>(&workvec, m);
-  memAlloc<real>(&workvec2, 2 * m);
-  memAlloc<real>(&g, n);
-  memAlloc<real>(&xold, n);
-  memAlloc<real>(&xdiff, n);
-  memAlloc<real>(&z, n);
-  memAlloc<real>(&xp, n);
-  memAlloc<real>(&zb, n);
-  memAlloc<real>(&r, n);
-  memAlloc<real>(&d, n);
-  memAlloc<real>(&t, n);
-  memAlloc<real>(&wa, 8 * m);
+  memAlloc(real, &workvec, m);
+  memAlloc(real, &workvec2, 2 * m);
+  memAlloc(real, &g, n);
+  memAlloc(real, &xold, n);
+  memAlloc(real, &xdiff, n);
+  memAlloc(real, &z, n);
+  memAlloc(real, &xp, n);
+  memAlloc(real, &zb, n);
+  memAlloc(real, &r, n);
+  memAlloc(real, &d, n);
+  memAlloc(real, &t, n);
+  memAlloc(real, &wa, 8 * m);
 
   const int superpitch = iDivUp(n, ((1 << log2Up(n)) - 1) / 2);
   const int normalpitch = superpitch;
-  memAlloc<real>(&buf_n_r, superpitch);
-  memAlloc<real>(&buf_array_p, m * normalpitch * 2);
+  memAlloc(real, &buf_n_r, superpitch);
+  memAlloc(real, &buf_array_p, m * normalpitch * 2);
 #ifdef USE_STREAM
-  memAlloc<real>(&buf_array_p1, m * normalpitch * 2);
+  memAlloc(real, &buf_array_p1, m * normalpitch * 2);
 #else
   buf_array_p1 = buf_array_p;
 #endif
-  memAlloc<real>(&buf_array_super, m * m * superpitch);
+  memAlloc(real, &buf_array_super, m * m * superpitch);
 
   size_t pitch0 = m;
-  memAllocPitch<real>(&ws, m, n, &pitch0);
-  memAllocPitch<real>(&wy, m, n, NULL);
-  memAllocPitch<real>(&sy, m, m, NULL);
-  memAllocPitch<real>(&ss, m, m, NULL);
-  memAllocPitch<real>(&yy, m, m, NULL);
-  memAllocPitch<real>(&wt, m, m, NULL);
-  memAllocPitch<real>(&workmat, m, m, NULL);
+  memAllocPitch(real, &ws, m, n, &pitch0);
+  memAllocPitch(real, &wy, m, n, NULL);
+  memAllocPitch(real, &sy, m, m, NULL);
+  memAllocPitch(real, &ss, m, m, NULL);
+  memAllocPitch(real, &yy, m, m, NULL);
+  memAllocPitch(real, &wt, m, m, NULL);
+  memAllocPitch(real, &workmat, m, m, NULL);
 
   size_t pitch1 = m * 2;
-  memAllocPitch<real>(&wn, m * 2, m * 2, &pitch1);
-  memAllocPitch<real>(&snd, m * 2, m * 2, NULL);
+  memAllocPitch(real, &wn, m * 2, m * 2, &pitch1);
+  memAllocPitch(real, &snd, m * 2, m * 2, NULL);
 
-  memAlloc<int>(&bufi_n_r, superpitch);
-  memAlloc<int>(&iwhere, n);
-  memAlloc<int>(&index, n);
-  memAlloc<int>(&iorder, n);
+  memAlloc(int, &bufi_n_r, superpitch);
+  memAlloc(int, &iwhere, n);
+  memAlloc(int, &index, n);
+  memAlloc(int, &iorder, n);
 
-  memAlloc<int>(&temp_ind1, n);
-  memAlloc<int>(&temp_ind2, n);
-  memAlloc<int>(&temp_ind3, n);
-  memAlloc<int>(&temp_ind4, n);
+  memAlloc(int, &temp_ind1, n);
+  memAlloc(int, &temp_ind2, n);
+  memAlloc(int, &temp_ind3, n);
+  memAlloc(int, &temp_ind4, n);
 
   real* sbgnrm_h;
   real* sbgnrm_d;
@@ -187,17 +187,17 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
 
 
   debugSync();
-  lbfgsbactive<real>(n, l, u, nbd, x, iwhere);
+  lbfgsbactive<real>(n, l, u, nbd, x, iwhere, state.m_pool.stream(0));
   debugSync();
-  memCopyAsync(xold, x, n * sizeof(real), cudaMemcpyDeviceToDevice);
-  memCopyAsync(xp, x, n * sizeof(real), cudaMemcpyDeviceToDevice);
+  memCopyAsync(xold, x, n * sizeof(real), cudaMemcpyDeviceToDevice, state.m_pool.stream(0));
+  memCopyAsync(xp, x, n * sizeof(real), cudaMemcpyDeviceToDevice, state.m_pool.stream(0));
   if (state.m_funcgrad_callback)
-    state.m_funcgrad_callback(x, f, g, NULL, summary);
+    state.m_funcgrad_callback(x, f, g, state.m_pool.stream(0), summary);
 
   nfgv = 1;
   lbfgsbprojgr<real>(n, l, u, nbd, x, g, buf_n_r, sbgnrm_h, sbgnrm_d,
-                     option.machine_maximum, NULL);
-  cutilSafeCall(cudaThreadSynchronize());
+                     option.machine_maximum, state.m_pool.stream(0));
+  cutilSafeCall(state.m_pool.syncAllStream());
   sbgnrm = *sbgnrm_h;
   summary.residual_g = sbgnrm;
   if (sbgnrm <= option.eps_g) {
@@ -333,7 +333,7 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
       break;
     }
     DBG("dev sync");
-    cutilSafeCall(cudaDeviceSynchronize());
+    cutilSafeCall(state.m_pool.syncAllStream());
     DBG("dev sync done");
     if (stp == 1) {
       dr = gd - gdold;
@@ -446,8 +446,8 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
 
 template <typename real>
 void lbfgsbactive(const int& n, const real* l, const real* u, const int* nbd,
-                  real* x, int* iwhere) {
-  active::prog0<real>(n, l, u, nbd, x, iwhere);
+                  real* x, int* iwhere, const cudaStream_t& stream) {
+  active::prog0<real>(n, l, u, nbd, x, iwhere, stream);
 }
 
 template <typename real>
@@ -639,7 +639,7 @@ void lbfgsblnsrlb(const int& n, const real* l, const real* u, const int* nbd,
   }
   minimize::vdot_vv<real>(n, g, d, gd, cublas_handle, streamPool->stream(4));
 
-  cudaDeviceSynchronize();
+  cutilSafeCall(streamPool->syncAllStream());
 
   if (task != 1) {
     if (iter != 0) {
@@ -1155,7 +1155,7 @@ void lbfgsbdtrsl(real* t, const int& n, const int& iPitch, real* b,
       const LBFGSB_CUDA_OPTION<real>&, real*, const int*, const real*,         \
       const real*, LBFGSB_CUDA_SUMMARY<real>&);                                \
   template void lbfgsbactive<real>(const int&, const real*, const real*,       \
-                                   const int*, real*, int*);                   \
+                                   const int*, real*, int*, const cudaStream_t&);                   \
   template void lbfgsbbmv<real>(const int&, const real*, real*, const int&,    \
                                 const int&, const real*, real*,                \
                                 cublasHandle_t, const cudaStream_t&, int&);    \

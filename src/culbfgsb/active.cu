@@ -50,16 +50,16 @@ __global__ void kernel0(const int n, const real* l, const real* u,
 
 template <typename real>
 void prog0(const int& n, const real* l, const real* u, const int* nbd, real* x,
-           int* iwhere) {
-  kernel0<real><<<dim3(iDivUp(n, 512)), dim3(512)>>>(n, l, u, nbd, x, iwhere);
+           int* iwhere, const cudaStream_t& stream) {
+  kernel0<real><<<dim3(iDivUp(n, 512)), dim3(512), 0, stream>>>(n, l, u, nbd, x, iwhere);
 
   debugSync();
 }
 
 template void prog0<float>(const int&, const float*, const float*,
-                           const int*, float*, int*);
+                           const int*, float*, int*, const cudaStream_t& stream);
 template void prog0<double>(const int&, const double*, const double*,
-                            const int*, double*, int*);
+                            const int*, double*, int*, const cudaStream_t& stream);
 
 };  // namespace active
 };  // namespace cuda

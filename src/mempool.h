@@ -3,6 +3,7 @@
 #include <functional>
 #include <assert.h>
 #include <iostream>
+#include <vector>
 namespace dock {
 
 class MemPool {
@@ -35,7 +36,6 @@ private:
             return offset_ = 0;
         }
     };
-
 public:
     using f_alloc_  = std::function<void *(int)>;
     using f_dealloc = std::function<void(void *)>;

@@ -496,12 +496,13 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
            cublasHandle_t cublas_handle, const StreamPool* streamPool) {
   debugSync();
 
+  auto stream = streamPool->stream(0);
   if (sbgnrm <= 0) {
-    cudaMemcpyAsync(xcp, x, n * sizeof(real), cudaMemcpyDeviceToDevice);
+    cudaMemcpyAsync(xcp, x, n * sizeof(real), cudaMemcpyDeviceToDevice, stream);
     return;
   }
 
-  if (col > 0) cudaMemsetAsync(p, 0, col * 2 * sizeof(real));
+  if (col > 0) cudaMemsetAsync(p, 0, col * 2 * sizeof(real), stream);
 
   real* vec_h;
   real* vec_d;
@@ -591,7 +592,7 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
     cublasSetStream(cublas_handle, NULL);
   }
 
-  cutilSafeCall(cudaDeviceSynchronize());
+  cutilSafeCall(streamPool->syncAllStream());
 
   real f2 = -theta * *f1_h - *fd_h;
   real dt = -*f1_h / f2;

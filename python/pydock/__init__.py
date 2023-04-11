@@ -117,7 +117,7 @@ class LBFGSBServer:
             self._running += 1
         return seq, ok
     
-    def poll(self, n=0):
+    def poll(self, n):
         """poll optimize response
 
         Args:
@@ -142,4 +142,21 @@ class LBFGSBServer:
             n-=1
             self._running -= 1
         return ret
+
+    def poll(self):
+        """poll optimize response
+
+        Args:
+            n (int, optional): how many responses are expected. Defaults to 0.
+
+        Returns:
+            tuple of(torch.Tensor, float, int, bool): torch.Tensor will be best values, float will be the best loss,
+                                                      int is the sequence number created by dock_optimize(), and bool
+                                                      will be the result, other args are valid only when this value is
+                                                      True
+        """
+        sz = self._running
+        if sz == 0:
+            return None
+        return _cu.poll_lbfgsb_response(self._srv)
             
