@@ -1128,4 +1128,21 @@ void dock_grad_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dty
 }
 #endif
 
+__global__ void collect_best_dock_kernel(dtype * REST losses, dtype * REST x, dtype * REST g, dtype * REST bestLoss, dtype * REST bestValues, int nval, dtype reps) {
+    int idx = threadIdx.x;
+    dtype loss = losses[0];
+    g[idx] = (losses[idx+1] - loss) * reps;
+    if (loss < *bestLoss) {
+        if (idx == 0) {
+            *bestLoss = loss;
+            // printf("best loss %f\n", *bestLoss);
+        }
+        bestValues[idx] = x[idx];
+    }
+    // printf("loss %f best %f, idx %d loss %f g %f v %f\n", loss, *bestLoss, idx, losses[idx+1],  g[idx], bestValues[idx]);
+}
+void collect_best_dock(dtype * losses, dtype *x, dtype *g, dtype *bestLoss, dtype *bestValues, int nval, dtype eps, cudaStream_t stream) {
+    collect_best_dock_kernel<<<dim3(1), dim3(nval), 0, stream>>>(losses, x, g, bestLoss, bestValues, nval, 1.0/eps);
+}
+
 };  // namespace dock

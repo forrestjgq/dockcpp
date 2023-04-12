@@ -102,6 +102,7 @@ public:
 
         prepare(cudaCtx->stream(), cuda_mem_);
         lbfgsbcuda::lbfgsbminimize<dtype>(nval_, state, lbfgsb_options, x_, nbd_, xl_, xu_, summary);
+        after(cudaCtx->stream(), cuda_mem_);
         done(true);
     }
 
@@ -127,6 +128,7 @@ public:
     }
 protected:
     virtual void prepare(cudaStream_t stream, MemPool *cudaMem) { }
+    virtual void after(cudaStream_t stream, MemPool *cudaMem) { }
     void report(dtype loss, dtype *vals) {
         if (loss < best_loss_) {
             best_loss_ = loss;
@@ -412,19 +414,26 @@ public:
         npocket_         = npocket;
         ntorsion_        = ntorsion;
         eps_             = eps;
-        tmp_values_ = new dtype[nval_];
     }
     ~LBFGSBDockRequest() override  {
         if (host_) {
             free(host_);
         }
-        if (tmp_values_) {
-            delete[] tmp_values_;
-        }
     }
 
 protected:
+    void after(cudaStream_t stream, MemPool *cudaMem) override {
+        auto tmp = new dtype[nval_+1];
+        cudaMemcpy(tmp, cuda_best_loss_, sizeof(dtype)*(nval_+1), cudaMemcpyDeviceToHost);
+        report(tmp[0], tmp+1);
+        delete[] tmp;
+    }
     void prepare(cudaStream_t stream, MemPool *cudaMem) override {
+        dtype bestLoss = 99999999;
+        cuda_best_loss_ = (dtype *)cudaMem->alloc(sizeof(dtype) * (nval_+1));
+        cuda_best_values_ = cuda_best_loss_ + 1;
+        cudaMemcpyAsync(cuda_best_loss_, &bestLoss, sizeof(dtype), cudaMemcpyHostToDevice, stream);
+
         cuda_init_coord_ = init_coord_.get();
         cuda_pocket_ = pocket_.get();
         cuda_pred_cross_dist_ = pred_cross_dist_.get();
@@ -453,31 +462,13 @@ protected:
     }
     int lbfgsb_callback(dtype *x, dtype &f, dtype *g, const cudaStream_t &stream) override {
         int smsize  = 0;
-        cudaMemcpyAsync(tmp_values_, x, nval_ * sizeof(dtype), cudaMemcpyDeviceToHost, stream);
         dock_grad_gpu(cuda_init_coord_, cuda_pocket_, cuda_pred_cross_dist_, cuda_pred_holo_dist_, x, cuda_torsions_, cuda_masks_,
                       npred_, npocket_, nval_, ntorsion_, losses_, (dtype *)grad_device_, grad_size_, stream,
                       smsize, eps_);
 
-        cudaMemcpyAsync(outlosses_, losses_, (nval_ + 1) * sizeof(dtype), cudaMemcpyDeviceToHost,
-                        stream);
+        cudaMemcpyAsync(&f, losses_, sizeof(dtype), cudaMemcpyDeviceToHost, stream);
+        collect_best_dock(losses_, x, g, cuda_best_loss_, cuda_best_values_, nval_, eps_, stream);
         auto err = cudaStreamSynchronize(stream);
-        if (err != cudaSuccess) {
-            std::cerr << "cb grad gpu + memcpy d2h failure: " << cudaGetErrorString(err) << std::endl;
-            return 1;
-        }
-        f = outlosses_[0];
-        #if 0
-        auto p = tmp_values_;
-        printf("\nval %f %f %f %f %f %f %f\n",  p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
-        p = outlosses_;
-        printf("losses %f %f %f %f %f %f %f %f\n", p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
-        #endif
-        report(outlosses_[0], tmp_values_);
-        for (auto i = 1; i < nval_ + 1; i++) {
-            outlosses_[i] = (outlosses_[i] - outlosses_[0]) / eps_;
-        }
-        cudaMemcpyAsync(g, &outlosses_[1], nval_ * sizeof(dtype), cudaMemcpyHostToDevice, stream);
-        err = cudaStreamSynchronize(stream);
         if (err != cudaSuccess) {
             std::cerr << "cb memcpy h2d failure: " << cudaGetErrorString(err) << std::endl;
             return 1;
@@ -500,7 +491,8 @@ protected:
     int *cuda_torsions_          = nullptr;
     uint8_t *cuda_masks_         = nullptr;
 
-    dtype *tmp_values_ = nullptr;
+    dtype *cuda_best_values_ = nullptr;
+    dtype *cuda_best_loss_   = nullptr;
 
     dtype *x_               = nullptr;
     dtype *g_               = nullptr;

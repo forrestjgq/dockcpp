@@ -15,5 +15,7 @@ extern void dock_grad_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_di
                           dtype *dev,
                           int devSize,  // in bytes
                           cudaStream_t stream, int smMaxSize, dtype eps);
+extern void collect_best_dock(dtype *losses, dtype *x, dtype *g, dtype *bestLoss, dtype *bestValues,
+                              int nval, dtype eps, cudaStream_t stream);
 };
 #endif
