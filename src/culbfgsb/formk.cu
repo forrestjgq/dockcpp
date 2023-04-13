@@ -21,7 +21,7 @@ namespace cuda {
 namespace formk {
 
 template <typename real>
-__global__ void kernel0(real* wn1, const int m, const int iPitch) {
+__global__ void kernel0(real* RT wn1, const int m, const int iPitch) {
   const int i = threadIdx.x;
   const int j = threadIdx.y;
 
@@ -40,7 +40,7 @@ __global__ void kernel0(real* wn1, const int m, const int iPitch) {
 
 template <int bx, typename real>
 __global__ void kernel10(const int n, const int nsub, const int ipntr,
-                         real* output, const real* wy, const int* ind,
+                         real* RT output, const real* RT wy, const int* RT ind,
                          const int head, const int m, const int iPitch_ws,
                          const int oPitch) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -115,7 +115,7 @@ __global__ void kernel10(const int n, const int nsub, const int ipntr,
 
 template <int bx, typename real>
 __global__ void kernel101(const int n, const int nsub, const int ipntr,
-                          real* output, const real* ws, const int* ind,
+                          real* RT output, const real* RT ws, const int* RT ind,
                           const int head, const int m, const int iPitch_ws,
                           const int oPitch) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -192,8 +192,8 @@ __global__ void kernel101(const int n, const int nsub, const int ipntr,
 
 template <int bx, typename real>
 __global__ void kernel102(const int n, const int nsub, const int ipntr,
-                          real* output, const real* ws, const real* wy,
-                          const int* ind, const int head, const int m,
+                          real* RT output, const real* RT ws, const real* RT wy,
+                          const int* RT ind, const int head, const int m,
                           const int iPitch_ws, const int oPitch) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   const int j = blockIdx.y;
@@ -269,7 +269,7 @@ __global__ void kernel102(const int n, const int nsub, const int ipntr,
 
 template <int bx, typename real>
 __global__ void kernel11(const int n, const int iPitch, const int oPitch,
-                         const real* buf_in, real* buf_out) {
+                         const real* RT buf_in, real* RT buf_out) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   const int j = blockIdx.y;
   const int tid = threadIdx.x;
@@ -342,8 +342,8 @@ __global__ void kernel11(const int n, const int iPitch, const int oPitch,
 
 template <int bx, typename real>
 __global__ void kernel311(const int n, const int iPitch, const int oPitch,
-                          const int2* pcoord, const real* buf_in,
-                          real* buf_out) {
+                          const int2* RT pcoord, const real* RT buf_in,
+                          real* RT buf_out) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   const int j = blockIdx.y;
   const int tid = threadIdx.x;
@@ -424,7 +424,7 @@ __global__ void kernel311(const int n, const int iPitch, const int oPitch,
 
 template <int bx, typename real>
 __global__ void kernel321(const int n, const int iPitch, const int oPitch,
-                          const real* buf_in, real* buf_out) {
+                          const real* RT buf_in, real* RT buf_out) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   const int jy = blockIdx.y;
   const int iy = blockIdx.z;
@@ -502,10 +502,10 @@ __global__ void kernel321(const int n, const int iPitch, const int oPitch,
 }
 
 template <int bx, typename real>
-__global__ void kernel30(const int* ind, const int jpntr, const int head,
+__global__ void kernel30(const int* RT ind, const int jpntr, const int head,
                          const int m, const int n, const int nsub,
-                         const int iPitch_ws, const real* ws, const real* wy,
-                         real* output, const int oPitch) {
+                         const int iPitch_ws, const real* RT ws, const real* RT wy,
+                         real* RT output, const int oPitch) {
   const int k = blockIdx.x * blockDim.x + threadIdx.x;
   const int i = blockIdx.y;
   const int tid = threadIdx.x;
@@ -580,7 +580,7 @@ template <typename real>
 __global__ void kernel50(real* wn) { wn[1] = wn[1] / wn[0]; }
 
 template <typename real>
-__global__ void kernel5(int col, int iPitch_wn, real* wn) {
+__global__ void kernel5(int col, int iPitch_wn, real* RT wn) {
   const int iis = blockIdx.x + col;
   const int js = threadIdx.y + col;
   const int i = threadIdx.x;
@@ -771,8 +771,8 @@ void prog3(const int* ind, const int jpntr, const int head, const int m,
 template <int bx, typename real>
 __global__ void kernel310(const int* indx2, const int head, const int m,
                           const int n, const int nenter, const int ileave,
-                          const int iPitch_ws, const int2* pcoord,
-                          const real* wy, const real scal, real* output,
+                          const int iPitch_ws, const int2* RT pcoord,
+                          const real* RT wy, const real scal, real* RT output,
                           const int oPitch) {
   const int k = blockIdx.x * blockDim.x + threadIdx.x;
   const int i = blockIdx.y;
@@ -871,10 +871,10 @@ __global__ void kernel310(const int* indx2, const int head, const int m,
 }
 
 template <int bx, typename real>
-__global__ void kernel320(const int* indx2, const int head, const int m,
+__global__ void kernel320(const int* RT indx2, const int head, const int m,
                           const int n, const int nenter, const int ileave,
-                          const int iPitch_ws, const real* ws, const real* wy,
-                          real* output, const int oPitch) {
+                          const int iPitch_ws, const real* RT ws, const real* RT wy,
+                          real* RT output, const int oPitch) {
   const int k = blockIdx.x * blockDim.x + threadIdx.x;
   const int jy = blockIdx.y;
   const int iy = blockIdx.z;
@@ -1056,8 +1056,8 @@ void prog32(const int* indx2, const int head, const int m, const int upcl,
 
 template <typename real>
 __global__ void kernel4(const int col, const int iPitch_wn, const int iPitch_ws,
-                        const int m, const real* wn1, const real theta,
-                        const real* sy, real* wn) {
+                        const int m, const real* RT wn1, const real theta,
+                        const real* RT sy, real* RT wn) {
   const int iy = blockIdx.y * blockDim.y + threadIdx.y;
   const int jy = blockIdx.x * blockDim.x + threadIdx.x;
 

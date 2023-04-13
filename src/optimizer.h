@@ -34,14 +34,15 @@ public:
 
 extern std::shared_ptr<OptimizerServer> create_lbfgsb_server(int device, int n);
 
-extern std::shared_ptr<Optimizer> create_lbfgsb_dock(dtype *init_coord,       // npred * 3 dtypes
-                    dtype *pocket,           // npocket * 3 dtypes
-                    dtype *pred_cross_dist,  // npred * npocket dtypes
-                    dtype *pred_holo_dist,   // npred * npred dtypes
-                    int *torsions,           // ntorsion * 2 ints
-                    uint8_t *masks,          // npred * ntorsion masks
-                    int npred, int npocket, int ntorsion
-);
+extern std::shared_ptr<Optimizer> create_lbfgsb_dock(
+    int device,
+    dtype *init_coord,       // npred * 3 dtypes
+    dtype *pocket,           // npocket * 3 dtypes
+    dtype *pred_cross_dist,  // npred * npocket dtypes
+    dtype *pred_holo_dist,   // npred * npred dtypes
+    int *torsions,           // ntorsion * 2 ints
+    uint8_t *masks,          // npred * ntorsion masks
+    int npred, int npocket, int ntorsion);
 using dtypesp = std::shared_ptr<dtype>;
 extern std::shared_ptr<Request> create_lbfgsb_dock_request(dtypesp &init_values, dtypesp &init_coord,       // npred * 3 dtypes
                     dtypesp &pocket,           // npocket * 3 dtypes

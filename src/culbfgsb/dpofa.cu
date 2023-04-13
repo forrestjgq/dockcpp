@@ -22,7 +22,7 @@ namespace dpofa {
 #define CUDA_BLOCK_SIZE 16
 
 template <typename real>
-__global__ void cuda_chol_iter(real* m, int n, int boffset,
+__global__ void cuda_chol_iter(real* RT m, int n, int boffset,
                                const real machineepsilon) {
   int k;
   int x = threadIdx.x;

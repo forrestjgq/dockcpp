@@ -55,9 +55,10 @@ public:
         }
     }
 
-    void setCudaHandlers(MemPool *pool, cublasContext* cublas) {
+    void setCudaHandlers(MemPool *pool, MemPool *mapPool, cublasContext* cublas) {
         cublas_ = cublas;
         cuda_mem_ = pool;
+        host_map_mem_ = mapPool;
     }
     void run(Context *ctx) override {
         auto cudaCtx = dynamic_cast<CudaContext *>(ctx);
@@ -66,11 +67,13 @@ public:
             return;
         }
         cuda_mem_->reset();
+        host_map_mem_->reset();
 
         LBFGSB_CUDA_STATE<dtype> state;
         state.m_pool.m_stream = cudaCtx->stream();
         state.m_cublas_handle = cublas_;
         state.m_cuda_mem = cuda_mem_;
+        state.m_host_mem = host_map_mem_;
         state.m_funcgrad_callback = [=](dtype *x, dtype &f, dtype *g, const cudaStream_t &stream,
                                         const LBFGSB_CUDA_SUMMARY<dtype> &summary) {
             return this->lbfgsb_callback(x, f, g, stream);
@@ -169,7 +172,8 @@ protected:
     dtype *losses_          = nullptr;
 
     cublasContext *cublas_ = nullptr;
-    MemPool * cuda_mem_ = nullptr;
+    MemPool *cuda_mem_     = nullptr;
+    MemPool *host_map_mem_ = nullptr;
 };
 
 class LBFGSBReceiver {
@@ -224,7 +228,7 @@ public:
             std::cerr << "LBFGSB optmizer requires LBFGSBRequest" << std::endl;
             return 1;
         }
-        lbreq->setCudaHandlers(cuda_mem_.get(), cublas_);
+        lbreq->setCudaHandlers(cuda_mem_.get(), host_map_mem_.get(), cublas_);
         lbreq->setCallback([this](Request *r){
             auto req = (LBFGSBRequest *)r;
             assert(r->ok());
@@ -248,20 +252,39 @@ protected:
         }
         cublas_ = handle;
         cuda_mem_ = std::make_shared<MemPool>(
-            [](int sz) {
+            [](int sz, void **dp) {
                 void *p  = nullptr;
                 auto err = cudaMalloc(&p, sz);
                 if (err != cudaSuccess) {
                     return (void *)nullptr;
                 }
+                if (dp) *dp = p;
                 return p;
             },
-            [](void *p) {
+            [](void *p, void *dp) {
                 if (p) {
                     cudaFree(p);
                 }
             },
             CUDA_BLK_SIZE_, CUDA_ALIGN_);
+        host_map_mem_ = std::make_shared<MemPool>(
+            [](int sz, void **dp) {
+                void *p  = nullptr;
+                auto err = cudaHostAlloc(&p, sz, cudaHostAllocMapped);
+                if (err != cudaSuccess) {
+                    return (void *)nullptr;
+                }
+                if (dp) {
+                    cudaHostGetDevicePointer((void**)dp, p, 0);
+                }
+                return p;
+            },
+            [](void *p, void *dp) {
+                if (p) {
+                    cudaFreeHost(p);
+                }
+            },
+            CUDA_HOST_BLK_SIZE_, CUDA_ALIGN_);
         return true;
     }
     void deinit() {
@@ -272,6 +295,7 @@ protected:
             }
         }
         cuda_mem_.reset();
+        host_map_mem_.reset();
     }
 
 public:
@@ -281,8 +305,10 @@ public:
     cublasContext* cublas_ = nullptr;
     std::shared_ptr<CudaContext> ctx_;
     std::shared_ptr<MemPool> cuda_mem_;
-    const int CUDA_BLK_SIZE_ = 2 * 1024 * 1024;
-    const int CUDA_ALIGN_ = sizeof(double);
+    std::shared_ptr<MemPool> host_map_mem_;
+    const int CUDA_BLK_SIZE_      = 2 * 1024 * 1024;
+    const int CUDA_HOST_BLK_SIZE_ = 4 * 1024;
+    const int CUDA_ALIGN_         = sizeof(double);
 };
 class LBFGSBServer : public LBFGSBReceiver, public OptimizerServer {
 protected:
@@ -514,13 +540,14 @@ protected:
 };
 class LBFGSBDock : public Optimizer {
 public:
-    explicit LBFGSBDock(dtype *init_coord,       // npred * 3 dtypes
-                    dtype *pocket,           // npocket * 3 dtypes
-                    dtype *pred_cross_dist,  // npred * npocket dtypes
-                    dtype *pred_holo_dist,   // npred * npred dtypes
-                    int *torsions,           // ntorsion * 2 ints
-                    uint8_t *masks,          // npred * ntorsion masks
-                    int npred, int npocket, int ntorsion
+    explicit LBFGSBDock(int device,
+                        dtype *init_coord,       // npred * 3 dtypes
+                        dtype *pocket,           // npocket * 3 dtypes
+                        dtype *pred_cross_dist,  // npred * npocket dtypes
+                        dtype *pred_holo_dist,   // npred * npred dtypes
+                        int *torsions,           // ntorsion * 2 ints
+                        uint8_t *masks,          // npred * ntorsion masks
+                        int npred, int npocket, int ntorsion
 
     ) {
         init_coord_      = init_coord;
@@ -536,7 +563,7 @@ public:
         eps_             = 0.01;
 
         // std::cout << "npred " << npred << " npocket " << npocket << " ntorsion " << ntorsion << std::endl;
-        cudaSetDevice(4);
+        cudaSetDevice(device);
         CHECK_GPU_MEM();
     }
     ~LBFGSBDock() {
@@ -592,7 +619,7 @@ public:
             CHECK_GPU_MEM();
         });
         cudaStream_t stream;
-        auto err = cudaStreamCreate(&stream);
+        auto err = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
         if (err != cudaSuccess) {
             std::cerr << "create cuda stream fail: " << cudaGetErrorString(err) << std::endl;
             return 2;
@@ -765,15 +792,15 @@ public:
     int host_size_ = 0;
     int grad_size_ = 0;
 };
-std::shared_ptr<Optimizer> create_lbfgsb_dock(dtype *init_coord,       // npred * 3 dtypes
-                    dtype *pocket,           // npocket * 3 dtypes
-                    dtype *pred_cross_dist,  // npred * npocket dtypes
-                    dtype *pred_holo_dist,   // npred * npred dtypes
-                    int *torsions,           // ntorsion * 2 ints
-                    uint8_t *masks,          // npred * ntorsion masks
-                    int npred, int npocket, int ntorsion
-) {
-    return std::make_shared<LBFGSBDock>(init_coord, pocket, pred_cross_dist, pred_holo_dist, torsions, masks, npred, npocket, ntorsion);
+std::shared_ptr<Optimizer> create_lbfgsb_dock(int device,
+                                              dtype *init_coord,       // npred * 3 dtypes
+                                              dtype *pocket,           // npocket * 3 dtypes
+                                              dtype *pred_cross_dist,  // npred * npocket dtypes
+                                              dtype *pred_holo_dist,   // npred * npred dtypes
+                                              int *torsions,           // ntorsion * 2 ints
+                                              uint8_t *masks,          // npred * ntorsion masks
+                                              int npred, int npocket, int ntorsion) {
+    return std::make_shared<LBFGSBDock>(device, init_coord, pocket, pred_cross_dist, pred_holo_dist, torsions, masks, npred, npocket, ntorsion);
 }
 
 std::shared_ptr<OptimizerServer> create_lbfgsb_server(int device, int n) {

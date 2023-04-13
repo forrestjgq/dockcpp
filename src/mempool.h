@@ -9,22 +9,28 @@ namespace dock {
 class MemPool {
 private:
     struct MemBlock {
-        explicit MemBlock(void *p, int sz) {
+        explicit MemBlock(void *p, void *dp, int sz) {
             ptr_    = (uint8_t *)p;
+            dptr_ = (uint8_t *)dp;
             size_   = sz;
             offset_ = 0;
         }
         uint8_t *ptr_ = nullptr;
+        uint8_t *dptr_ = nullptr;
         int size_     = 0;
         int offset_   = 0;
         void reset() {
             offset_ = 0;
         }
-        void *crop(int sz, int align) {
+        void *crop(int sz, int align, void **dptr) {
             sz = (sz + align - 1) / align * align;
             if (left() >= sz) {
                 auto p = ptr_ + offset_;
+                auto dp = dptr_ + offset_;
                 offset_ += sz;
+                if (dptr) {
+                    *dptr = dp;
+                }
                 return p;
             }
             return nullptr;
@@ -37,8 +43,8 @@ private:
         }
     };
 public:
-    using f_alloc_  = std::function<void *(int)>;
-    using f_dealloc = std::function<void(void *)>;
+    using f_alloc_  = std::function<void *(int, void **)>;
+    using f_dealloc = std::function<void(void *, void *)>;
     explicit MemPool(f_alloc_ alloc, f_dealloc deaclloc, int blksz, int align = sizeof(double))
         : alloc_(std::move(alloc)), dealloc_(deaclloc), blksize_(blksz), align_(align) {
         blksize_ = (blksize_ + align - 1) / align * align;
@@ -46,7 +52,7 @@ public:
     ~MemPool() {
         for (auto &b : blks_) {
             if (b.ptr_) {
-                dealloc_((void *)(b.ptr_));
+                dealloc_((void *)(b.ptr_), (void *)b.dptr_);
             }
         }
     }
@@ -55,9 +61,9 @@ public:
             b.reset();
         }
     }
-    void *alloc(int sz) {
+    void *alloc(int sz, void **dptr = nullptr) {
         for (auto &b : blks_) {
-            auto p = b.crop(sz, align_);
+            auto p = b.crop(sz, align_, dptr);
             if (p != nullptr) {
                 return p;
             }
@@ -65,21 +71,22 @@ public:
         if(!grow(sz)) {
             return nullptr;
         }
-        return blks_.back().crop(sz, align_);
+        return blks_.back().crop(sz, align_, dptr);
     }
 
 protected:
     bool grow(int sz) {
         sz     = (sz + align_ - 1) / align_ * align_;
         sz     = (sz + blksize_ - 1) / blksize_ * blksize_;
-        auto p = alloc_(sz);
+        void *dp = nullptr;
+        auto p = alloc_(sz, &dp);
         if (!p) {
             return false;
         }
-        uint8_t *p1 = (uint8_t *)p;
-        p1 += sz;
-        std::cout << "grow start " << p << " end " << (void *)p1 << " sz " << sz << std::endl;
-        blks_.emplace_back(p, sz);
+        // uint8_t *p1 = (uint8_t *)p;
+        // p1 += sz;
+        // std::cout << "grow start " << p << " end " << (void *)p1 << " sz " << sz << std::endl;
+        blks_.emplace_back(p, dp, sz);
         return true;
     }
 

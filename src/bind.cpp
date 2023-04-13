@@ -130,7 +130,7 @@ std::tuple<Tensor, bool> dock_submit(std::shared_ptr<dock::Context> ctx,
     std::cerr << "Request submit failed" << std::endl;
     return std::tuple<torch::Tensor, bool>(t, false);
 }
-std::tuple<Tensor, float, bool> lbfgsb(Tensor init_coord, Tensor pocket, Tensor pred_cross_dist,
+std::tuple<Tensor, float, bool> lbfgsb(int device, Tensor init_coord, Tensor pocket, Tensor pred_cross_dist,
                                        Tensor pred_holo_dist, Tensor torsions, Tensor masks,
                                        Tensor values, float eps) {
     int npred, npocket, itmp, ntorsions, nval;
@@ -147,9 +147,10 @@ std::tuple<Tensor, float, bool> lbfgsb(Tensor init_coord, Tensor pocket, Tensor 
     dtype best = 0;
     auto out = std::shared_ptr<dtype>(new dtype[nval]);
     auto outf = std::shared_ptr<float>(new float[nval]);
-    auto o = dock::create_lbfgsb_dock(
-        sp_init_coord.get(), sp_pocket.get(), sp_pred_cross_dist.get(), sp_pred_holo_dist.get(),
-        (int *)torsions.data_ptr(), (uint8_t *)masks.data_ptr(), npred, npocket, ntorsions);
+    auto o     = dock::create_lbfgsb_dock(device, sp_init_coord.get(), sp_pocket.get(),
+                                          sp_pred_cross_dist.get(), sp_pred_holo_dist.get(),
+                                          (int *)torsions.data_ptr(), (uint8_t *)masks.data_ptr(),
+                                          npred, npocket, ntorsions);
 
     torch::Tensor t;
     auto ret = o->run(sp_values.get(), out.get(), &best, eps, nval);

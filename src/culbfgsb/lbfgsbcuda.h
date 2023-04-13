@@ -16,6 +16,10 @@
 #include <functional>
 
 #include "culbfgsb/cutil_inline.h"
+// #define RT __restrict__
+#define RT
+// #define RT1 __restrict__
+#define RT1
 
 #define MODU8
 
@@ -299,7 +303,7 @@ void lbfgsbcauchy(const int& n, const real* x, const real* l, const real* u,
                   const real& sbgnrm, real* buf_s_r, real* buf_array_p,
                   int* iwhere, const int& iPitch_normal,
                   const real& machinemaximum, cublasHandle_t cublas_handle,
-                  const StreamPool* streamPool, int& info);
+                  const StreamPool* streamPool, int& info, dock::MemPool *hostPool);
 
 template <typename real>
 void lbfgsbcmprlb(const int& n, const int& m, const real* x, const real* g,
@@ -336,7 +340,7 @@ void lbfgsblnsrlb(const int& n, const real* l, const real* u, const int* nbd,
                   const real& stpscaling, const int& iter, int& ifun,
                   int& iback, int& nfgv, int& info, int& task, int& csave,
                   int* isave, real* dsave, real* buf_s_r,
-                  cublasHandle_t cublas_handle, const StreamPool* streamPool);
+                  cublasHandle_t cublas_handle, const StreamPool* streamPool, dock::MemPool *hostPool);
 
 template <typename real>
 void lbfgsbmatupdsub(const int& n, const int& m, real* wy, real* sy,
@@ -367,7 +371,7 @@ void lbfgsbsubsm(const int& n, const int& m, const int& nsub, const int* ind,
                  const int& head, real* wv, real* wn, int& info,
                  const int& iPitch_wn, const int& iPitch_ws, real* buf_array_p,
                  real* buf_s_r, int* bufi_s_r, const int& iPitch_normal,
-                 cublasHandle_t cublas_handle, const cudaStream_t& stream);
+                 cublasHandle_t cublas_handle, const cudaStream_t& stream, dock::MemPool *hostPool);
 
 template <typename real>
 void lbfgsbdcsrch(const real& f, const real& g, real& stp, const real& ftol,
@@ -425,7 +429,7 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
            const int& head, real* p, real* c, real* v, int& nint,
            const real& sbgnrm, real* buf_s_r, real* buf_array_p, int* iwhere,
            const int& iPitch_normal, const real& machinemaximum,
-           cublasHandle_t cublas_handle, const StreamPool* streamPool);
+           cublasHandle_t cublas_handle, const StreamPool* streamPool, dock::MemPool *hostPool);
 };
 namespace freev {
 void prog0(const int& n, int& nfree, int* index, int& nenter, int& ileave,
@@ -559,17 +563,6 @@ void prog0(real* m, int n, int pitch, int boffset, const real machineepsilon,
            const cudaStream_t& st);
 };
 
-template <class T>
-inline int memAllocImpl(dock::MemPool *pool, T** ptr, size_t length) {
-  void* ptr_ = pool->alloc(length * sizeof(T));
-  *ptr = (T*)ptr_;
-  if (ptr_ != NULL) {
-    return 0;
-  }
-  else
-    return -1;
-}
-#define memAlloc(T, pptr, length) memAllocImpl<T>(state.m_cuda_mem, pptr, length)
 
 template <class T>
 inline int memAlloc1(T** ptr, size_t length) {
@@ -582,38 +575,22 @@ inline int memAlloc1(T** ptr, size_t length) {
   else
     return -1;
 }
-
 template <class T>
-inline int memAllocHost(T** ptr, T** ptr_dev, size_t length) {
-  void* ptr_;
-  cudaHostAlloc(&ptr_, length * sizeof(T), cudaHostAllocMapped);
-  if (ptr_dev) cudaHostGetDevicePointer((void**)ptr_dev, ptr_, 0);
+inline int memAllocImpl(dock::MemPool *pool, T** ptr, size_t length) {
+  if (pool == nullptr) {
+    return memAlloc1<T>(ptr, length);
+  }
+  void* ptr_ = pool->alloc(length * sizeof(T));
   *ptr = (T*)ptr_;
-
-  memset(*ptr, 0, length);
-
-  if (ptr_ != NULL)
+  if (ptr_ != NULL) {
     return 0;
+  }
   else
     return -1;
 }
+#define memAlloc(T, pptr, length) memAllocImpl<T>(state.m_cuda_mem, pptr, length)
 
-template <class T>
-inline int memAllocPitchImpl(dock::MemPool *pool, T** ptr, size_t lx, size_t ly, size_t* pitch) {
-  int bl = lx * sizeof(T);
-  bl = iAlignUp(bl, 32);
-  if (pitch) *pitch = bl / sizeof(T);
-  int length = bl * ly;
-  void *ptr_ = (T *)pool->alloc(length);
-  *ptr = (T*)ptr_;
 
-  if (ptr_ != NULL) {
-    cudaMemset(*ptr, 0, length);
-    return 0;
-  } else
-    return -1;
-}
-#define memAllocPitch(T, pptr, lx, ly, pitch) memAllocPitchImpl<T>(state.m_cuda_mem, pptr, lx, ly, pitch)
 template <class T>
 inline int memAllocPitch1(T** ptr, size_t lx, size_t ly, size_t* pitch) {
   int bl = lx * sizeof(T);
@@ -632,13 +609,70 @@ inline int memAllocPitch1(T** ptr, size_t lx, size_t ly, size_t* pitch) {
     return -1;
 }
 
-#if 0
-inline void memFree(void* ptr) { cudaFree(ptr); }
-#else
-#define memFree(p)
-#endif
+template <class T>
+inline int memAllocPitchImpl(dock::MemPool *pool, T** ptr, size_t lx, size_t ly, size_t* pitch) {
+  if (pool == nullptr) {
+    return memAllocPitch1(ptr, lx, ly, pitch);
+  }
+  int bl = lx * sizeof(T);
+  bl = iAlignUp(bl, 32);
+  if (pitch) *pitch = bl / sizeof(T);
+  int length = bl * ly;
+  void *ptr_ = (T *)pool->alloc(length);
+  *ptr = (T*)ptr_;
 
-inline void memFreeHost(void* ptr) { cudaFreeHost(ptr); }
+  if (ptr_ != NULL) {
+    cudaMemset(*ptr, 0, length);
+    return 0;
+  } else
+    return -1;
+}
+#define memAllocPitch(T, pptr, lx, ly, pitch) memAllocPitchImpl<T>(state.m_cuda_mem, pptr, lx, ly, pitch)
+
+inline void memFree1(void* ptr) { cudaFree(ptr); }
+inline void memFreeImpl(dock::MemPool *pool,void* ptr) {
+  if (pool == nullptr) {
+    memFree1(ptr);
+  }
+}
+#define memFree(p) memFreeImpl(state.m_cuda_mem, p)
+
+template <class T>
+inline int memAllocHost1(T** ptr, T** ptr_dev, size_t length) {
+  void* ptr_;
+  cudaHostAlloc(&ptr_, length * sizeof(T), cudaHostAllocMapped);
+  if (ptr_dev) cudaHostGetDevicePointer((void**)ptr_dev, ptr_, 0);
+  *ptr = (T*)ptr_;
+
+  memset(*ptr, 0, length);
+
+  if (ptr_ != NULL)
+    return 0;
+  else
+    return -1;
+}
+template <class T>
+inline int memAllocHostImpl(dock::MemPool *pool, T** ptr, T** ptr_dev, size_t length) {
+  if (!pool) {
+    return memAllocHost1<T>(ptr, ptr_dev, length);
+  }
+  auto p = pool->alloc(length * sizeof(T), (void **)ptr_dev);
+  if (p) {
+    *ptr = (T *)p;
+    memset(p, 0, length);
+    return 0;
+  }
+  return -1;
+}
+inline void memFreeHost1(void* ptr) { cudaFreeHost(ptr); }
+inline void memFreeHostImpl(dock::MemPool* pool, void* ptr) {
+  if (ptr != nullptr && pool == nullptr) {
+    memFreeHost1(ptr);
+  }
+}
+
+#define memAllocHost(pool, T, pptr, dev_pptr, length) memAllocHostImpl<T>(pool, pptr, dev_pptr, length)
+#define memFreeHost(pool, ptr) memFreeHostImpl(pool, ptr)
 
 inline void memCopy(void* p1, const void* p2, size_t length, int type = 0) {
   // memcpy(p1, p2, length);

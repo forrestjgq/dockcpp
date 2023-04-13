@@ -73,8 +73,9 @@ struct StreamPool {
 
 template <typename real>
 struct LBFGSB_CUDA_STATE {
-  cublasContext* m_cublas_handle;
-  dock::MemPool *m_cuda_mem;
+  cublasContext* m_cublas_handle = nullptr;
+  dock::MemPool *m_cuda_mem = nullptr;
+  dock::MemPool *m_host_mem = nullptr;
   StreamPool m_pool;
   std::function<int(real*, real&, real*, const cudaStream_t&,
                     const LBFGSB_CUDA_SUMMARY<real>&)>

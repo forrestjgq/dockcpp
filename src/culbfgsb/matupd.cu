@@ -14,11 +14,11 @@ namespace cuda {
 namespace matupd {
 
 template <typename real>
-__global__ void kernel0(int n, real* wy, const real* r, const int iPitch) {
+__global__ void kernel0(int n, real* RT1 wy, const real* RT1 r, const int iPitch) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= n) return;
-
-  wy[i * iPitch] = r[i];
+  if (i < n) {
+    wy[i * iPitch] = r[i];
+  }
 }
 
 template <typename real>
@@ -192,7 +192,9 @@ void prog0(const int& n, const int& m, real* wy, real* sy, const real* r,
            const int& iPitch_j, real* buf_array_p, const int& iPitch_normal,
            cudaStream_t st) {
   debugSync();
-  kernel0<real><<<dim3(iDivUp(n, 512)), dim3(512), 0, st>>>(n, wy + itail, r,
+  // printf("prog0 m %d n %d up %d col %d\n", m, n, iDivUp(n, 512), col);
+  int blks = min(n, 256);
+  kernel0<real><<<dim3(iDivUp(n, blks)), dim3(blks), 0, st>>>(n, wy + itail, r,
                                                       iPitch0);
   debugSync();
 

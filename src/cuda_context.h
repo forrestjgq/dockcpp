@@ -163,7 +163,7 @@ private:
                       << cudaGetErrorString(err) << std::endl;
             return;
         }
-        err = cudaStreamCreate(&stream_);
+        err = cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking);
         if (err != cudaSuccess) {
             std::cerr << "create stream at device " << device_id_ << " fail, err: " << err << ", "
                       << cudaGetErrorString(err) << std::endl;

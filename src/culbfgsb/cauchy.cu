@@ -493,7 +493,7 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
            const int& head, real* p, real* c, real* v, int& nint,
            const real& sbgnrm, real* buf_s_r, real* buf_array_p, int* iwhere,
            const int& iPitch_normal, const real& machinemaximum,
-           cublasHandle_t cublas_handle, const StreamPool* streamPool) {
+           cublasHandle_t cublas_handle, const StreamPool* streamPool, dock::MemPool *hostPool) {
   debugSync();
 
   auto stream = streamPool->stream(0);
@@ -506,9 +506,7 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
 
   real* vec_h;
   real* vec_d;
-
-  cutilSafeCall(cudaHostAlloc(&vec_h, 3 * sizeof(real), cudaHostAllocMapped));
-  cutilSafeCall(cudaHostGetDevicePointer(&vec_d, vec_h, 0));
+  memAllocHost(hostPool, real, &vec_h, &vec_d, 3);
 
   real* bkmin_d = vec_d;
   real* f1_d = vec_d + 1;
@@ -600,7 +598,8 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
   real dtm = std::min(*bkmin_h, dt);
   dtm = std::max(static_cast<real>(0.0), dtm);
 
-  kernel3<real><<<dim3(iDivUp(n, 512)), dim3(512), 0, streamPool->stream(0)>>>(
+  int blks = min(n, 256);
+  kernel3<real><<<dim3(iDivUp(n, blks)), dim3(blks), 0, streamPool->stream(0)>>>(
       n, x, g, xcp, xcpb, dtm, iwhere);
 
   if (col > 0) {
@@ -615,7 +614,7 @@ void prog0(const int& n, const real* x, const real* l, const real* u,
       const real*, real*, real*, real*, const int&, const real*, const real*, \
       const real*, const int, real*, const real&, const int&, const int&,     \
       real*, real*, real*, int&, const real&, real*, real*, int*, const int&, \
-      const real&, cublasHandle_t, const StreamPool*);
+      const real&, cublasHandle_t, const StreamPool*, dock::MemPool *);
 
 INST_HELPER(double);
 INST_HELPER(float);
