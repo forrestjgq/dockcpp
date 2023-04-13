@@ -18,11 +18,17 @@ public:
     virtual ~Request() = default;
     virtual void run(Context *) {}
     void wait() {
-        evt_.wait();
-        evt_.reset();
+        if(!callback_) {
+            evt_.wait();
+            evt_.reset();
+        }
     }
     void signal() {
-        evt_.set();
+        if (callback_) {
+            callback_(this);
+        } else {
+            evt_.set();
+        }
     }
     virtual std::string getProp(const std::string &key) {
         return "";
@@ -33,14 +39,31 @@ public:
     bool ok() {
         return result_ == RequestResult::Success;
     }
+    void setCallback(std::function<void(Request *)> callback) {
+        callback_ = std::move(callback);
+    }
 
 protected:
     RequestResult result_ = RequestResult::Success;
 private:
     Event evt_;
+    std::function<void(Request *)> callback_;
 };
 
 using RequestSP = std::shared_ptr<Request>;
+
+class CallableRequest : public Request {
+public:
+    CallableRequest(std::function<void(Context *)> callback) : callback_(std::move(callback)) {
+    }
+    ~CallableRequest() override = default;
+    void run(Context *ctx) override {
+        callback_(ctx);
+    }
+
+private:
+    std::function<void(Context *)> callback_;
+};
 class Context {
 public:
     Context() = default;

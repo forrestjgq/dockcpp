@@ -1,3 +1,14 @@
+option(OPT_USE_DOUBLE "using double instead of float in calc" ON)
+# finds all files with a given extension
+macro (append_files files ext)
+  foreach (dir ${ARGN})
+    file (GLOB _files ${dir}/*.${ext})
+    list (APPEND ${files} ${_files})
+  endforeach (dir)
+endmacro (append_files)
+
+
+
 #  Build cudock pybind based package
 #=======================================================================
 set(PYDOCK_VERSION "0.2")
@@ -49,15 +60,44 @@ list(APPEND LINK_LIBS
     #${CUDA_nvcuvenc_LIBRARY}
     # ${CUDA_nvcuvid_LIBRARY}
 )
-
 set(SRC ${PROJECT_SOURCE_DIR}/src)
+set(LBFGS_DIR ${SRC}/culbfgsb)
+list(APPEND LBFGS_SRC
+    ${LBFGS_DIR}/active.cu
+    ${LBFGS_DIR}/bmv.cu
+    ${LBFGS_DIR}/cauchy.cu
+    ${LBFGS_DIR}/cmprlb.cu
+    ${LBFGS_DIR}/dpofa.cu
+    ${LBFGS_DIR}/formk.cu
+    ${LBFGS_DIR}/formt.cu
+    ${LBFGS_DIR}/freev.cu
+    ${LBFGS_DIR}/lnsrlb.cu
+    ${LBFGS_DIR}/matupd.cu
+    ${LBFGS_DIR}/minimize.cu
+    ${LBFGS_DIR}/projgr.cu
+    ${LBFGS_DIR}/subsm.cu
+    ${LBFGS_DIR}/ap.cpp
+    ${LBFGS_DIR}/lbfgsb.cpp
+    ${LBFGS_DIR}/lbfgsbcpu.cpp
+    ${LBFGS_DIR}/lbfgsbcuda.cpp
+)
+
 list(APPEND SRC_FILES 
+        ${LBFGS_SRC}
         ${SRC}/cu/dock.cu
         ${SRC}/dock.cpp
         ${SRC}/cuda_context.cpp
+        ${SRC}/lbfgsb.cpp
 )
 cuda_add_library(${PROJECT_NAME} STATIC ${SRC_FILES})
 target_link_libraries(${PROJECT_NAME} ${LINK_LIBS} -lpthread)   
+cuda_add_cublas_to_target (${PROJECT_NAME})
+
+if (OPT_USE_DOUBLE)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DOUBLE=1)
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DOUBLE=0)
+endif()
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 #=======================================================================
@@ -99,6 +139,13 @@ list(APPEND INCDIRS ${CMAKE_CURRENT_SOURCE_DIR})
 
 include_directories(${INCDIRS})
 target_link_libraries(cudock PRIVATE ${LNKLIBS} ${PROJECT_NAME})
+if (OPT_USE_DOUBLE)
+    target_compile_definitions(cudock PRIVATE USE_DOUBLE=1)
+    message("=====>> cudock use double")
+else()
+    target_compile_definitions(cudock PRIVATE USE_DOUBLE=0)
+    message("=====>> cudock use float")
+endif()
 
 set(PYTHON_PACKAGE_SRC_DIR "${PROJECT_SOURCE_DIR}/python")
 set(PYTHON_PACKAGE_DST_DIR "${CMAKE_BINARY_DIR}/lib/python_package")

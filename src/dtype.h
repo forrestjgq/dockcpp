@@ -1,10 +1,11 @@
 #ifndef DTYPE_H
 #define DTYPE_H
 
-#define USING_DOUBLE 1
+#ifndef USE_DOUBLE
+#error must define USE_DOUBLE
+#endif
 
-
-#if USING_DOUBLE
+#if USE_DOUBLE
 using dtype = double;
 #else
 using dtype = float;
