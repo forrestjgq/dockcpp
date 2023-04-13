@@ -51,10 +51,11 @@ class CudaContext:
         """
         return _cu.dock_submit(self._cu_ctx, session, vt);
         
-def lbfgsb(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, init_values, eps=0.01):
+def lbfgsb(device, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, init_values, eps=0.01):
     """create a session for one optimization
 
     Args:
+        device (int): cuda device id
         init_coord (torch.Tensor): initial ligand position, dim: (N, 3)
         torsions (list): M x 2 int list for torsion angle, dim 0 for start node index, dim 1 for end node index
         masks (list of torch.Tensor(dtype=bool)): torsion masks, length should be M, sub length should be N
@@ -73,13 +74,16 @@ def lbfgsb(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_hol
     # print(f'pocket type {type(pocket_coords)} shape {pocket_coords.shape}')
     # print(f'pred cross dist type {type(pred_cross_dist)} shape {pred_cross_dist.shape}')
     # print(f'pred holo dist type {type(pred_holo_dist)} shape {pred_holo_dist.shape}')
-    return _cu.lbfgsb(init_coord, pocket_coords, pred_cross_dist, pred_holo_dist, torsions, masks, init_values, eps)
-
-def checkGpuMem(file, line):
-    return _cu.checkgpu(file, line)
+    return _cu.lbfgsb(device, init_coord, pocket_coords, pred_cross_dist, pred_holo_dist, torsions, masks, init_values, eps)
 
 class LBFGSBServer:
     def __init__(self, n, device) -> None:
+        """create an LBFGSB optimizer server
+
+        Args:
+            n (int): number of instances of LBFGSB optimizer
+            device (int): cuda device id, device >= 0
+        """
         assert n > 0 and device >= 0
         self._srv = _cu.create_lbfgsb_server(device, n)
         assert self._srv is not None, "lbfgsb server creation failure"
@@ -93,6 +97,9 @@ class LBFGSBServer:
 
     def dock_optimize(self, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, init_values, eps=0.01):
         """post optimize request to server
+
+        optimize with LBFGSB server is an async operation, user should call dock_optimize to 
+        submit a request, or more requests, and then call poll() to get response.
 
         Args:
             init_coord (torch.Tensor): initial ligand position, dim: (N, 3)
@@ -118,16 +125,19 @@ class LBFGSBServer:
         return seq, ok
     
     def poll(self, n):
-        """poll optimize response
+        """poll optimize response, it will NOT return until all expected responses are received
 
         Args:
-            n (int, optional): how many responses are expected. Defaults to 0.
+            n (int, optional): how many responses are expected. If n <= 0 or n > running(in_run()), responses for all running requests
+                               are expected
 
         Returns:
-            tuple of(torch.Tensor, float, int, bool): torch.Tensor will be best values, float will be the best loss,
+            list of(tuple of(torch.Tensor, float, int, bool)): torch.Tensor will be best values, float will be the best loss,
                                                       int is the sequence number created by dock_optimize(), and bool
                                                       will be the result, other args are valid only when this value is
                                                       True
+                                                      
+                                                      if no running requests, None will be returned
         """
         sz = self._running
         if sz == 0:
@@ -144,16 +154,15 @@ class LBFGSBServer:
         return ret
 
     def poll(self):
-        """poll optimize response
-
-        Args:
-            n (int, optional): how many responses are expected. Defaults to 0.
+        """poll one optimize response
 
         Returns:
-            tuple of(torch.Tensor, float, int, bool): torch.Tensor will be best values, float will be the best loss,
+            tuple of(torch.Tensor, float, int, bool) or None: torch.Tensor will be best values, float will be the best loss,
                                                       int is the sequence number created by dock_optimize(), and bool
                                                       will be the result, other args are valid only when this value is
-                                                      True
+                                                      True.
+                                                      
+                                                      if no running requests, None will be returned
         """
         sz = self._running
         if sz == 0:

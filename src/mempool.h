@@ -6,6 +6,7 @@
 #include <vector>
 namespace dock {
 
+// memory pool manages memory blocks, it will grow automatically as required.
 class MemPool {
 private:
     struct MemBlock {
@@ -43,8 +44,14 @@ private:
         }
     };
 public:
-    using f_alloc_  = std::function<void *(int, void **)>;
+    // f_alloc_ is used to allocate a memory, it returns the memory address at least has sz bytes.
+    // for device mapped memory, the pptr will be filled with device memory address(while returning
+    // host address), for other memories, pptr will be filled with returning address.
+    // pptr will NOT be filled unless its not NULL
+    using f_alloc_  = std::function<void *(int sz, void **pptr)>;
+    // free memory allocated by f_alloc_
     using f_dealloc = std::function<void(void *, void *)>;
+
     explicit MemPool(f_alloc_ alloc, f_dealloc deaclloc, int blksz, int align = sizeof(double))
         : alloc_(std::move(alloc)), dealloc_(deaclloc), blksize_(blksz), align_(align) {
         blksize_ = (blksize_ + align - 1) / align * align;

@@ -17,9 +17,6 @@ Ptr<T> MakePtr(Args &&...args) {
 #define CLASS(cls, doc)            py::class_<cls, Ptr<cls>>(m, #cls, doc)
 #define SUBCLASS(cls, parent, doc) py::class_<cls, parent, Ptr<cls>>(m, #cls, doc)
 
-namespace dock {
-extern void checkGpuMem(std::string file, int line);
-};
 namespace cudock {
 
 using Tensor = torch::Tensor;
@@ -229,7 +226,6 @@ PYBIND11_MODULE(cudock, m) {
       .def(py::init<>())
       .def("run", &dock::Optimizer::run, "run a optimizing session");
     m.def("lbfgsb", &lbfgsb, "run lbfgsb optmizer");
-    m.def("checkgpu", &dock::checkGpuMem, "run lbfgsb optmizer");
     m.def("create_lbfgsb_server", &dock::create_lbfgsb_server, "create a server with (cudaDeviceId, nrInstance)");
     m.def("create_lbfgsb_dock_request", &create_lbfgsb_dock_request, "create an lbfgsb dock request for lbfgsb server");
     m.def("post_lbfgsb_request", &post_lbfgsb_request, "send lbfgsb request to server");

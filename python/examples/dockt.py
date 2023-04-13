@@ -215,7 +215,7 @@ def test_session_seq(seq, ctx):
 def test_lbfgsb_seq(seq):
     vt, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist = loadtensors1(seq)
     values = torch.zeros(vt.shape[0], device=init_coord.device, requires_grad=False)
-    t, best, ok = pydock.lbfgsb(init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, values)
+    t, best, ok = pydock.lbfgsb(6, init_coord, torsions, masks, pocket_coords, pred_cross_dist, pred_holo_dist, values)
     assert ok
     print(f'best = {best} t={t}')
 

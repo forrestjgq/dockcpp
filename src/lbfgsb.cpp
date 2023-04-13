@@ -13,20 +13,6 @@
 #include "utils.h"
 
 namespace dock {
-void checkGpuMem(std::string file, int line) {
-    #if 0
-    size_t avail;
-    size_t total;
-    cudaMemGetInfo( &avail, &total );
-    size_t used = total - avail;
-    total /= (1024*1024);
-    avail /= (1024*1024);
-    used /= (1024*1024);
-    std::cout << file << ":" << line << " total " << total << " used " << used << " free " << avail << std::endl;
-    #endif
-}
-
-#define CHECK_GPU_MEM() checkGpuMem(__FILE__, __LINE__)
 
 #define OFFSETPTR(p, n) ((void *)(((uint8_t *)(p)) + (n)))
 void dock_grad_session(dtype *&init_coord,       // npred * 3 dtypes
@@ -231,7 +217,6 @@ public:
         lbreq->setCudaHandlers(cuda_mem_.get(), host_map_mem_.get(), cublas_);
         lbreq->setCallback([this](Request *r){
             auto req = (LBFGSBRequest *)r;
-            assert(r->ok());
             this->receiver_->notify(id_, req);
         });
         ctx_->commit(request);
@@ -329,9 +314,9 @@ public:
     LBFGSBServer() {
     }
     ~LBFGSBServer() {
-        for (auto it = optimizers_.begin(); it != optimizers_.end(); ++it) {
-            std::cout << "op " << it->first << ": " << it->second->count() << std::endl;
-        }
+        // for (auto it = optimizers_.begin(); it != optimizers_.end(); ++it) {
+        //     std::cout << "op " << it->first << ": " << it->second->count() << std::endl;
+        // }
     }
     int create(int n, int deviceId) {
         int cnt = 0;
@@ -564,7 +549,6 @@ public:
 
         // std::cout << "npred " << npred << " npocket " << npocket << " ntorsion " << ntorsion << std::endl;
         cudaSetDevice(device);
-        CHECK_GPU_MEM();
     }
     ~LBFGSBDock() {
         if (device_) {
@@ -580,18 +564,14 @@ public:
         if (tmp_values_) {
             delete[] tmp_values_;
         }
-        CHECK_GPU_MEM();
     }
 
     int run(dtype *init_values, dtype *out, dtype *best_loss, dtype eps, int nval) override {
-        CHECK_GPU_MEM();
-        assert(sizeof(dtype) == 8);
         eps_ = eps;
         nval_ = nval;
         // std::cout << "nval " << nval << " eps " << eps << std::endl;
 
         prepare(init_values, nullptr);
-        CHECK_GPU_MEM();
 
         LBFGSB_CUDA_OPTION<dtype> lbfgsb_options;
 
@@ -616,7 +596,6 @@ public:
             if (err != 0) {
                 std::cerr << "cublas destroy failed: " << err << std::endl;
             }
-            CHECK_GPU_MEM();
         });
         cudaStream_t stream;
         auto err = cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
@@ -631,7 +610,6 @@ public:
             if (err != 0) {
                 std::cerr << "cublas destroy failed: " << err << std::endl;
             }
-            CHECK_GPU_MEM();
         });
 
 
@@ -653,10 +631,8 @@ public:
         LBFGSB_CUDA_SUMMARY<dtype> summary;
         memset(&summary, 0, sizeof(summary));
 
-        CHECK_GPU_MEM();
         lbfgsbcuda::lbfgsbminimize<dtype>(nval_, state, lbfgsb_options, x_, nbd_, xl_, xu_,
                                           summary);
-        CHECK_GPU_MEM();
         return 0;
     }
 
