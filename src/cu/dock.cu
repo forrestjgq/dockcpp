@@ -33,7 +33,7 @@ typedef float4 dtype4;
 #endif
 
 namespace dock {
-#define DOCKDBG 0
+#define DOCKDBG 1
 #define GRIDIDX 0
 #define INGRID  (blockIdx.x == GRIDIDX)
 #if DOCKDBG
@@ -339,6 +339,45 @@ __device__ __forceinline__ void matmul1(const dtype * REST m1, const dtype * RES
         }
     }
 }
+// m1: mxn, m2: nxk, out: mxk
+// if ltrans, m1: nxm
+// if rtrans, m2: kxn
+// concurrent mat multiple
+template <bool trans>
+__device__ __forceinline__ void matmulc(const dtype * REST m1, const dtype * REST m2, dtype * REST out, int m, int n, int k) {
+    int c = 0, r = 0, idx = 0;
+    FOR_LOOP(i, m * k) {
+        // find col and row
+        for (r = 0; r < m; r++, idx += k) {
+            int imin = idx;
+            int imax = idx + k;
+            if (i >= imin && i < imax) {
+                // i is in this row
+                c = i - idx;
+                break;
+            }
+        }
+        // multiple row r from m1 and col c from m2
+        // columns
+        const dtype *rp, *cp;
+        dtype sum = 0.;
+        int row = r * n;
+        if (trans) {
+            rp        = &m1[row];
+            cp        = &m2[c * k];
+            for (int j = 0; j < n; j++) {
+                sum += rp[j] * cp[j];
+            }
+        } else {
+            rp        = &m1[row];
+            cp        = &m2[c];
+            for (int j = 0, j1 = 0; j < n; j++, j1 += k) {
+                sum += rp[j] * cp[j1];
+            }
+        }
+        out[i] = sum;
+    }
+}
 
 #if 0
 def gen_matrix_from_rot_vec(k, theta):
@@ -607,7 +646,7 @@ def rigid_transform_Kabsch_3D_torch(A, B):
 // t: 3x1 output
 // n: num of input coords a and b
 // called in main thread, require memory 2xnx3
-__device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *REST a,
+__device__ __forceinline__ void rigid_transform_Kabsch_3D_torch_main(const dtype *REST a,
                                                                 const dtype *REST b,
                                                                 dtype *REST tmp, OUT dtype *REST r,
                                                                 OUT dtype *REST t, int n) {
@@ -692,6 +731,102 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
     DUMP("R", 3, 3, r);
     DUMP("t", 3, 3, t);
 }
+__device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *REST a,
+                                                                const dtype *REST b,
+                                                                dtype *REST tmp, OUT dtype *REST r,
+                                                                OUT dtype *REST t, int n) {
+    // mean of a, b
+
+    dtype *at, *bt;
+    at = tmp, tmp += n * 3;
+    bt = tmp, tmp += n * 3;
+    DUMPARR(0, 0, "A", n, 3, a);
+    DUMPARR(0, 0, "B", n, 3, b);
+    dtype ca[3] = { 0., 0., 0. };
+    dtype cb[3] = { 0., 0., 0. };
+    const dtype * REST tpa = a;
+    const dtype *REST tpb = b;
+    dtype re = 0;
+
+    FOR_LOOP(i, n) {
+        add3p(ca, tpa + i * 3);
+        add3p(cb, tpb + i * 3);
+    }
+    if (IS_MAIN_THREAD()) {
+        re = reciprocal((dtype)n);
+    }
+    __syncthreads();
+    FOR_LOOP(i, 3) {
+        ca[i] *= re;
+        cb[i] *= re;
+    }
+    __syncthreads();
+    DUMPARR(0, 0, "Center A", 1, 3, ca);
+    DUMPARR(0, 0, "Center B", 1, 3, cb);
+
+    // a - ca -> at
+    FOR_LOOP(i, n) {
+        sub3p(b + i * 3, cb, bt + i * 3);
+        // turn nx3 -> 3xn, now row[i] -> col[i]
+        dtype *tp       = at + i;
+        const dtype *ta = a + i * 3;
+        tp[0]           = ta[0] - ca[0];
+        tp[n]           = ta[1] - ca[1];
+        tp[2 * n]       = ta[2] - ca[2];
+    }
+    __syncthreads();
+    DUMPARR(0, 0, "Am", 3, n, at);
+    DUMPARR(0, 0, "Bm", n, 3, bt);
+
+    dtype h[9];
+    matmulc<false>(at, bt, h, 3, n, 3);
+    __syncthreads();
+
+    DUMPARR(0, 0, "H", 3, 3, h);
+    if (IS_MAIN_THREAD()) {
+        float hf[9], uf[9], s[3], vf[9];
+        hf[0] = h[0], hf[1] = h[1], hf[2] = h[2];
+        hf[3] = h[3], hf[4] = h[4], hf[5] = h[5];
+        hf[6] = h[6], hf[7] = h[7], hf[8] = h[8];
+        svd(hf, uf, s, vf);
+        // svd already output torch svd Vt.T
+        // trans<dtype>(v, v, 3, 3);
+        DUMP("U", 3, 3, uf);
+        DUMP("Vt", 3, 3, vf);
+        DUMP("S", 1, 3, s);
+
+        dtype u[9], v[9];
+        u[0] = uf[0], u[1] = uf[1], u[2] = uf[2];
+        u[3] = uf[3], u[4] = uf[4], u[5] = uf[5];
+        u[6] = uf[6], u[7] = uf[7], u[8] = uf[8];
+        v[0] = vf[0], v[1] = vf[1], v[2] = vf[2];
+        v[3] = vf[3], v[4] = vf[4], v[5] = vf[5];
+        v[6] = vf[6], v[7] = vf[7], v[8] = vf[8];
+
+        matmul<3, 3, 3, true>(v, u, r);
+        DUMP("r", 3, 3, r);
+
+        dtype dt = det3x3<dtype>(r);
+        DUMP("det", 1, 1, &dt);
+        if (dt < 0) {
+            dtype ss[9] = { 1, 0, 0, 0, 1, 0, 0, 0, -1 };
+            dtype st[9];
+            matmul<3, 3, 3, false>(v, ss, st);
+            matmul<3, 3, 3, true>(st, u, r);
+        }
+        dtype r1[9];
+        for (int i = 0; i < 9; i++) {
+            r1[i] = -r[i];
+        }
+        matmul<3, 3, 1, false>(r1, ca, t);
+        t[0] += cb[0];
+        t[1] += cb[1];
+        t[2] += cb[2];
+        DUMP("R", 3, 3, r);
+        DUMP("t", 3, 3, t);
+    }
+    __syncthreads();
+}
 
 // pos: npos x 3
 // newpos: npos x 3, output
@@ -699,16 +834,18 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
 // edge_index: nedge x 2
 // mask_rotate: npos
 // tmp: tmp memory, 18 + max(9*nedge, 6 * npos) dtypes
+// sm: npos * 9 + 12 dtypes
 __device__ __forceinline__ void modify_conformer(const dtype *REST pos, OUT dtype *REST newpos,
                                                  const dtype *REST values,
                                                  const int *REST edge_index,
                                                  const uint8_t *REST mask_rotate, int npos,
-                                                 int nval, int nedge, dtype *REST tmp) {
+                                                 int nval, int nedge, dtype *REST tmp, dtype * sm) {
     dtype *center, *rot_mat, *tr, *rot;
     center         = tmp, tmp += 3;
     rot_mat        = tmp, tmp += 9;
     tr             = tmp, tmp += 3;
     rot            = tmp, tmp += 3;
+
     DUMPARR(0, 0, "coords", npos, 3, pos);
     DUMPARR(0, 0, "values", 1, nval, values);
 
@@ -755,18 +892,22 @@ __device__ __forceinline__ void modify_conformer(const dtype *REST pos, OUT dtyp
 
     // require max(9*nedge, 6 * npos)
     if (nval > 6) {
-        dtype *flexpos, *ctmp, *r, *t;
-        flexpos = tmp, tmp += npos * 3;
-        r       = tmp, tmp += 9;
-        t       = tmp, tmp += 3;
-        // require nedge * 9 dtypes
-        modify_conformer_torsion_angles(
-          newpos, flexpos, tmp, mask_rotate, edge_index, values + 6, npos, nedge);
-        if (IS_MAIN_THREAD()) {
-            // require 2 x npos x 3 dtypes
-            rigid_transform_Kabsch_3D_torch(flexpos, newpos,  tmp, r, t, npos);
-            matmul1<true>(flexpos, r, newpos, npos, 3, 3);
+        dtype *flexpos, *r, *t;
+        if (sm == nullptr) {
+            flexpos = tmp, tmp += npos * 3;
+            r       = tmp, tmp += 9;
+            t       = tmp, tmp += 3;
+        } else {
+            flexpos = sm, sm += npos * 3;
+            r       = sm, sm += 9;
+            t       = sm, sm += 3;
         }
+        // require nedge * 9 dtypes
+        modify_conformer_torsion_angles(newpos, flexpos, tmp, mask_rotate, edge_index, values + 6,
+                                        npos, nedge);
+        // require 2 x npos x 3 dtypes
+        rigid_transform_Kabsch_3D_torch(flexpos, newpos, tmp, r, t, npos);
+        matmulc<true>(flexpos, r, newpos, npos, 3, 3);
         __syncthreads();
         FOR_LOOP(n, npos) {
             dtype *outp = newpos + n * 3;
@@ -984,7 +1125,7 @@ __global__ void dock_kernel(const dtype *REST init_coord, const dtype *REST pock
     }
 
     // require 18 + max(9*nedge, 6 * npos) dtypes
-    modify_conformer(init_coord, new_pos, values, torsions, masks, npred, nval, ntorsion, tmp);
+    modify_conformer(init_coord, new_pos, values, torsions, masks, npred, nval, ntorsion, tmp, nullptr);
     // require tmp npred *(npocket + npred + max(npred, npocket)+ 2) * dtype + npred*npocket
     // require tmp :
     //   npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
@@ -1013,7 +1154,9 @@ __global__ void dock_grad_kernel(const dtype *REST init_coord, const dtype *REST
         new_pos = tmp, tmp += npred * 3;
 
         // prepare values
-        vals = sm + group * nval;
+        // vals = sm + nval * group;
+        vals = sm;
+        dtype *smtmp = vals + nval;
         FOR_LOOP(i, nval) {
             vals[i] = values[i];
             if (group > 0) {
@@ -1023,9 +1166,8 @@ __global__ void dock_grad_kernel(const dtype *REST init_coord, const dtype *REST
         __syncthreads();
 
         // DUMPARR1("torsion", ntorsion, 2, torsions);
-        modify_conformer(init_coord, new_pos, vals, torsions, masks, npred, nval, ntorsion, tmp);
-        single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp,
-                       loss + group);
+        modify_conformer(init_coord, new_pos, vals, torsions, masks, npred, nval, ntorsion, tmp, nullptr);
+        single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss + group);
     }
 }
 #if 0
@@ -1076,8 +1218,9 @@ void dock_grad_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dty
     assert(ntorsion + 6 == nval);
     int ngval = nval + 1; // calc loss and grads for each x in values
     int blksz = dock_grad_gpu_block_size(npred, npocket, ntorsion);
-    int smsize = nval * ngval * sizeof(dtype); // for values
+    int smsize = (nval + npred * 3 + 12) * sizeof(dtype); // for values, and svd calc
 
+    printf("smsize %d\n", smsize);
     dim3 block(npred);
     dim3 grid(ngval);
     dock_grad_kernel<<<grid, block, smsize, stream>>>(
