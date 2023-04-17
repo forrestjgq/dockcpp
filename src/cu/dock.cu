@@ -34,7 +34,7 @@ typedef float4 dtype4;
 
 namespace dock {
 #define DOCKDBG 1
-#define GRIDIDX 0
+#define GRIDIDX 1
 #define INGRID  (blockIdx.x == GRIDIDX)
 #if DOCKDBG
 # define SDBG(x1, y1, ...) \
@@ -345,8 +345,8 @@ __device__ __forceinline__ void matmul1(const dtype * REST m1, const dtype * RES
 // concurrent mat multiple
 template <bool trans>
 __device__ __forceinline__ void matmulc(const dtype * REST m1, const dtype * REST m2, dtype * REST out, int m, int n, int k) {
-    int c = 0, r = 0, idx = 0;
     FOR_LOOP(i, m * k) {
+        int c = 0, r = 0, idx = 0;
         // find col and row
         for (r = 0; r < m; r++, idx += k) {
             int imin = idx;
@@ -357,6 +357,7 @@ __device__ __forceinline__ void matmulc(const dtype * REST m1, const dtype * RES
                 break;
             }
         }
+        // printf("i = %d c = %d r = %d\n", i, c, k);
         // multiple row r from m1 and col c from m2
         // columns
         const dtype *rp, *cp;
@@ -737,9 +738,11 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
                                                                 OUT dtype *REST t, int n) {
     // mean of a, b
 
-    dtype *at, *bt;
+    dtype *at, *bt, *h;
     at = tmp, tmp += n * 3;
     bt = tmp, tmp += n * 3;
+    h = tmp, tmp += 9;
+
     DUMPARR(0, 0, "A", n, 3, a);
     DUMPARR(0, 0, "B", n, 3, b);
     dtype ca[3] = { 0., 0., 0. };
@@ -748,11 +751,11 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
     const dtype *REST tpb = b;
     dtype re = 0;
 
-    FOR_LOOP(i, n) {
-        add3p(ca, tpa + i * 3);
-        add3p(cb, tpb + i * 3);
-    }
     if (IS_MAIN_THREAD()) {
+        for (int i = 0; i < n; i++) {
+            add3p(ca, tpa + i * 3);
+            add3p(cb, tpb + i * 3);
+        }
         re = reciprocal((dtype)n);
     }
     __syncthreads();
@@ -778,7 +781,6 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
     DUMPARR(0, 0, "Am", 3, n, at);
     DUMPARR(0, 0, "Bm", n, 3, bt);
 
-    dtype h[9];
     matmulc<false>(at, bt, h, 3, n, 3);
     __syncthreads();
 
@@ -833,7 +835,7 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
 // values: size nval
 // edge_index: nedge x 2
 // mask_rotate: npos
-// tmp: tmp memory, 18 + max(9*nedge, 6 * npos) dtypes
+// tmp: tmp memory, 18 + max(9*nedge, 6 * npos+9) dtypes
 // sm: npos * 9 + 12 dtypes
 __device__ __forceinline__ void modify_conformer(const dtype *REST pos, OUT dtype *REST newpos,
                                                  const dtype *REST values,
@@ -890,7 +892,7 @@ __device__ __forceinline__ void modify_conformer(const dtype *REST pos, OUT dtyp
     __syncthreads();
     DUMPARR(0, 0, "new pos", npos, 3, newpos);
 
-    // require max(9*nedge, 6 * npos)
+    // require max(9*nedge, 6 * npos+9)
     if (nval > 6) {
         dtype *flexpos, *r, *t;
         if (sm == nullptr) {
@@ -905,7 +907,7 @@ __device__ __forceinline__ void modify_conformer(const dtype *REST pos, OUT dtyp
         // require nedge * 9 dtypes
         modify_conformer_torsion_angles(newpos, flexpos, tmp, mask_rotate, edge_index, values + 6,
                                         npos, nedge);
-        // require 2 x npos x 3 dtypes
+        // require 2 x npos x 3 + 9 dtypes
         rigid_transform_Kabsch_3D_torch(flexpos, newpos, tmp, r, t, npos);
         matmulc<true>(flexpos, r, newpos, npos, 3, 3);
         __syncthreads();
@@ -1124,7 +1126,7 @@ __global__ void dock_kernel(const dtype *REST init_coord, const dtype *REST pock
         tmp     = &dev[npred * 3];
     }
 
-    // require 18 + max(9*nedge, 6 * npos) dtypes
+    // require 18 + max(9*nedge, 6 * npos+9) dtypes
     modify_conformer(init_coord, new_pos, values, torsions, masks, npred, nval, ntorsion, tmp, nullptr);
     // require tmp npred *(npocket + npred + max(npred, npocket)+ 2) * dtype + npred*npocket
     // require tmp :
@@ -1195,7 +1197,7 @@ int dock_grad_gpu_block_size(int npred, int npocket, int ntorsion) {
     //          npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2) + npred *
     //          max(npred, npocket)
     int blksz = npred * 3
-                 + std::max(18 + std::max(9 * ntorsion, 6 * npred),
+                 + std::max(18 + std::max(9 * ntorsion, 6 * npred+9),
                             npred * npocket + npred * npred + 2 + ((npred * npocket + 3) >> 2)
                               + npred * std::max(npred, npocket));
     blksz *= sizeof(dtype);
