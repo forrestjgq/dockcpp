@@ -776,10 +776,17 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
         tp[0]           = ta[0] - ca[0];
         tp[n]           = ta[1] - ca[1];
         tp[2 * n]       = ta[2] - ca[2];
+        if (INGRID && threadIdx.x == 0 && threadIdx.y == 0 && i < 3) { 
+            printf("tp0 %f = %f - %f\n", tp[0], ta[0], ca[0]);
+            printf("tp1 %f = %f - %f\n", tp[n], ta[1], ca[1]);
+            printf("tp2 %f = %f - %f\n", tp[2*n], ta[2], ca[2]);
+        }
     }
     __syncthreads();
     DUMPARR(0, 0, "Am", 3, n, at);
     DUMPARR(0, 0, "Bm", n, 3, bt);
+    DUMPARR(0, 0, "-Center A", 1, 3, ca);
+    DUMPARR(0, 0, "-Center B", 1, 3, cb);
 
     matmulc<false>(at, bt, h, 3, n, 3);
     __syncthreads();
