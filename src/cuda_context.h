@@ -107,6 +107,9 @@ public:
         device_size_ = size;
         return p;
     }
+    int getDeviceId() {
+        return device_id_;
+    }
 
 private:
     void *requireCpuMemory(int size) {

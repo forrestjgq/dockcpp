@@ -172,6 +172,7 @@ class LBFGSB : public Optimizer {
 public:
     explicit LBFGSB(int id) {
         id_ = id;
+        printf("Create LBFGSB id %d\n", id_);
     }
     ~LBFGSB() {
         if (ctx_) {
@@ -229,6 +230,8 @@ public:
 
 protected:
     bool init() {
+        extern void sm_init(int device);
+        sm_init(ctx_->getDeviceId());
         cublasContext* handle;
         cublasStatus_t stat = cublasCreate(&handle);
         if (stat != 0) {

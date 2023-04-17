@@ -5,7 +5,8 @@
 #include "dockcu.h"
 
 #include "math.h"
-#define REST __restrict__
+// #define REST __restrict__
+#define REST
 #define IN
 #define OUT
 
@@ -33,7 +34,7 @@ typedef float4 dtype4;
 #endif
 
 namespace dock {
-#define DOCKDBG 1
+#define DOCKDBG 0
 #define GRIDIDX 1
 #define INGRID  (blockIdx.x == GRIDIDX)
 #if DOCKDBG
@@ -776,11 +777,11 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
         tp[0]           = ta[0] - ca[0];
         tp[n]           = ta[1] - ca[1];
         tp[2 * n]       = ta[2] - ca[2];
-        if (INGRID && i == 1) { 
-            printf("tp0 %f = %f - %f\n", tp[0], ta[0], ca[0]);
-            printf("tp1 %f = %f - %f\n", tp[n], ta[1], ca[1]);
-            printf("tp2 %f = %f - %f\n", tp[2*n], ta[2], ca[2]);
-        }
+        // if (INGRID && i == 1) { 
+        //     printf("tp0 %f = %f - %f\n", tp[0], ta[0], ca[0]);
+        //     printf("tp1 %f = %f - %f\n", tp[n], ta[1], ca[1]);
+        //     printf("tp2 %f = %f - %f\n", tp[2*n], ta[2], ca[2]);
+        // }
     }
     __syncthreads();
     DUMPARR(0, 0, "Am", 3, n, at);
@@ -832,7 +833,7 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
         t[1] += cb[1];
         t[2] += cb[2];
         DUMP("R", 3, 3, r);
-        DUMP("t", 3, 3, t);
+        DUMP("t", 1, 3, t);
     }
     __syncthreads();
 }
@@ -843,7 +844,7 @@ __device__ __forceinline__ void rigid_transform_Kabsch_3D_torch(const dtype *RES
 // edge_index: nedge x 2
 // mask_rotate: npos
 // tmp: tmp memory, 18 + max(9*nedge, 6 * npos+15) dtypes
-// sm: npos * 9 + 12 dtypes
+// sm: npos * 9 + 27 dtypes
 __device__ __forceinline__ void modify_conformer(const dtype *REST pos, OUT dtype *REST newpos,
                                                  const dtype *REST values,
                                                  const int *REST edge_index,
@@ -901,21 +902,24 @@ __device__ __forceinline__ void modify_conformer(const dtype *REST pos, OUT dtyp
 
     // require max(9*nedge, 6 * npos+15)
     if (nval > 6) {
-        dtype *flexpos, *r, *t;
+        dtype *flexpos, *r, *t, *svdtmp;
+        // require 3xnpos + 12
         if (sm == nullptr) {
             flexpos = tmp, tmp += npos * 3;
             r       = tmp, tmp += 9;
             t       = tmp, tmp += 3;
+            svdtmp = tmp;
         } else {
             flexpos = sm, sm += npos * 3;
             r       = sm, sm += 9;
             t       = sm, sm += 3;
+            svdtmp = sm;
         }
         // require nedge * 9 dtypes
         modify_conformer_torsion_angles(newpos, flexpos, tmp, mask_rotate, edge_index, values + 6,
                                         npos, nedge);
-        // require 2 x npos x 3 + 15 dtypes
-        rigid_transform_Kabsch_3D_torch(flexpos, newpos, tmp, r, t, npos);
+        // require 6 x npos + 15 dtypes
+        rigid_transform_Kabsch_3D_torch(flexpos, newpos, svdtmp, r, t, npos);
         matmulc<true>(flexpos, r, newpos, npos, 3, 3);
         __syncthreads();
         FOR_LOOP(n, npos) {
@@ -1142,12 +1146,20 @@ __global__ void dock_kernel(const dtype *REST init_coord, const dtype *REST pock
     single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss);
 }
 
-__global__ void dock_grad_kernel(const dtype *REST init_coord, const dtype *REST pocket,
-                                 const dtype *REST pred_cross_dist,
-                                 const dtype *REST pred_holo_dist, const dtype *REST values,
-                                 const int *REST torsions, const uint8_t *REST masks, int npred,
+__device__ __forceinline__ dtype * replace_memory(dtype *src, dtype *&dst, int size) {
+    FOR_LOOP(i, size) {
+        dst[i] = src[i];
+    }
+    dtype *tmp = dst;
+    dst += size;
+    return tmp;
+}
+__global__ void dock_grad_kernel(dtype *REST _init_coord, dtype *REST _pocket,
+                                 dtype *REST _pred_cross_dist,
+                                 dtype *REST _pred_holo_dist, dtype *REST values,
+                                 int *REST torsions, uint8_t *REST masks, int npred,
                                  int npocket, int nval, int ngval, int ntorsion,
-                                 OUT dtype *REST loss, dtype *REST dev, int blksz /*in dtypes*/, dtype eps) {
+                                 OUT dtype *REST loss, dtype *REST dev, int blksz /*in dtypes*/, dtype eps, bool usesm) {
     extern __shared__ dtype sm[];
 
     #if 0 // debug: all runs in block #0, to avoid concurrency between blocks
@@ -1158,14 +1170,30 @@ __global__ void dock_grad_kernel(const dtype *REST init_coord, const dtype *REST
     if (group < ngval) 
     #endif
     {
+        dtype *init_coord, *pocket, *pred_cross_dist, *pred_holo_dist;
+        dtype *smtmp = sm;
+        if (usesm) {
+            init_coord = replace_memory(_init_coord, smtmp, npred * 3);
+            pocket = replace_memory(_pocket, smtmp, npocket * 3);
+            pred_cross_dist = replace_memory(_pred_cross_dist, smtmp, npred *npocket);
+            pred_holo_dist = replace_memory(_pred_holo_dist, smtmp, npred *npred);
+        } else {
+            init_coord = _init_coord;
+            pocket = _pocket;
+            pred_cross_dist = _pred_cross_dist;
+            pred_holo_dist = _pred_holo_dist;
+        }
+        
         dtype *new_pos, *tmp, *vals;
         tmp = dev + blksz * group; 
-        new_pos = tmp, tmp += npred * 3;
+
+
+        // new_pos = tmp, tmp += npred * 3;
+        new_pos = smtmp, smtmp += npred * 3;
 
         // prepare values
         // vals = sm + nval * group;
-        vals = sm;
-        dtype *smtmp = vals + nval;
+        vals = smtmp, smtmp += nval;
         FOR_LOOP(i, nval) {
             vals[i] = values[i];
             if (group > 0) {
@@ -1175,7 +1203,7 @@ __global__ void dock_grad_kernel(const dtype *REST init_coord, const dtype *REST
         __syncthreads();
 
         // DUMPARR1("torsion", ntorsion, 2, torsions);
-        modify_conformer(init_coord, new_pos, vals, torsions, masks, npred, nval, ntorsion, tmp, nullptr);
+        modify_conformer(init_coord, new_pos, vals, torsions, masks, npred, nval, ntorsion, tmp, smtmp);
         single_SF_loss(new_pos, pocket, pred_cross_dist, pred_holo_dist, 6, npred, npocket, tmp, loss + group);
     }
 }
@@ -1191,12 +1219,16 @@ __global__ void sched(dtype *data) {
 
 static size_t sm_max_size = 0;
 void sm_init(int device) {
+    if (sm_max_size > 0) {
+        return;
+    }
     cudaDeviceProp prop;
     auto err = cudaGetDeviceProperties(&prop, device);
     if (err != cudaSuccess) {
         return;
     }
     sm_max_size = prop.sharedMemPerBlock;
+    printf("sm max size %d\n", sm_max_size);
 }
 int dock_grad_gpu_block_size(int npred, int npocket, int ntorsion) {
     //    npred * 3 + max(
@@ -1227,14 +1259,25 @@ void dock_grad_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dty
     assert(ntorsion + 6 == nval);
     int ngval = nval + 1; // calc loss and grads for each x in values
     int blksz = dock_grad_gpu_block_size(npred, npocket, ntorsion);
-    int smsize = (nval + npred * 3 + 12) * sizeof(dtype); // for values, and svd calc
+    int smsize = (nval + npred * 9 + 27 + // for values, and svd calc
+                npred *3 + npocket * 3 + npred *npocket + npred * npred +
+                 npred  * 3 // newpos
+                 )
+                 * sizeof(dtype);
+    bool usesm = true;
+    if (smsize > sm_max_size) {
+        usesm = false;
+        smsize = (nval + npred * 9 + 27 +  // for values, and svd calc
+                   npred * 3) * sizeof(dtype);
+        assert(smsize <= sm_max_size);
+    }
 
-    printf("smsize %d\n", smsize);
+    // printf("smsize %d\n", smsize);
     dim3 block(npred);
     dim3 grid(ngval);
     dock_grad_kernel<<<grid, block, smsize, stream>>>(
         init_coord, pocket, pred_cross_dist, pred_holo_dist, values, torsions, masks, npred,
-        npocket, nval, ngval, ntorsion, loss, dev, blksz / sizeof(dtype), eps);
+        npocket, nval, ngval, ntorsion, loss, dev, blksz / sizeof(dtype), eps, usesm);
 }
 #if 0
 void dock_grad_gpu(dtype *init_coord, dtype *pocket, dtype *pred_cross_dist, dtype *pred_holo_dist,
