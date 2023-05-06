@@ -81,13 +81,48 @@ list(APPEND LBFGS_SRC
     ${LBFGS_DIR}/lbfgsbcpu.cpp
     ${LBFGS_DIR}/lbfgsbcuda.cpp
 )
+set(VINA_DIR ${SRC}/vina)
+set(CUVINA_DIR ${SRC}/cuvina)
+list(APPEND VINA_SRC
+    ${CUVINA_DIR}/grid.cu
+    ${CUVINA_DIR}/cuvina.cpp
+    ${VINA_DIR}/ad4cache.cpp
+    ${VINA_DIR}/cache.cpp
+    ${VINA_DIR}/conf_independent.cpp
+    ${VINA_DIR}/coords.cpp
+    ${VINA_DIR}/grid.cpp
+    ${VINA_DIR}/model.cpp
+    ${VINA_DIR}/monte_carlo.cpp
+    ${VINA_DIR}/mutate.cpp
+    ${VINA_DIR}/non_cache.cpp
+    ${VINA_DIR}/parallel_mc.cpp
+    ${VINA_DIR}/parallel_progress.cpp
+    ${VINA_DIR}/parse_pdbqt.cpp
+    ${VINA_DIR}/quasi_newton.cpp
+    ${VINA_DIR}/quaternion.cpp
+    ${VINA_DIR}/random.cpp
+    ${VINA_DIR}/szv_grid.cpp
+    ${VINA_DIR}/utils.cpp
+    ${VINA_DIR}/vina.cpp
+    ${VINA_DIR}/exec.cpp
+    ${VINA_DIR}/log.cpp
+)
 
 list(APPEND SRC_FILES 
         ${LBFGS_SRC}
+        ${VINA_SRC}
         ${SRC}/cu/dock.cu
         ${SRC}/dock.cpp
         ${SRC}/cuda_context.cpp
         ${SRC}/lbfgsb.cpp
+)
+
+list(APPEND LINK_LIBS
+    boost_system
+    boost_thread
+    boost_serialization
+    boost_filesystem
+    boost_program_options
 )
 cuda_add_library(${PROJECT_NAME} STATIC ${SRC_FILES})
 target_link_libraries(${PROJECT_NAME} ${LINK_LIBS} -lpthread)   

@@ -169,3 +169,7 @@ class LBFGSBServer:
             return None
         return _cu.poll_lbfgsb_response(self._srv)
             
+
+def vina(cmd):
+    args = cmd.split(" ")
+    return _cu.vina(args)
