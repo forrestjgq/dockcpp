@@ -27,7 +27,7 @@
 namespace dock {
 
 extern fl run_model_eval_deriv(model *m, const precalculate_byatom &p, const igrid &ig, const vec &v,
-                        change &g);
+                        change &g, const conf &c);
 extern void comp_model(model *m1, model *m2);
 extern void comp_change(change &c1, change &c2) ;
 }
@@ -41,19 +41,22 @@ struct quasi_newton_aux {
     
     fl operator()(const conf& c, change& g) {
         // Before evaluating conf, we have to update model
-        m->set(c);
 
         const cache *subclass = dynamic_cast<const struct cache *>(ig);
         model m1 = *m;
         change g1 = g;
+        conf c1 = c;
         fl ret = 0;
 
         std::cout << "VINA EVAL" << std::endl;
+        m->set(c);
         const fl tmp = m->eval_deriv(*p, *ig, v, g);
+
         std::cout  << std::endl << std::endl << std::endl << std::endl;
+
         std::cout << "OWR EVAL" << std::endl;
         if (subclass) {
-            ret = dock::run_model_eval_deriv(&m1, *p, *ig, v, g1);
+            ret = dock::run_model_eval_deriv(&m1, *p, *ig, v, g1, c1);
         }
         std::cout << "cu ret " << ret << " cpu ret " << tmp << std::endl;
 

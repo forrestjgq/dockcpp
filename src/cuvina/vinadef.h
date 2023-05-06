@@ -10,6 +10,7 @@ namespace dock {
 
     typedef double Flt;
     typedef double3 Vec;
+    typedef double4 Qt;
     typedef uint64_t Size;
 
     typedef struct {
@@ -61,11 +62,17 @@ namespace dock {
         int begin;
         int end;
         int parent; // -1 for root
+        // for segment, not for rigid_body and first_segment
+        Vec relative_axis;
+        Vec relative_origin;
     } Segment;
     typedef struct {
         // inputs
         Vec axis; 
         Vec origin;
+        // todo, make
+        Qt orq; // see frame::orientation_q
+        Flt orm[9]; // see frame::orientation_m
 
         // outputs
         Vecp ft; // force and torque
@@ -106,12 +113,31 @@ namespace dock {
         Flt * torsions;
     } ResidueChange;
 
+    typedef struct {
+        Vec position;
+        Qt orientation;
+    } RigidConf;
+    typedef struct {
+        RigidConf rigid;
+        // note that torsions has reversed order from segments
+        Flt *torsions;
+    } LigandConf;
+    typedef struct {
+        Flt * torsions;
+    } ResidueConf;
+
+    typedef  struct {
+        Vec coords;
+    }Atom;
 
     // never changed model vars
     typedef struct {
         int movable_atoms;
         Flt movable_v; // v[1]
         Size xs_nat; // num_atom_types(atom_type::XS)
+
+        Size natoms;
+        Atom *atoms;
         // array of movable atom size, value: atom_type::get(atom_type::XS)
         // if xs_sizes[i] == INVALID_XS_SIZEZ, minus_forces is 0, and cache eval_deriv should not be calc
         // see cache::eval_deriv
@@ -166,8 +192,13 @@ namespace dock {
         LigandChange *ligands;
         ResidueChange *flex;
     } Change;
+    typedef struct {
+        LigandConf *ligands;
+        ResidueConf *flex;
+    } Conf;
 
     
+const Flt PI = Flt(3.1415926535897931);
 
 
 

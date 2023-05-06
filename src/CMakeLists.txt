@@ -85,6 +85,7 @@ set(VINA_DIR ${SRC}/vina)
 set(CUVINA_DIR ${SRC}/cuvina)
 list(APPEND VINA_SRC
     ${CUVINA_DIR}/grid.cu
+    ${CUVINA_DIR}/conf.cu
     ${CUVINA_DIR}/cuvina.cpp
     ${VINA_DIR}/ad4cache.cpp
     ${VINA_DIR}/cache.cpp

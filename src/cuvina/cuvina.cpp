@@ -137,6 +137,12 @@ void copy_pairs(InteractingPair * &dst, interacting_pairs &src,Flt cutoff_sqr, F
         dst++;
     }
 }
+void copy_qt(Qt &dst, const qt &src) {
+    dst.x = src.R_component_1();
+    dst.y = src.R_component_2();
+    dst.z = src.R_component_3();
+    dst.w = src.R_component_4();
+}
 template<typename T>
 int tree_nodes_size(struct tree<T> &tree) {
     tree.nr_nodes = 0;
@@ -156,6 +162,10 @@ void seg_tree_nodes_copy(int parent, int idx, Segment *segs, struct tree<segment
     seg.begin = tree.node.begin;
     seg.end = tree.node.end;
     seg.parent = parent;
+    auto &axis = tree.node.relative_axis;
+    auto &origin = tree.node.relative_origin;
+    make_vec(seg.relative_axis, axis.data[0], axis.data[1], axis.data[2]);
+    make_vec(seg.relative_origin, origin.data[0], origin.data[1], origin.data[2]);
     tree.seq = myidx;
     CUDBG("COPY HSubTree, my idx %d parent %d child %d begin %d end %d", myidx, parent, tree.nr_nodes, seg.begin, seg.end);
 }
@@ -267,6 +277,13 @@ SrcModel *make_src_model(Memory *mem, model *m, const vec &v, const precalculate
                 }
             }
         // }
+    }
+
+    sm->natoms = m->atoms.size();
+    ALLOC_ARR(sm->atoms, Atom, sm->natoms);
+    for (auto i = 0u; i < sm->natoms; i++) {
+        auto &c = m->atoms[i].coords;
+        make_vec(sm->atoms[i].coords, c.data[0], c.data[1], c.data[2]);
     }
 
     sm->npairs = int(m->inter_pairs.size() + m->glue_pairs.size() + m->other_pairs.size());
@@ -390,6 +407,33 @@ Change *make_change(Memory *mem, change &g) {
 cleanup:
     return nullptr;
 }
+Conf *make_conf(Memory *mem, const conf &c) {
+    Conf *ret;
+    ALLOC(ret, Conf);
+    ALLOC_ARR(ret->ligands, LigandConf, c.ligands.size());
+    ALLOC_ARR(ret->flex, ResidueConf, c.flex.size());
+    for (auto i = 0u; i < c.ligands.size(); i++) {
+        auto &dst  = ret->ligands[i];
+        auto &src = c.ligands[i];
+        DBG("Alloc ligand %u torsion size %lu", i, src.torsions.size());
+        ALLOC_ARR(dst.torsions, Flt, src.torsions.size());
+        memcpy(dst.torsions, src.torsions.data(), src.torsions.size() * sizeof(src.torsions[0]));
+        make_vec(dst.rigid.position, src.rigid.position.data[0], src.rigid.position.data[1], src.rigid.position.data[2]);
+        copy_qt(dst.rigid.orientation, src.rigid.orientation);
+
+    }
+    for (auto i = 0u; i < c.flex.size(); i++) {
+        auto &dst  = ret->flex[i];
+        auto &src = c.flex[i];
+        DBG("Alloc flex %u torsion size %lu", i, src.torsions.size());
+        ALLOC_ARR(dst.torsions, Flt, src.torsions.size());
+        memcpy(dst.torsions, src.torsions.data(), src.torsions.size() * sizeof(src.torsions[0]));
+    }
+    return ret;
+cleanup:
+    return nullptr;
+}
+
 
 std::shared_ptr<Memory> create_prec_byatom_memory(const precalculate_byatom &p) {
     auto pesz = p.m_data.m_data.size();
@@ -455,9 +499,10 @@ void output_flex_change(residue_change &dst, ResidueChange &src) {
     memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
 }
 extern void model_eval_deriv(Model &m, PrecalculateByAtom &p, Cache &c, Change &g);
+extern void model_set_conf(Model &m, Conf &c);
 fl run_model_eval_deriv(model *m, const precalculate_byatom &p, const igrid &ig, const vec &v,
-                        change &g) {
-    auto &c = (const cache &)ig;
+                        change &g, const conf &c) {
+    auto &che = (const cache &)ig;
     Memory mem([](size_t sz) {
         return malloc(sz);
     }, [](void *p) {
@@ -467,12 +512,15 @@ fl run_model_eval_deriv(model *m, const precalculate_byatom &p, const igrid &ig,
     // const
     auto sm = make_src_model(&mem, m, v, p);
     auto mc = make_model_conf(&mem, m);
-    auto ch = make_cache(&mem, c);
+    auto ch = make_cache(&mem, che);
     auto pa = extract_object<PrecalculateByAtom>(p.m_gpu);
 
     auto md = make_model(&mem, sm, mc, m);
     auto chg = make_change(&mem, g);
+    auto cf = make_conf(&mem, c);
 
+
+    model_set_conf(*md, *cf);
     model_eval_deriv(*md, *pa, *ch, *chg);
 
     // output changes
