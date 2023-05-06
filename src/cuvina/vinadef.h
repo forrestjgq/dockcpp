@@ -67,10 +67,9 @@ namespace dock {
         Vec relative_origin;
     } Segment;
     typedef struct {
-        // inputs
-        Vec axis; 
+        // inputs, changes in set_conf
+        Vec axis; // for first_segment, it's const, for others updated in set_conf
         Vec origin;
-        // todo, make
         Qt orq; // see frame::orientation_q
         Flt orm[9]; // see frame::orientation_m
 
@@ -151,17 +150,11 @@ namespace dock {
 
         int npairs; // include: ligands pairs, inter, other, glue pairs
         InteractingPair *pairs;
-    } SrcModel;
-
-    // changes in each bfgs for set_conf
-    typedef struct {
-        int ncoords;
-        Vec * coords; // array of atom size, for atom coords, see model::coords
 
         int nligand, nflex;
         Ligand *ligands;
         Residue *flex;
-    } ModelConf;
+    } SrcModel;
 
     typedef struct  {
         // to calc force, find corresponding pair, get a and b, 
@@ -172,8 +165,9 @@ namespace dock {
     typedef struct {
         SrcModel *src;
 
-        // for conf updating
-        ModelConf *conf;
+        // changes at conf updating, and as input of der eval
+        int ncoords;
+        Vec * coords; // array of atom size, for atom coords, see model::coords
 
         // for der eval
         LigandVars *ligands;

@@ -136,7 +136,6 @@ COULD_INLINE Flt grid_eval(Grid *g, Vec &location, Flt slope, Flt v, Vec *deriv)
 // c1
 COULD_INLINE void cache_eval_deriv(Cache &c, Model &m) {
 	SrcModel *src = m.src;
-	ModelConf *conf = m.conf;
 	CU_FOR(i, src->movable_atoms) {
 		Vec deriv;
 		make_vec(deriv, 0, 0, 0);
@@ -145,7 +144,7 @@ COULD_INLINE void cache_eval_deriv(Cache &c, Model &m) {
 		CUDBG("cache %d t %lu", i, t);
 		if (t != CU_INVALID_XS_SIZE) {
 			Grid *g = cache_get_grid(c, t);
-			e = grid_eval(g, conf->coords[i], c.m_slope, src->movable_v, &deriv);
+			e = grid_eval(g, m.coords[i], c.m_slope, src->movable_v, &deriv);
 		}
 		vec_set( m.minus_forces[i], deriv);
 		m.movable_e[i] = e;
@@ -305,13 +304,12 @@ FORCE_INLINE void set_derivative(const Vecp& force_torque, RigidChange& c) {
 
 GLOBAL  void model_eval_deriv(Model &m, PrecalculateByAtom &p, Cache &c, Change &g) {
 	SrcModel *src = m.src;
-	ModelConf *conf = m.conf;
 
 	// eval cache and set initial minus_forces
 	cache_eval_deriv(c, m);
 
 	CU_FOR(i, src->npairs) {
-		eval_interacting_pair_deriv(i, p, src->pairs[i], conf->coords, m.pair_res[i]);
+		eval_interacting_pair_deriv(i, p, src->pairs[i], m.coords, m.pair_res[i]);
 	}
 	SYNC();
 	// accumulate e as deriviative result
@@ -337,13 +335,13 @@ GLOBAL  void model_eval_deriv(Model &m, PrecalculateByAtom &p, Cache &c, Change 
 	SYNC();
 
 	// ligands deriviative
-	CU_FOR(i, conf->nligand) {
-		Ligand &ligand = conf->ligands[i];
+	CU_FOR(i, src->nligand) {
+		Ligand &ligand = src->ligands[i];
 		LigandVars &var = m.ligands[i];
 		// first calculate all node force and torque, only for node itself, not include sub-nodes
 		FOR(j, ligand.nr_node) {
 			CUDBG("ligand %d", j);
-			sum_force_and_torque<Segment>(ligand.tree[j], var.tree[j].origin, conf->coords, m.minus_forces, var.tree[j].ft);
+			sum_force_and_torque<Segment>(ligand.tree[j], var.tree[j].origin, m.coords, m.minus_forces, var.tree[j].ft);
 			var.tree[j].dirty = 0; // once force accumulated, dirty will be set to non-0 and torque should be re-calculated
 		}
 		// climbing from the leaves to root and accumulate force and torque
@@ -389,13 +387,13 @@ GLOBAL  void model_eval_deriv(Model &m, PrecalculateByAtom &p, Cache &c, Change 
 			}
         }
 	}
-	CU_FOR(i, conf->nflex) {
-		Residue &flex = conf->flex[i];
+	CU_FOR(i, src->nflex) {
+		Residue &flex = src->flex[i];
 		ResidueVars &var = m.flex[i];
 		// first calculate all node force and torque, only for node itself, not include sub-nodes
 		FOR(j, flex.nr_node) {
 			CUDBG("flex %d", j);
-			sum_force_and_torque<Segment>(flex.tree[j], var.tree[j].origin, conf->coords, m.minus_forces, var.tree[j].ft);
+			sum_force_and_torque<Segment>(flex.tree[j], var.tree[j].origin, m.coords, m.minus_forces, var.tree[j].ft);
 			var.tree[j].dirty = 0; // once force accumulated, dirty will be set to non-0 and torque should be re-calculated
 		}
 		// climbing from the leaves to root and accumulate force and torque

@@ -301,55 +301,42 @@ SrcModel *make_src_model(Memory *mem, model *m, const vec &v, const precalculate
     copy_pairs(pair, m->other_pairs, sqr, v[2]);
     copy_pairs(pair, m->glue_pairs, max_sqr, v[2]);
 
-    return sm;
-cleanup:
-    return nullptr;
-}
-ModelConf *make_model_conf(Memory *mem, model *m) {
-
-    ModelConf *conf;
-    ALLOC(conf, ModelConf);
-    // copy atom coords
-    conf->ncoords = m->coords.size();
-    ALLOC_ARR(conf->coords, Vec, conf->ncoords);
-    copy_vecs(conf->coords, m->coords);
     // prepare ligands and flex, in the reverse order to store tree
-    conf->nligand = m->ligands.size();
-    conf->nflex = m->flex.size();
-    ALLOC_ARR(conf->ligands, Ligand, conf->nligand);
-    ALLOC_ARR(conf->flex, Residue, conf->nflex);
-    for (int i = 0; i < conf->nligand; i++) {
-        auto &ligand = conf->ligands[i];
+    sm->nligand = m->ligands.size();
+    sm->nflex = m->flex.size();
+    ALLOC_ARR(sm->ligands, Ligand, sm->nligand);
+    ALLOC_ARR(sm->flex, Residue, sm->nflex);
+    for (int i = 0; i < sm->nligand; i++) {
+        auto &ligand = sm->ligands[i];
         ligand.nr_node = htree_nodes_size(m->ligands[i]);
         ALLOC_ARR(ligand.tree, Segment, ligand.nr_node);
         htree_nodes_copy(ligand.tree, m->ligands[i]);
     }
-    for (int i = 0; i < conf->nflex; i++) {
-        auto &flex = conf->flex[i];
+    for (int i = 0; i < sm->nflex; i++) {
+        auto &flex = sm->flex[i];
         flex.nr_node = htree_nodes_size(m->flex[i]);
         ALLOC_ARR(flex.tree, Segment, flex.nr_node);
         htree_nodes_copy(flex.tree, m->flex[i]);
     }
-    return conf;
+    return sm;
 cleanup:
     return nullptr;
 }
 
-Model *make_model(Memory *mem, SrcModel *sm, ModelConf *mc, model *m) {
+Model *make_model(Memory *mem, SrcModel *sm, model *m) {
     Model *md;
     ALLOC(md, Model);
     md->src = sm;
-    md->conf = mc;
-    ALLOC_ARR(md->ligands, LigandVars, mc->nligand);
-    ALLOC_ARR(md->flex, ResidueVars, mc->nflex);
-    for (int i = 0; i < mc->nligand; i++) {
-        auto &ligand = mc->ligands[i];
+    ALLOC_ARR(md->ligands, LigandVars, sm->nligand);
+    ALLOC_ARR(md->flex, ResidueVars, sm->nflex);
+    for (int i = 0; i < sm->nligand; i++) {
+        auto &ligand = sm->ligands[i];
         auto &ligandvar = md->ligands[i];
         ALLOC_ARR(ligandvar.tree, SegmentVars, ligand.nr_node);
         htree_var_nodes_copy(ligandvar.tree, m->ligands[i]);
     }
-    for (int i = 0; i < mc->nflex; i++) {
-        auto &flex = mc->flex[i];
+    for (int i = 0; i < sm->nflex; i++) {
+        auto &flex = sm->flex[i];
         auto &flexvar = md->flex[i];
         ALLOC_ARR(flexvar.tree, SegmentVars, flex.nr_node);
         htree_var_nodes_copy(flexvar.tree, m->flex[i]);
@@ -358,6 +345,9 @@ Model *make_model(Memory *mem, SrcModel *sm, ModelConf *mc, model *m) {
     ALLOC_ARR(md->movable_e, Flt, sm->movable_atoms);
     ALLOC_ARR(md->pair_res, PairEvalResult, sm->npairs);
 
+    md->ncoords = m->coords.size();
+    ALLOC_ARR(md->coords, Vec, md->ncoords);
+    copy_vecs(md->coords, m->coords);
     return md;
 cleanup:
     return nullptr;
@@ -511,11 +501,10 @@ fl run_model_eval_deriv(model *m, const precalculate_byatom &p, const igrid &ig,
 
     // const
     auto sm = make_src_model(&mem, m, v, p);
-    auto mc = make_model_conf(&mem, m);
     auto ch = make_cache(&mem, che);
     auto pa = extract_object<PrecalculateByAtom>(p.m_gpu);
 
-    auto md = make_model(&mem, sm, mc, m);
+    auto md = make_model(&mem, sm, m);
     auto chg = make_change(&mem, g);
     auto cf = make_conf(&mem, c);
 

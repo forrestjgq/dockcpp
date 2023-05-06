@@ -48,12 +48,11 @@ void first_segment_set_conf( Segment *seg,SegmentVars *segvar, Atom *atoms, Vec*
 
 GLOBAL  void model_set_conf(Model &m, Conf &c) {
 	SrcModel *src = m.src;
-	ModelConf *conf = m.conf;
     Atom *atoms = src->atoms;
 
 	// ligands deriviative
-	CU_FOR(i, conf->nligand) {
-		Ligand &ligand = conf->ligands[i];
+	CU_FOR(i, src->nligand) {
+		Ligand &ligand = src->ligands[i];
 		LigandVars &var = m.ligands[i];
         Flt *p = c.ligands[i].torsions;
 		// first calculate all node force and torque, only for node itself, not include sub-nodes
@@ -66,28 +65,28 @@ GLOBAL  void model_set_conf(Model &m, Conf &c) {
             if (seg.parent >= 0) {
                 Segment &parent        = ligand.tree[seg.parent];
                 SegmentVars &parentVar = var.tree[seg.parent];
-                segment_set_conf(&parentVar, &segvar, &seg, atoms, conf->coords, p[k-1]);
+                segment_set_conf(&parentVar, &segvar, &seg, atoms, m.coords, p[k-1]);
             } else {
 				// root
-                rigid_body_set_conf(&seg, &segvar, atoms, conf->coords, c.ligands[i].rigid);
+                rigid_body_set_conf(&seg, &segvar, atoms, m.coords, c.ligands[i].rigid);
 			}
         }
 	}
-	CU_FOR(i, conf->nflex) {
-		Residue &flex = conf->flex[i];
+	CU_FOR(i, src->nflex) {
+		Residue &flex = src->flex[i];
 		ResidueVars &var = m.flex[i];
         Flt *p = c.flex[i].torsions;
 		// climbing from the leaves to root and accumulate force and torque
 		FOR(k, flex.nr_node) {
-            int j = conf->nflex - k -1;
+            int j = src->nflex - k -1;
 			Segment &seg = flex.tree[j];
 			SegmentVars &segvar = var.tree[j];
             if (seg.parent >= 0) {
                 Segment &parent        = flex.tree[seg.parent];
                 SegmentVars &parentVar = var.tree[seg.parent];
-                segment_set_conf(&parentVar, &segvar, &seg, atoms, conf->coords, p[k]);
+                segment_set_conf(&parentVar, &segvar, &seg, atoms, m.coords, p[k]);
 			} else {
-                first_segment_set_conf(&seg, &segvar, atoms, conf->coords, p[k]);
+                first_segment_set_conf(&seg, &segvar, atoms, m.coords, p[k]);
             }
         }
 	}
