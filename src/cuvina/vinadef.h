@@ -4,8 +4,10 @@
 #include "cuda_runtime_api.h"
 #include <stdint.h>
 
+#define USE_CUDA_VINA 0
 namespace dock {
     
+
     typedef double Flt;
     typedef double3 Vec;
     typedef uint64_t Size;
@@ -103,6 +105,9 @@ namespace dock {
     typedef struct {
         Flt * torsions;
     } ResidueChange;
+
+
+    // never changed model vars
     typedef struct {
         int movable_atoms;
         Flt movable_v; // v[1]
@@ -111,8 +116,7 @@ namespace dock {
         // if xs_sizes[i] == INVALID_XS_SIZEZ, minus_forces is 0, and cache eval_deriv should not be calc
         // see cache::eval_deriv
         Size *xs_sizes; 
-        int ncoords;
-        Vec * coords; // array of atom size, for atom coords, see model::coords
+
         // int ninter, nother, nglue, nligand, nflex;
         // int nligandPairs; // how many pairs in all ligands
         // InteractingPair *inter_pairs;
@@ -121,34 +125,18 @@ namespace dock {
 
         int npairs; // include: ligands pairs, inter, other, glue pairs
         InteractingPair *pairs;
-
-        int nligand, nflex;
-        Ligand *ligands;
-        Residue *flex;
     } SrcModel;
+
+    // changes in each bfgs for set_conf
     typedef struct {
-        int movable_atoms;
-        Flt movable_v; // v[1]
-        Size xs_nat; // num_atom_types(atom_type::XS)
-        // array of movable atom size, value: atom_type::get(atom_type::XS)
-        // if xs_sizes[i] == INVALID_XS_SIZEZ, minus_forces is 0, and cache eval_deriv should not be calc
-        // see cache::eval_deriv
-        Size *xs_sizes; 
         int ncoords;
         Vec * coords; // array of atom size, for atom coords, see model::coords
-        // int ninter, nother, nglue, nligand, nflex;
-        // int nligandPairs; // how many pairs in all ligands
-        // InteractingPair *inter_pairs;
-        // InteractingPair *other_pairs;
-        // InteractingPair *glue_pairs;
-
-        int npairs; // include: ligands pairs, inter, other, glue pairs
-        InteractingPair *pairs;
 
         int nligand, nflex;
         Ligand *ligands;
         Residue *flex;
     } ModelConf;
+
     typedef struct  {
         // to calc force, find corresponding pair, get a and b, 
         // forces[a] -= force, forces[b] += force
@@ -157,6 +145,11 @@ namespace dock {
     } PairEvalResult;
     typedef struct {
         SrcModel *src;
+
+        // for conf updating
+        ModelConf *conf;
+
+        // for der eval
         LigandVars *ligands;
         ResidueVars *flex;
         Vec *minus_forces; // size: movable atoms, see SrcModel.movable_atoms, used in eval_deriv, no init value

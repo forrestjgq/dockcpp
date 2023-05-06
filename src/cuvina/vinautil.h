@@ -9,8 +9,7 @@ namespace dock {
 #define FOR(i, n) for(int i = 0; i < n; i++)
 #define FOR_RANGE(i, start, end) for(int i = start; i < end; i++)
 
-#define USE_CUDA 0
-#if USE_CUDA
+#if USE_CUDA_VINA
     #define FORCE_INLINE __forceinline__ __device__
     #define COULD_INLINE __forceinline__ __device__
     #define GLOBAL __global__ 

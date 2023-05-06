@@ -7,6 +7,13 @@
 #include "cuvina.h"
 
 namespace dock {
+
+template <typename T>
+T *extract_object(std::shared_ptr<void> stub) {
+    auto obj = std::static_pointer_cast<CuObject>(stub);
+    return (T *)(obj->obj);
+}
+
 class Memory {
 public:
     // f_alloc_ is used to allocate a memory, it returns the memory address at least has sz bytes.
@@ -62,6 +69,7 @@ using Memsp = std::shared_ptr<Memory>;
 
 Memsp makeCpuMemory(Size size) {
     auto mem = std::make_shared<Memory>([](size_t sz) {
+        CUDBG("make cpu mem size %lu", sz);
         return malloc(sz);
     }, [](void *p) {
         free(p);
@@ -74,6 +82,7 @@ Memsp makeCpuMemory(Size size) {
 Memsp makeCudaMemory(Size size) {
     auto mem = std::make_shared<Memory>([](size_t sz) {
         void *p = nullptr;
+        CUDBG("make cuda mem size %lu", sz);
         cudaMalloc(&p, sz);
         return p;
     }, [](void *p) {
@@ -87,14 +96,14 @@ Memsp makeCudaMemory(Size size) {
     return mem;
 }
 
-#if USE_CUDA
+#if USE_CUDA_VINA
 #define makeMemory makeCudaMemory
 #else
 #define makeMemory makeCpuMemory
 #endif
 
-std::shared_ptr<CuObj> makeCuObject(Memsp mem, void *obj) {
-    auto co = std::make_shared<CuObj>();
+std::shared_ptr<CuObject> makeCuObject(Memsp mem, void *obj) {
+    auto co = std::make_shared<CuObject>();
     co->ctrl = mem;
     co->obj = obj;
     return co;
@@ -260,11 +269,6 @@ SrcModel *make_src_model(Memory *mem, model *m, const vec &v, const precalculate
         // }
     }
 
-    // copy atom coords
-    sm->ncoords = m->coords.size();
-    ALLOC_ARR(sm->coords, Vec, sm->ncoords);
-    copy_vecs(sm->coords, m->coords);
-
     sm->npairs = int(m->inter_pairs.size() + m->glue_pairs.size() + m->other_pairs.size());
     for (auto &ligand : m->ligands) {
         sm->npairs += int(ligand.pairs.size());
@@ -280,42 +284,55 @@ SrcModel *make_src_model(Memory *mem, model *m, const vec &v, const precalculate
     copy_pairs(pair, m->other_pairs, sqr, v[2]);
     copy_pairs(pair, m->glue_pairs, max_sqr, v[2]);
 
-    // prepare ligands and flex, in the reverse order to store tree
-    sm->nligand = m->ligands.size();
-    sm->nflex = m->flex.size();
-    ALLOC_ARR(sm->ligands, Ligand, sm->nligand);
-    ALLOC_ARR(sm->flex, Residue, sm->nflex);
-    for (int i = 0; i < sm->nligand; i++) {
-        auto &ligand = sm->ligands[i];
-        ligand.nr_node = htree_nodes_size(m->ligands[i]);
-        ALLOC_ARR(ligand.tree, Segment, ligand.nr_node);
-        htree_nodes_copy(ligand.tree, m->ligands[i]);
-    }
-    for (int i = 0; i < sm->nflex; i++) {
-        auto &flex = sm->flex[i];
-        flex.nr_node = htree_nodes_size(m->flex[i]);
-        ALLOC_ARR(flex.tree, Segment, flex.nr_node);
-        htree_nodes_copy(flex.tree, m->flex[i]);
-    }
     return sm;
 cleanup:
     return nullptr;
 }
+ModelConf *make_model_conf(Memory *mem, model *m) {
 
-Model *make_model(Memory *mem, SrcModel *sm, model *m) {
+    ModelConf *conf;
+    ALLOC(conf, ModelConf);
+    // copy atom coords
+    conf->ncoords = m->coords.size();
+    ALLOC_ARR(conf->coords, Vec, conf->ncoords);
+    copy_vecs(conf->coords, m->coords);
+    // prepare ligands and flex, in the reverse order to store tree
+    conf->nligand = m->ligands.size();
+    conf->nflex = m->flex.size();
+    ALLOC_ARR(conf->ligands, Ligand, conf->nligand);
+    ALLOC_ARR(conf->flex, Residue, conf->nflex);
+    for (int i = 0; i < conf->nligand; i++) {
+        auto &ligand = conf->ligands[i];
+        ligand.nr_node = htree_nodes_size(m->ligands[i]);
+        ALLOC_ARR(ligand.tree, Segment, ligand.nr_node);
+        htree_nodes_copy(ligand.tree, m->ligands[i]);
+    }
+    for (int i = 0; i < conf->nflex; i++) {
+        auto &flex = conf->flex[i];
+        flex.nr_node = htree_nodes_size(m->flex[i]);
+        ALLOC_ARR(flex.tree, Segment, flex.nr_node);
+        htree_nodes_copy(flex.tree, m->flex[i]);
+    }
+    return conf;
+cleanup:
+    return nullptr;
+}
+
+Model *make_model(Memory *mem, SrcModel *sm, ModelConf *mc, model *m) {
     Model *md;
     ALLOC(md, Model);
     md->src = sm;
-    ALLOC_ARR(md->ligands, LigandVars, sm->nligand);
-    ALLOC_ARR(md->flex, ResidueVars, sm->nflex);
-    for (int i = 0; i < sm->nligand; i++) {
-        auto &ligand = sm->ligands[i];
+    md->conf = mc;
+    ALLOC_ARR(md->ligands, LigandVars, mc->nligand);
+    ALLOC_ARR(md->flex, ResidueVars, mc->nflex);
+    for (int i = 0; i < mc->nligand; i++) {
+        auto &ligand = mc->ligands[i];
         auto &ligandvar = md->ligands[i];
         ALLOC_ARR(ligandvar.tree, SegmentVars, ligand.nr_node);
         htree_var_nodes_copy(ligandvar.tree, m->ligands[i]);
     }
-    for (int i = 0; i < sm->nflex; i++) {
-        auto &flex = sm->flex[i];
+    for (int i = 0; i < mc->nflex; i++) {
+        auto &flex = mc->flex[i];
         auto &flexvar = md->flex[i];
         ALLOC_ARR(flexvar.tree, SegmentVars, flex.nr_node);
         htree_var_nodes_copy(flexvar.tree, m->flex[i]);
@@ -415,6 +432,7 @@ cleanup:
     return nullptr;
 }
 bool makePrecalcByAtom(precalculate_byatom &p) {
+    CUDBG("%d  make precalc by atom", 0);
     auto mem = create_prec_byatom_memory(p);
     if (mem) {
         auto pa = make_prec_atom(mem.get(), p);
@@ -448,10 +466,11 @@ fl run_model_eval_deriv(model *m, const precalculate_byatom &p, const igrid &ig,
 
     // const
     auto sm = make_src_model(&mem, m, v, p);
+    auto mc = make_model_conf(&mem, m);
     auto ch = make_cache(&mem, c);
-    auto pa = make_prec_atom(&mem, p);
+    auto pa = extract_object<PrecalculateByAtom>(p.m_gpu);
 
-    auto md = make_model(&mem, sm, m);
+    auto md = make_model(&mem, sm, mc, m);
     auto chg = make_change(&mem, g);
 
     model_eval_deriv(*md, *pa, *ch, *chg);
@@ -463,7 +482,6 @@ fl run_model_eval_deriv(model *m, const precalculate_byatom &p, const igrid &ig,
     for (auto i = 0u; i < g.flex.size(); i ++) {
         output_flex_change(g.flex[0], chg->flex[0]);
     }
-
 
     return md->e;
 

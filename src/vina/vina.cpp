@@ -134,6 +134,11 @@ void Vina::set_ligand_from_string(const std::string& ligand_string) {
 	m_poses = poses;
 	m_precalculated_byatom = precalculated_byatom;
 	m_ligand_initialized = true;
+	if (!cpu_only) {
+		if (!dock::makePrecalcByAtom(m_precalculated_byatom)) {
+			set_cpu_only();
+		}
+	}
 }
 
 void Vina::set_ligand_from_string(const std::vector<std::string>& ligand_string) {
@@ -887,7 +892,7 @@ output_container Vina::remove_redundant(const output_container &in, fl min_rmsd)
 }
 
 void Vina::global_search(const int exhaustiveness, const int n_poses, const double min_rmsd, const int max_evals) {
-	
+
 	// Vina search (Monte-carlo and local optimization)
 	// Check if ff, box and ligand were initialized
 	if (!m_ligand_initialized) {
