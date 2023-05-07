@@ -910,6 +910,16 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 		std::cerr << "WARNING: At low exhaustiveness, it may be impossible to utilize all CPUs.\n";
 	}
 
+	if (!cpu_only) {
+		if (!dock::makeSrcModel(&m_model, m_precalculated_byatom)) {
+			set_cpu_only();
+		}
+	}
+	if (!cpu_only) {
+		if (!dock::makeCache(m_grid)) {
+			set_cpu_only();
+		}
+	}
 	// double e = 0;
 	double intramolecular_energy = 0;
 	const vec authentic_v(1000, 1000, 1000);

@@ -144,7 +144,7 @@ COULD_INLINE void cache_eval_deriv(Cache &c, Model &m) {
 		CUDBG("cache %d t %lu", i, t);
 		if (t != CU_INVALID_XS_SIZE) {
 			Grid *g = cache_get_grid(c, t);
-			e = grid_eval(g, m.coords[i], c.m_slope, src->movable_v, &deriv);
+			e = grid_eval(g, m.coords[i], c.m_slope, m.vs[1], &deriv);
 		}
 		vec_set( m.minus_forces[i], deriv);
 		m.movable_e[i] = e;
@@ -202,11 +202,11 @@ COULD_INLINE void eval_interacting_pairs_deriv(PrecalculateByAtom &p, Flt v, Int
 	}
 }
 COULD_INLINE void eval_interacting_pair_deriv(int seq, PrecalculateByAtom &p, const InteractingPair &ip,
-                                 Vec *coords, PairEvalResult &res) {
+                                 Vec *coords, PairEvalResult &res, Flt *vs) {
     Vec r;
     vec_sub(coords[ip.b], coords[ip.a], r);
     Flt r2   = vec_sqr_sum(r);
-	CUDBG("eval seq %d , a %lu b %lu r2 %f cutoff %f v %f", seq, ip.a, ip.b, r2, ip.cutoff_sqr, ip.v);
+	CUDBG("eval seq %d , a %lu b %lu r2 %f cutoff %f v %d", seq, ip.a, ip.b, r2, ip.cutoff_sqr, ip.v);
 	CUVDUMP("r", r);
     res.e = 0;
     Vec force;
@@ -216,7 +216,7 @@ COULD_INLINE void eval_interacting_pair_deriv(int seq, PrecalculateByAtom &p, co
         prec_by_atom_eval_deriv(p, ip.a, ip.b, r2, &e, &dor);
 		CUDBG("atom der %f %f", e, dor);
         vec_product(r, dor, force);
-        curl(e, force, ip.v);
+        curl(e, force, vs[ip.v]);
         res.e = e;
 		CUDBG("e %f", e);
 		CUVDUMP("force", force);
@@ -309,7 +309,7 @@ GLOBAL  void model_eval_deriv(Model &m, PrecalculateByAtom &p, Cache &c, Change 
 	cache_eval_deriv(c, m);
 
 	CU_FOR(i, src->npairs) {
-		eval_interacting_pair_deriv(i, p, src->pairs[i], m.coords, m.pair_res[i]);
+		eval_interacting_pair_deriv(i, p, src->pairs[i], m.coords, m.pair_res[i], m.vs);
 	}
 	SYNC();
 	// accumulate e as deriviative result

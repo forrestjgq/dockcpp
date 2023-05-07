@@ -126,12 +126,12 @@ void copy_vecs(Vec *dst, const vecv &srcs) {
         dst++;
     }
 }
-void copy_pair(InteractingPair *dst, interacting_pair *src,Flt cutoff_sqr, Flt v) {
+void copy_pair(InteractingPair *dst, interacting_pair *src,Flt cutoff_sqr, int v) {
     dst->a = src->a, dst->b = src->b, dst->type_pair_index = src->type_pair_index;
     dst->cutoff_sqr = cutoff_sqr;
     dst->v = v;
 }
-void copy_pairs(InteractingPair * &dst, interacting_pairs &src,Flt cutoff_sqr, Flt v) {
+void copy_pairs(InteractingPair * &dst, interacting_pairs &src,Flt cutoff_sqr, int v) {
     for (auto &p : src)  {
         copy_pair(dst, &p, cutoff_sqr, v);
         dst++;
@@ -231,14 +231,40 @@ void htree_var_nodes_copy(SegmentVars *segs, const struct heterotree<T> &tree) {
         dst = (type *)mem->crop(sizeof(type) * n, sizeof(double));\
         if (dst == nullptr) goto cleanup;\
     } while(0)
-SrcModel *make_src_model(Memory *mem, model *m, const vec &v, const precalculate_byatom &p) {
+
+#define ALIGNMENT sizeof(double)
+#define ALIGN(x, a) (((x) + (a) - 1) / (a) * (a))
+#define SIZEOF(t) ALIGN(sizeof(t), ALIGNMENT)
+#define SIZEOFARR(t, sz) ALIGN(sizeof(t)*sz, ALIGNMENT)
+std::shared_ptr<Memory> create_src_model_memory(model *m) {
+
+    auto npairs = int(m->inter_pairs.size() + m->glue_pairs.size() + m->other_pairs.size());
+    for (auto &ligand : m->ligands) {
+        npairs += int(ligand.pairs.size());
+    }
+    Size sz = SIZEOF(SrcModel) + SIZEOFARR(Size, m->num_movable_atoms()) +
+    SIZEOFARR(Atom, m->atoms.size()) +
+    SIZEOFARR(InteractingPair, npairs) +
+    SIZEOFARR(Ligand, m->ligands.size()) +
+    SIZEOFARR(Residue, m->flex.size());
+    for (auto i = 0u; i < m->ligands.size(); i++) {
+        auto nr_node = htree_nodes_size(m->ligands[i]);
+        sz += SIZEOFARR(Segment, nr_node);
+    }
+    for (auto i = 0u; i < m->flex.size(); i++) {
+        auto nr_node = htree_nodes_size(m->flex[i]);
+        sz += SIZEOFARR(Segment, nr_node);
+    }
+    sz = (sz + 4096 -1) / 4096*4096;
+    return makeMemory(sz);
+}
+SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
 
     SrcModel *sm;
     InteractingPair *pair;
     Flt sqr, max_sqr;
     ALLOC(sm, SrcModel);
     sm->movable_atoms = m->num_movable_atoms();
-    sm->movable_v = v[1];
     sm->xs_nat = num_atom_types(atom_type::XS);
     ALLOC_ARR(sm->xs_sizes, Size, sm->movable_atoms);
 
@@ -295,11 +321,11 @@ SrcModel *make_src_model(Memory *mem, model *m, const vec &v, const precalculate
     sqr = p.cutoff_sqr();
     max_sqr = p.max_cutoff_sqr();
     for (auto &ligand : m->ligands) {
-        copy_pairs(pair, ligand.pairs, sqr, v[0]);
+        copy_pairs(pair, ligand.pairs, sqr, 0); // v0
     }
-    copy_pairs(pair, m->inter_pairs, sqr, v[2]);
-    copy_pairs(pair, m->other_pairs, sqr, v[2]);
-    copy_pairs(pair, m->glue_pairs, max_sqr, v[2]);
+    copy_pairs(pair, m->inter_pairs, sqr, 2); // v2
+    copy_pairs(pair, m->other_pairs, sqr, 2);
+    copy_pairs(pair, m->glue_pairs, max_sqr, 2);
 
     // prepare ligands and flex, in the reverse order to store tree
     sm->nligand = m->ligands.size();
@@ -322,11 +348,23 @@ SrcModel *make_src_model(Memory *mem, model *m, const vec &v, const precalculate
 cleanup:
     return nullptr;
 }
+bool makeSrcModel(model *m, precalculate_byatom &p) {
+    auto mem = create_src_model_memory(m);
+    if (mem) {
+        auto sm = make_src_model(mem.get(), m, p);
+        if (sm) {
+            m->m_gpu = makeCuObject(mem, sm);
+            return true;
+        }
+    }
+    return false;
+}
 
-Model *make_model(Memory *mem, SrcModel *sm, model *m) {
+Model *make_model(Memory *mem, SrcModel *sm, model *m, const vec &v) {
     Model *md;
     ALLOC(md, Model);
     md->src = sm;
+    md->vs[0] = v.data[0], md->vs[1] = v.data[1], md->vs[2] = v.data[2];
     ALLOC_ARR(md->ligands, LigandVars, sm->nligand);
     ALLOC_ARR(md->flex, ResidueVars, sm->nflex);
     for (int i = 0; i < sm->nligand; i++) {
@@ -352,6 +390,14 @@ Model *make_model(Memory *mem, SrcModel *sm, model *m) {
 cleanup:
     return nullptr;
 }
+std::shared_ptr<Memory> create_cache_memory(const cache &c) {
+    Size sz = SIZEOF(Cache) + SIZEOFARR(Grid, c.m_grids.size());
+    for (auto i = 0u; i <c.m_grids.size(); i++) {
+        sz += SIZEOFARR(Flt, c.m_grids[i].m_data.m_data.size());
+    }
+    sz = (sz + 4096 -1) / 4096*4096;
+    return makeMemory(sz);
+}
 Cache *make_cache(Memory *mem, const cache &c) {
     Cache *ch;
     ALLOC(ch, Cache);
@@ -375,6 +421,17 @@ Cache *make_cache(Memory *mem, const cache &c) {
     return ch;
 cleanup:
     return nullptr;
+}
+bool makeCache(cache &c) {
+    auto mem = create_cache_memory(c);
+    if (mem) {
+        auto ch = make_cache(mem.get(), c);
+        if (ch) {
+            c.m_gpu = makeCuObject(mem, ch);
+            return true;
+        }
+    }
+    return false;
 }
 Change *make_change(Memory *mem, change &g) {
     Change *c;
@@ -493,18 +550,18 @@ extern void model_set_conf(Model &m, Conf &c);
 fl run_model_eval_deriv(model *m, const precalculate_byatom &p, const igrid &ig, const vec &v,
                         change &g, const conf &c) {
     auto &che = (const cache &)ig;
+
+    // const
+    auto sm = extract_object<SrcModel>(m->m_gpu);
+    auto ch = extract_object<Cache>(che.m_gpu);
+    auto pa = extract_object<PrecalculateByAtom>(p.m_gpu);
+
     Memory mem([](size_t sz) {
         return malloc(sz);
     }, [](void *p) {
         free(p);
     }, size_t(2048) * size_t(1024 * 1024), sizeof(Flt));
-
-    // const
-    auto sm = make_src_model(&mem, m, v, p);
-    auto ch = make_cache(&mem, che);
-    auto pa = extract_object<PrecalculateByAtom>(p.m_gpu);
-
-    auto md = make_model(&mem, sm, m);
+    auto md = make_model(&mem, sm, m, v);
     auto chg = make_change(&mem, g);
     auto cf = make_conf(&mem, c);
 

@@ -221,6 +221,7 @@ public:
 	sz m_num_movable_atoms;
 	atom_type::t m_atom_typing_used;
 
+	std::shared_ptr<void> m_gpu;
 };
 
 #endif

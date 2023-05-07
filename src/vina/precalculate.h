@@ -263,7 +263,7 @@ public:
     fl m_factor;
 
     triangular_matrix<precalculate_element> m_data;
-    // CuObject
+    // CuObject containing SrcModel
     std::shared_ptr<void> m_gpu;
 };
 

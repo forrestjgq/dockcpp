@@ -41,7 +41,8 @@ namespace dock {
         // for pairs from ligands, use v[0]
         // for pairs from model(inter, other, glue), use v[2]
         // see model::eval_deriv
-        Flt v; 
+        // here we use an index for incoming vs in eval
+        int v; 
         Flt cutoff_sqr;  // for glue pairs, use max cutoff sqr, otherwise use cutoff sqr
     }InteractingPair;
     typedef struct {
@@ -132,7 +133,6 @@ namespace dock {
     // never changed model vars
     typedef struct {
         int movable_atoms;
-        Flt movable_v; // v[1]
         Size xs_nat; // num_atom_types(atom_type::XS)
 
         Size natoms;
@@ -164,6 +164,8 @@ namespace dock {
     } PairEvalResult;
     typedef struct {
         SrcModel *src;
+
+        Flt vs[3];
 
         // changes at conf updating, and as input of der eval
         int ncoords;

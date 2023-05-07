@@ -37,6 +37,7 @@
 #include "model.h"
 #include "file.h"
 #include "szv_grid.h"
+#include <memory>
 
 
 struct precalculate;
@@ -63,6 +64,7 @@ public:
 	grid_dims m_gd;
 	fl m_slope; // does not get (de-)serialized
 	std::vector<grid> m_grids;
+    std::shared_ptr<void> m_gpu;
 };
 
 #endif
