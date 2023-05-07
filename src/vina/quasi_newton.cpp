@@ -87,7 +87,7 @@ struct quasi_newton_aux {
         if (use_gpu) {
             std::cout  << std::endl << std::endl << std::endl << std::endl << "OWR EVAL" << std::endl;
             if (subclass) {
-                ret = dock::run_model_eval_deriv(*p, *ig, v, g1, c, m_gpu, m_bfgs_ctx);
+                ret = dock::run_model_eval_deriv(*p, *ig,  g1, m_gpu, m_bfgs_ctx);
             }
             std::cout << "cu ret " << ret << " cpu ret " << tmp << std::endl;
 

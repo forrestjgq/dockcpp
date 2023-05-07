@@ -639,8 +639,8 @@ void output_flex_change(residue_change &dst, ResidueChange &src) {
 }
 extern void model_eval_deriv(Model &m, PrecalculateByAtom &p, Cache &c, Change &g);
 extern void model_set_conf(Model &m, Conf &c);
-fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, const vec &v,
-                        change &g, const conf &c, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj) {
+fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, 
+                        change &g, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj) {
     auto &che = (const cache &)ig;
 
     // const
