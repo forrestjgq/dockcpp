@@ -8,11 +8,6 @@
 
 namespace dock {
 
-template <typename T>
-T *extract_object(std::shared_ptr<void> stub) {
-    auto obj = std::static_pointer_cast<CuObject>(stub);
-    return (T *)(obj->obj);
-}
 
 class Memory {
 public:
@@ -67,6 +62,25 @@ private:
 
 using Memsp = std::shared_ptr<Memory>;
 
+template <typename T>
+T *extract_object(std::shared_ptr<void> stub) {
+    auto obj = std::static_pointer_cast<CuObject>(stub);
+    return (T *)(obj->obj);
+}
+std::shared_ptr<Memory> extract_memory(std::shared_ptr<void> stub) {
+    auto obj = std::static_pointer_cast<CuObject>(stub);
+    return std::static_pointer_cast<Memory>(obj->ctrl);
+}
+std::shared_ptr<CuObject> makeCuObject(Memsp mem, void *obj) {
+    auto co = std::make_shared<CuObject>();
+    co->ctrl = mem;
+    co->obj = obj;
+    return co;
+}
+void updateCuObject(std::shared_ptr<void> stub, void *obj) {
+    auto cuobj = std::static_pointer_cast<CuObject>(stub);
+    cuobj->obj = obj;
+}
 Memsp makeCpuMemory(Size size) {
     auto mem = std::make_shared<Memory>([](size_t sz) {
         CUDBG("make cpu mem size %lu", sz);
@@ -102,12 +116,6 @@ Memsp makeCudaMemory(Size size) {
 #define makeMemory makeCpuMemory
 #endif
 
-std::shared_ptr<CuObject> makeCuObject(Memsp mem, void *obj) {
-    auto co = std::make_shared<CuObject>();
-    co->ctrl = mem;
-    co->obj = obj;
-    return co;
-}
 static inline void make_vec(Vec &v, Flt a, Flt b, Flt c) {
     v.x = a, v.y = b, v.z = c;
 }
@@ -360,6 +368,22 @@ bool makeSrcModel(model *m, precalculate_byatom &p) {
     return false;
 }
 
+std::shared_ptr<Memory> create_model_memory(model *m, SrcModel *sm) {
+    Size sz = SIZEOF(Model) + SIZEOFARR(LigandVars, sm->nligand) + SIZEOFARR(ResidueVars, sm->nflex);
+    for (int i = 0; i < sm->nligand; i++) {
+        sz += SIZEOFARR(SegmentVars, sm->ligands[i].nr_node);
+    }
+    for (int i = 0; i < sm->nflex; i++) {
+        sz += SIZEOFARR(SegmentVars, sm->flex[i].nr_node);
+    }
+    sz += SIZEOFARR(Vec, sm->movable_atoms);
+    sz += SIZEOFARR(Flt, sm->movable_atoms);
+    sz += SIZEOFARR(PairEvalResult, sm->npairs);
+    sz += SIZEOFARR(Vec, m->coords.size());
+
+    sz = (sz + 4096 -1) / 4096*4096;
+    return makeMemory(sz);
+}
 Model *make_model(Memory *mem, SrcModel *sm, model *m, const vec &v) {
     Model *md;
     ALLOC(md, Model);
@@ -388,6 +412,17 @@ Model *make_model(Memory *mem, SrcModel *sm, model *m, const vec &v) {
     copy_vecs(md->coords, m->coords);
     return md;
 cleanup:
+    return nullptr;
+}
+std::shared_ptr<void> makeModel(model *m, const vec &v) {
+    auto sm = extract_object<SrcModel>(m->m_gpu);
+    auto mem = create_model_memory(m, sm);
+    if (mem) {
+        auto md = make_model(mem.get(), sm, m, v);
+        if (md) {
+            return makeCuObject(mem, md);
+        }
+    }
     return nullptr;
 }
 std::shared_ptr<Memory> create_cache_memory(const cache &c) {
@@ -433,9 +468,38 @@ bool makeCache(cache &c) {
     }
     return false;
 }
-Change *make_change(Memory *mem, change &g) {
-    Change *c;
-    ALLOC(c, Change);
+Size eval_change_size(const change &g) {
+    Size sz = SIZEOFARR(LigandChange, g.ligands.size()) + SIZEOFARR(LigandChange, g.ligands.size());
+    for (auto i = 0u; i < g.ligands.size(); i++) {
+        auto &src = g.ligands[i];
+        sz += SIZEOFARR(Flt, src.torsions.size());
+    }
+    for (auto i = 0u; i < g.flex.size(); i++) {
+        auto &src  = g.flex[i];
+        sz += SIZEOFARR(Flt, src.torsions.size());
+    }
+    return sz;
+}
+Size eval_conf_size(const conf &c) {
+    Size sz = 0;
+    sz += SIZEOFARR(LigandConf, c.ligands.size());
+    sz += SIZEOFARR(ResidueConf, c.flex.size());
+    for (auto i = 0u; i < c.ligands.size(); i++) {
+        auto &src = c.ligands[i];
+        sz += SIZEOFARR(Flt, src.torsions.size());
+    }
+    for (auto i = 0u; i < c.flex.size(); i++) {
+        auto &src = c.flex[i];
+        sz += SIZEOFARR(Flt, src.torsions.size());
+    }
+    return sz;
+}
+std::shared_ptr<Memory> create_bfgs_memory(const change &g, const conf &c) {
+    Size sz = SIZEOF(BFGSCtx) + eval_change_size(g) + eval_conf_size(c);
+    sz = (sz + 4096 -1) / 4096*4096;
+    return makeMemory(sz);
+}
+bool make_change(Memory *mem, Change *c, const change &g) {
     ALLOC_ARR(c->ligands, LigandChange, g.ligands.size());
     ALLOC_ARR(c->flex, ResidueChange, g.flex.size());
     for (auto i = 0u; i < g.ligands.size(); i++) {
@@ -450,13 +514,11 @@ Change *make_change(Memory *mem, change &g) {
         DBG("Alloc flex %u torsion size %lu", i, src.torsions.size());
         ALLOC_ARR(dst.torsions, Flt, src.torsions.size());
     }
-    return c;
+    return true;
 cleanup:
-    return nullptr;
+    return false;
 }
-Conf *make_conf(Memory *mem, const conf &c) {
-    Conf *ret;
-    ALLOC(ret, Conf);
+bool make_conf(Memory *mem, Conf *ret, const conf &c) {
     ALLOC_ARR(ret->ligands, LigandConf, c.ligands.size());
     ALLOC_ARR(ret->flex, ResidueConf, c.flex.size());
     for (auto i = 0u; i < c.ligands.size(); i++) {
@@ -476,12 +538,42 @@ Conf *make_conf(Memory *mem, const conf &c) {
         ALLOC_ARR(dst.torsions, Flt, src.torsions.size());
         memcpy(dst.torsions, src.torsions.data(), src.torsions.size() * sizeof(src.torsions[0]));
     }
-    return ret;
+    return true;
+cleanup:
+    return false;
+}
+BFGSCtx *make_bfgs(Memory *mem, const change &g, const conf &c) {
+    BFGSCtx *ctx;
+    ALLOC(ctx, BFGSCtx);
+    if (!make_change(mem, &ctx->g, g)) goto cleanup;
+    if (!make_conf(mem, &ctx->c, c)) goto cleanup;
+    return ctx;
 cleanup:
     return nullptr;
 }
 
-
+bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) {
+    std::shared_ptr<Memory> mem;
+    if (!obj) {
+        mem = create_bfgs_memory(g, c);
+    } else {
+        mem = extract_memory(obj);
+    }
+    if (!mem) {
+        return false;
+    }
+    mem->reset();
+    auto ctx = make_bfgs(mem.get(), g, c);
+    if(!ctx) {
+        return false;
+    }
+    if (!obj) {
+        obj = makeCuObject(mem, ctx);
+    } else {
+        updateCuObject(obj, ctx);
+    }
+    return true;
+}
 std::shared_ptr<Memory> create_prec_byatom_memory(const precalculate_byatom &p) {
     auto pesz = p.m_data.m_data.size();
     Size sz = sizeof(PrecalculateByAtom) + sizeof(PrecalculateElement) * pesz;
@@ -547,24 +639,17 @@ void output_flex_change(residue_change &dst, ResidueChange &src) {
 }
 extern void model_eval_deriv(Model &m, PrecalculateByAtom &p, Cache &c, Change &g);
 extern void model_set_conf(Model &m, Conf &c);
-fl run_model_eval_deriv(model *m, const precalculate_byatom &p, const igrid &ig, const vec &v,
-                        change &g, const conf &c) {
+fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, const vec &v,
+                        change &g, const conf &c, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj) {
     auto &che = (const cache &)ig;
 
     // const
-    auto sm = extract_object<SrcModel>(m->m_gpu);
     auto ch = extract_object<Cache>(che.m_gpu);
     auto pa = extract_object<PrecalculateByAtom>(p.m_gpu);
-
-    Memory mem([](size_t sz) {
-        return malloc(sz);
-    }, [](void *p) {
-        free(p);
-    }, size_t(2048) * size_t(1024 * 1024), sizeof(Flt));
-    auto md = make_model(&mem, sm, m, v);
-    auto chg = make_change(&mem, g);
-    auto cf = make_conf(&mem, c);
-
+    auto md = extract_object<Model>(mobj);
+    auto ctx = extract_object<BFGSCtx>(ctxobj);
+    auto chg = &ctx->g;
+    auto cf = &ctx->c;
 
     model_set_conf(*md, *cf);
     model_eval_deriv(*md, *pa, *ch, *chg);
@@ -579,8 +664,6 @@ fl run_model_eval_deriv(model *m, const precalculate_byatom &p, const igrid &ig,
 
     return md->e;
 
-}
-void comp_model(model *m1, model *m2) {
 }
 
 static fl eps = 0.0000001;

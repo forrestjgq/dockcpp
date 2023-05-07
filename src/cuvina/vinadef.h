@@ -192,6 +192,10 @@ namespace dock {
         LigandConf *ligands;
         ResidueConf *flex;
     } Conf;
+    typedef struct  {
+        Change g;
+        Conf c;
+    } BFGSCtx;
 
     
 const Flt PI = Flt(3.1415926535897931);

@@ -38,6 +38,9 @@ bool metropolis_accept(fl old_f, fl new_f, fl temperature, rng& generator) {
 	return random_fl(0, 1, generator) < acceptance_probability;
 }
 
+void monte_carlo::enable_gpu(bool enable) {
+	use_gpu = enable;
+}
 // out is sorted
 void monte_carlo::operator()(model& m, output_container& out, const precalculate_byatom& p, const igrid& ig, const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const {
     int evalcount = 0;
@@ -48,6 +51,7 @@ void monte_carlo::operator()(model& m, output_container& out, const precalculate
 	tmp.c.randomize(corner1, corner2, generator);
 	fl best_e = max_fl;
 	quasi_newton quasi_newton_par;
+	quasi_newton_par.use_gpu = use_gpu;
     quasi_newton_par.max_steps = local_steps;
 	VINA_U_FOR(step, global_steps) {
 		if(increment_me)
