@@ -101,6 +101,7 @@ public:
 
 	void set_cpu_only() {
 		cpu_only = true;
+		std::cout << "CPU Only" << std::endl;
 	}
 	void cite();
 	int seed() { return m_seed; }

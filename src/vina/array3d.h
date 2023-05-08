@@ -69,7 +69,6 @@ public:
 		m_i = i;
 		m_j = j;
 		m_k = k;
-		std::cout << "arr 3d " << i << " " << j << " " << k << std::endl;
 		m_data.resize(checked_multiply(i, j, k));
 	}
 	T&       operator()(sz i, sz j, sz k)       { return m_data[i + m_i*(j + m_j*k)]; }

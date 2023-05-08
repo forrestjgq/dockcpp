@@ -18,6 +18,11 @@ Ptr<T> MakePtr(Args &&...args) {
 #define SUBCLASS(cls, parent, doc) py::class_<cls, parent, Ptr<cls>>(m, #cls, doc)
 
 extern int run_vina(int argc, const char* argv[]);
+namespace dock {
+extern bool create_vina_server(int device, int nrinst);
+extern void destroy_vina_server();
+
+};
 namespace cudock {
 
 using Tensor = torch::Tensor;
@@ -237,6 +242,8 @@ PYBIND11_MODULE(cudock, m) {
       .def("run", &dock::Optimizer::run, "run a optimizing session");
     m.def("lbfgsb", &lbfgsb, "run lbfgsb optmizer");
     m.def("vina", &run_cuvina, "run cuda based vina");
+    m.def("start_vina", &dock::create_vina_server, "create vina server for CUDA, param(device id, num of instance)");
+    m.def("stop_vina", &dock::destroy_vina_server, "destroy vina server");
     m.def("create_lbfgsb_server", &dock::create_lbfgsb_server, "create a server with (cudaDeviceId, nrInstance)");
     m.def("create_lbfgsb_dock_request", &create_lbfgsb_dock_request, "create an lbfgsb dock request for lbfgsb server");
     m.def("post_lbfgsb_request", &post_lbfgsb_request, "send lbfgsb request to server");

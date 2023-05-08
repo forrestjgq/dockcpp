@@ -938,10 +938,11 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 	parallelmc.mc.min_rmsd = min_rmsd;
 	parallelmc.mc.num_saved_mins = n_poses;
 	parallelmc.mc.hunt_cap = vec(10, 10, 10);
-	parallelmc.num_tasks = 1;
-	// parallelmc.num_tasks = exhaustiveness;
+	// parallelmc.num_tasks = 1;
+	parallelmc.num_tasks = exhaustiveness;
 	parallelmc.num_threads = m_cpu;
 	parallelmc.display_progress = (m_verbosity > 0);
+	parallelmc.enable_gpu(!cpu_only);
 
 	// Docking search
 	sstm << "Performing docking (random seed: " << m_seed << ")";

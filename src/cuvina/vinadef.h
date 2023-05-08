@@ -4,13 +4,16 @@
 #include "cuda_runtime_api.h"
 #include <stdint.h>
 
-#define USE_CUDA_VINA 0
+#define USE_CUDA_VINA 1
 namespace dock {
     
+    struct Qt {
+        double x, y, z, w;
+    };
 
     typedef double Flt;
     typedef double3 Vec;
-    typedef double4 Qt;
+    // typedef double4 Qt; // cuda require 16 alignment, do not use it
     typedef uint64_t Size;
 
     typedef struct {
@@ -176,7 +179,6 @@ namespace dock {
         ResidueVars *flex;
         Vec *minus_forces; // size: movable atoms, see SrcModel.movable_atoms, used in eval_deriv, no init value
         Flt *movable_e; // result of movable atoms, size: src->movable_atoms, used in eval_deriv, no init value
-        Flt e; // output loss
         PairEvalResult *pair_res; // size: src->nparis, used in eval deriv, no init value
     } Model;
     typedef struct {
@@ -195,6 +197,7 @@ namespace dock {
     typedef struct  {
         Change g;
         Conf c;
+        Flt e; // output loss
     } BFGSCtx;
 
     

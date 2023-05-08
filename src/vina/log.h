@@ -4,6 +4,8 @@
 
 #include "common.h"
 
+#define VINADEBUG 0
+#if VINADEBUG
 extern void dump_vecv(const char *s, const vecv& vv, const char* file, int line);
 extern void dump_flv(const char *s, const flv& vv, const char *file, int line) ;
 extern void dump_vecp(const char *s, const vecp& vv, const char *file, int line) ;
@@ -16,4 +18,13 @@ extern const char *getFile(const char *path);
 #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, getFile(__FILE__), __LINE__)
 #define VECPDUMP(hdr, vv) dump_vecp(hdr, vv, getFile(__FILE__), __LINE__)
 #define FLVDUMP(hdr, vv) dump_flv(hdr, vv, getFile(__FILE__), __LINE__)
+#else
+#define PRINT(fmt)
+#define DBG(fmt, ...)
+#define DBGFL(f, l, fmt, ...)
+#define VDUMP(hdr, v)
+#define VECVDUMP(hdr, vv)
+#define VECPDUMP(hdr, vv)
+#define FLVDUMP(hdr, vv)
+#endif
 #endif

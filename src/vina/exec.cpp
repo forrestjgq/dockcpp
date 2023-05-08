@@ -387,6 +387,9 @@ Thank you!\n";
 		}
 
 		Vina v(sf_name, cpu, seed, verbosity, no_refine);
+		if(cpu_only) {
+			v.set_cpu_only();
+		}
 
 		// rigid_name variable can be ignored for AD4
 		if (vm.count("receptor") || vm.count("flex"))

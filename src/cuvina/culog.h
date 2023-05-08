@@ -3,6 +3,9 @@
 #include <cstring>
 #include <cstdio>
 
+#define CUDEBUG 0
+
+#if CUDEBUG
 static inline const char *fileOf(const char *path) {
     auto sz = strlen(path);
     auto p = path + sz;
@@ -24,4 +27,12 @@ static inline const char *fileOf(const char *path) {
 // #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
 #define CUVECPDUMP(hdr, vp) printf("%s:%d " hdr " (%f %f %f) (%f %f %f)\n", fileOf(__FILE__), __LINE__, vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z)
 // #define FLVDUMP(hdr, vv) dump_flv(hdr, vv, fileOf(__FILE__), __LINE__)
+#else
+#define CUDBG(fmt, ...)
+#define CUDBGFL(f, l, fmt, ...)
+#define CUVDUMP(hdr, v)
+// #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
+#define CUVECPDUMP(hdr, vp)
+// #define FLVDUMP(hdr, vv)
+#endif
 #endif

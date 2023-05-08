@@ -29,7 +29,7 @@ struct quasi_newton {
     unsigned max_steps;
     fl average_required_improvement;
     bool use_gpu;
-    quasi_newton() : max_steps(1000), average_required_improvement(0.0), use_gpu(true) {}
+    quasi_newton() : max_steps(1000), average_required_improvement(0.0), use_gpu(false) {}
     // clean up
     void operator()(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount) const; // g must have correct size
 };

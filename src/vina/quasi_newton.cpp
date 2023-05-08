@@ -26,7 +26,7 @@
 #include "cuvina/cuvina.h"
 
 
-// #define VINA_CUTEST
+#define VINA_CUTEST 1
 struct quasi_newton_aux {
     model* m;
     const precalculate_byatom* p;
@@ -44,55 +44,54 @@ struct quasi_newton_aux {
             }
         }
     }
- #ifdef VINA_CUTEST   
-    fl operator()(const conf& c, change& g) {
+    fl cpu(const conf& c, change& g) {
+        m->set(c);
+        return m->eval_deriv(*p, *ig, v, g);
+    }
+    fl gpu(const conf& c, change& g) {
+        if (use_gpu) {
+            use_gpu = dock::makeBFGSCtx(m_bfgs_ctx, g, c);
+        }
         // Before evaluating conf, we have to update model
         const cache *subclass = dynamic_cast<const struct cache *>(ig);
-        model m1 = *m;
-        change g1 = g;
-        conf c1 = c;
-        fl ret = 0;
-
-        std::cout << "VINA EVAL" << std::endl;
-        m->set(c);
-        const fl tmp = m->eval_deriv(*p, *ig, v, g);
-
-        std::cout  << std::endl << std::endl << std::endl << std::endl;
-
-        std::cout << "OWR EVAL" << std::endl;
-        if (subclass) {
-            ret = dock::run_model_eval_deriv(&m1, *p, *ig, v, g1, c1);
+        if (subclass && use_gpu) {
+            return dock::run_model_eval_deriv(*p, *ig,  g, m_gpu, m_bfgs_ctx);
         }
-        std::cout << "cu ret " << ret << " cpu ret " << tmp << std::endl;
-
-        dock::comp_change(g1, g);
-        exit(0);
-        return tmp;
+        return cpu(c, g);
+    }
+ #if VINA_CUTEST  == 0
+    fl operator()(const conf& c, change& g) {
+        // Before evaluating conf, we have to update model
+        return cpu(c, g);
+    }
+ #elif VINA_CUTEST  == 1
+    fl operator()(const conf& c, change& g) {
+        return gpu(c, g);
     }
 #else
     fl operator()(const conf& c, change& g) {
         const cache *subclass = dynamic_cast<const struct cache *>(ig);
-        change g1 = g;
         fl ret = 0;
+        change g1 = g;
 
         // Before evaluating conf, we have to update model
-        if (use_gpu) {
+        if (use_gpu && subclass != nullptr) {
             use_gpu = dock::makeBFGSCtx(m_bfgs_ctx, g, c);
         }
 
-        std::cout << "VINA EVAL" << std::endl;
+        // std::cout << "VINA EVAL" << std::endl;
         m->set(c);
         const fl tmp = m->eval_deriv(*p, *ig, v, g);
 
         if (use_gpu) {
-            std::cout  << std::endl << std::endl << std::endl << std::endl << "OWR EVAL" << std::endl;
-            if (subclass) {
-                ret = dock::run_model_eval_deriv(*p, *ig,  g1, m_gpu, m_bfgs_ctx);
-            }
-            std::cout << "cu ret " << ret << " cpu ret " << tmp << std::endl;
-
+            // std::cout  << std::endl << std::endl << std::endl << std::endl << "OWR EVAL" << std::endl;
+            ret = dock::run_model_eval_deriv(*p, *ig,  g1, m_gpu, m_bfgs_ctx);
             dock::comp_change(g1, g);
-            exit(0);
+            auto diff = std::abs(ret - tmp);
+            if (diff > 1e-6)  {
+                printf("cu ret %f cpu ret %f diff %f\n", ret, tmp, diff);
+                // assert (false);
+            }
         }
         return tmp;
     }

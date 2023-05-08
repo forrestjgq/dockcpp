@@ -20,7 +20,8 @@ namespace dock {
     #define CU_FOR(i, n) for (int i = threadIdx.x; i < n; i += blockDim.x)
     #define SYNC() __syncthreads()
     #define IS_MAIN_THREAD() (threadIdx.x == 0)
-    #define IS_SUB_THREAD() (threadIdx.y == 1)
+    #define IS_SUB_THREAD() (threadIdx.x == 1)
+    #define IS_GRID(n) (blockIdx.x == n)
     #define CEIL(x) ceil(x)
     #define SIN(x) sin(x)
     #define COS(x) cos(x)
@@ -37,6 +38,7 @@ namespace dock {
     #define SYNC() 
     #define IS_MAIN_THREAD() (true)
     #define IS_SUB_THREAD() (true)
+    #define IS_GRID(n) (true)
     #define CEIL(x) std::ceil(x)
     #define SIN(x) std::sin(x)
     #define COS(x) std::cos(x)
@@ -113,7 +115,7 @@ namespace dock {
         dst = src;
     }
     FORCE_INLINE void qt_set(Qt &dst, Flt x, Flt y, Flt z, Flt w) {
-        dst = make_double4(x, y, z, w);
+        dst.x = x, dst.y = y, dst.z = z, dst.w = w;
     }
     FORCE_INLINE void qt_multiple(Qt &dst, Flt x) {
         dst.x *= x;

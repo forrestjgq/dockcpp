@@ -5,6 +5,8 @@
 #include "vinadef.h"
 #include "culog.h"
 #include "cuvina.h"
+#include "vinasrv.h"
+#include <unordered_map>
 
 namespace dock {
 
@@ -36,19 +38,38 @@ public:
     }
     void reset() {
         offset_ = 0;
+        m_.clear();
     }
-    void *crop(size_t sz, size_t align) {
+    void crop(void **pptr, size_t sz, size_t align) {
         sz = (sz + align - 1) / align * align;
         if (left() >= sz) {
             auto p = ptr_ + offset_;
+            *pptr = p;
+            if (offset_ > 0) {
+                m_[(size_t)pptr - (size_t)ptr_] = offset_;
+            }
             offset_ += sz;
-            return p;
+        } else {
+            std::cerr << "fail to alloc " << sz << " bytes, left " << left() << std::endl;
+            *pptr = nullptr;
         }
-        std::cerr << "fail to alloc " << sz << " bytes, left " << left() << std::endl;
-        return nullptr;
+    }
+    void dump(uint8_t *base) {
+         for (auto &p : m_) {
+            *(uint8_t **)(ptr_ + p.first) = base + p.second;
+         }
+    }
+    void restore() {
+        dump(ptr_);
     }
     size_t left() {
         return blksize_ - offset_;
+    }
+    size_t size() {
+        return blksize_;
+    }
+    uint8_t *ptr() {
+        return ptr_;
     }
 
 private:
@@ -58,29 +79,12 @@ private:
     size_t align_;
     uint8_t *ptr_ = nullptr;
     size_t offset_   = 0;
+    // records ptr at *((uint8_t *)obj + key) == ((uint8_t *)obj + value)
+    std::unordered_map<size_t, size_t> m_;
 };
 
 using Memsp = std::shared_ptr<Memory>;
 
-template <typename T>
-T *extract_object(std::shared_ptr<void> stub) {
-    auto obj = std::static_pointer_cast<CuObject>(stub);
-    return (T *)(obj->obj);
-}
-std::shared_ptr<Memory> extract_memory(std::shared_ptr<void> stub) {
-    auto obj = std::static_pointer_cast<CuObject>(stub);
-    return std::static_pointer_cast<Memory>(obj->ctrl);
-}
-std::shared_ptr<CuObject> makeCuObject(Memsp mem, void *obj) {
-    auto co = std::make_shared<CuObject>();
-    co->ctrl = mem;
-    co->obj = obj;
-    return co;
-}
-void updateCuObject(std::shared_ptr<void> stub, void *obj) {
-    auto cuobj = std::static_pointer_cast<CuObject>(stub);
-    cuobj->obj = obj;
-}
 Memsp makeCpuMemory(Size size) {
     auto mem = std::make_shared<Memory>([](size_t sz) {
         CUDBG("make cpu mem size %lu", sz);
@@ -110,11 +114,65 @@ Memsp makeCudaMemory(Size size) {
     return mem;
 }
 
-#if USE_CUDA_VINA
-#define makeMemory makeCudaMemory
-#else
 #define makeMemory makeCpuMemory
+
+template <typename T>
+inline T *extract_object(std::shared_ptr<void> stub) {
+    auto obj = std::static_pointer_cast<CuObject>(stub);
+    return (T *)(obj->obj);
+}
+template <typename T>
+inline T *extract_cuda_object(std::shared_ptr<void> stub) {
+    auto obj = std::static_pointer_cast<CuObject>(stub);
+    return (T *)(obj->cuobj);
+}
+inline std::shared_ptr<Memory> extract_memory(std::shared_ptr<void> stub) {
+    auto obj = std::static_pointer_cast<CuObject>(stub);
+    return std::static_pointer_cast<Memory>(obj->ctrl);
+}
+inline std::shared_ptr<Memory> extract_cuda_memory(std::shared_ptr<void> stub) {
+    auto obj = std::static_pointer_cast<CuObject>(stub);
+    return std::static_pointer_cast<Memory>(obj->cuctrl);
+}
+inline std::shared_ptr<CuObject> makeCuObject(Memsp mem, void *obj) {
+    auto co = std::make_shared<CuObject>();
+    co->ctrl = mem;
+    co->obj = obj;
+#if USE_CUDA_VINA
+    submit_vina_server([=](cudaStream_t) {
+        auto cudamem = makeCudaMemory(mem->size());
+        if(cudamem) {
+            auto cudabase = cudamem->ptr();
+            mem->dump(cudabase);
+            cudaMemcpy(cudabase, mem->ptr(), mem->size(), cudaMemcpyHostToDevice);
+            co->cuctrl = cudamem;
+            co->cuobj = cudabase;
+        }
+    });
+    if (co->cuctrl) {
+        mem->restore();
+    } else {
+        return nullptr;
+    }
 #endif
+    return co;
+}
+inline void updateCuObject(std::shared_ptr<void> stub, void *obj) {
+    auto cuobj = std::static_pointer_cast<CuObject>(stub);
+    cuobj->obj = obj;
+#if USE_CUDA_VINA
+    if (cuobj->cuctrl) {
+        auto mem = std::static_pointer_cast<Memory>(cuobj->ctrl);
+        submit_vina_server([=](cudaStream_t) {
+            auto cudamem = std::static_pointer_cast<Memory>(cuobj->cuctrl);
+            auto cudabase = cudamem->ptr();
+            mem->dump(cudabase);
+            cudaMemcpy(cudabase, mem->ptr(), mem->size(), cudaMemcpyHostToDevice);
+        });
+        mem->restore();
+    }
+#endif
+}
 
 static inline void make_vec(Vec &v, Flt a, Flt b, Flt c) {
     v.x = a, v.y = b, v.z = c;
@@ -230,13 +288,13 @@ void htree_var_nodes_copy(SegmentVars *segs, const struct heterotree<T> &tree) {
 }
         // std::cout << __FILE__ << ":" << __LINE__ << " " << "alloc " #type " size " << sizeof(type) << std::endl;
     #define ALLOC(dst, type) do {\
-        dst = (type *)mem->crop(sizeof(type), sizeof(double));\
+        mem->crop((void **)&(dst), sizeof(type), sizeof(double));\
         if (dst == nullptr) goto cleanup;\
     } while(0)
 
         // std::cout << __FILE__ << ":" << __LINE__ << " " << "alloc arr " #type " size " << sizeof(type) << " cout " << n << " total " << sizeof(type) * n << std::endl;
     #define ALLOC_ARR(dst, type, n) do {\
-        dst = (type *)mem->crop(sizeof(type) * n, sizeof(double));\
+        mem->crop((void **)&(dst), sizeof(type) * n, sizeof(double));\
         if (dst == nullptr) goto cleanup;\
     } while(0)
 
@@ -420,7 +478,11 @@ std::shared_ptr<void> makeModel(model *m, const vec &v) {
     if (mem) {
         auto md = make_model(mem.get(), sm, m, v);
         if (md) {
-            return makeCuObject(mem, md);
+            auto gpusm = extract_cuda_object<SrcModel>(m->m_gpu);
+            md->src = gpusm;
+            auto ret = makeCuObject(mem, md);
+            md->src = sm;
+            return ret;
         }
     }
     return nullptr;
@@ -637,6 +699,50 @@ void output_ligand_change(ligand_change &dst, LigandChange &src) {
 void output_flex_change(residue_change &dst, ResidueChange &src) {
     memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
 }
+#if USE_CUDA_VINA
+void cuda_model_set_conf(Model &cpum, Model &m, Conf &c, cudaStream_t stream);
+void cuda_cache_eval_deriv(Model *cpum, Cache *c, Model *m, cudaStream_t stream);
+void cu_model_eval_deriv(Model *cpum, Model *m, PrecalculateByAtom *p, BFGSCtx *ctx, cudaStream_t stream);
+fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, 
+                        change &g, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj) {
+    submit_vina_server([&](cudaStream_t stream) {
+        auto &che = (const cache &)ig;
+        // const
+        auto ch = extract_cuda_object<Cache>(che.m_gpu);
+        auto pa = extract_cuda_object<PrecalculateByAtom>(p.m_gpu);
+        auto md = extract_cuda_object<Model>(mobj);
+        auto cpum = extract_object<Model>(mobj);
+        auto ctx = extract_cuda_object<BFGSCtx>(ctxobj);
+
+        cuda_model_set_conf(*cpum, *md, ctx->c, stream);
+        cuda_cache_eval_deriv(cpum, ch, md, stream);
+        cu_model_eval_deriv(cpum, md, pa, ctx, stream);
+
+        auto cpumem = extract_memory(ctxobj);
+        auto cudamem = extract_cuda_memory(ctxobj);
+        cudaMemcpyAsync(cpumem->ptr(), cudamem->ptr(), cpumem->size(), cudaMemcpyDeviceToHost, stream);
+        auto err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            std::cerr << "vina eval fail, err: " << cudaGetErrorString(err) << std::endl;
+        }
+    }) ;
+
+    auto cpumem = extract_memory(ctxobj);
+    cpumem->restore();
+    auto ctx = extract_object<BFGSCtx>(ctxobj);
+    auto chg = &ctx->g;
+    // output changes
+    for (auto i = 0u; i < g.ligands.size(); i ++) {
+        output_ligand_change(g.ligands[0], chg->ligands[0]);
+    }
+    for (auto i = 0u; i < g.flex.size(); i ++) {
+        output_flex_change(g.flex[0], chg->flex[0]);
+    }
+
+    return ctx->e;
+
+}
+#else
 extern void model_eval_deriv(Model &m, PrecalculateByAtom &p, Cache &c, Change &g);
 extern void model_set_conf(Model &m, Conf &c);
 fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, 
@@ -665,6 +771,7 @@ fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig,
     return md->e;
 
 }
+#endif
 
 static fl eps = 0.0000001;
 void comp_change(fl c1, fl c2) {

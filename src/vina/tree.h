@@ -172,9 +172,9 @@ void branches_derivative(const std::vector<T>& b, const vec& origin, const vecv&
 		vecp force_torque = b[i].derivative(coords, forces, d);
 		VECPDUMP("childft", force_torque);
 		out.first  += force_torque.first;
-		vec r; r = b[i].node.get_origin() - origin;
-		// todo
 		auto o = b[i].node.get_origin();
+		vec r; r = o - origin;
+		// todo
 		VDUMP("my origin", origin);
 		VDUMP("child origin", o);
 		out.second += cross_product(r, force_torque.first) + force_torque.second;

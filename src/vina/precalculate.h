@@ -34,9 +34,7 @@ struct model;
 struct precalculate_element
 {
 public:
-    precalculate_element(sz n, fl factor_) : smooth(n, pr(0, 0)), fast(n, 0), factor(factor_) { 
-        std::cout << "-- create pe n " << n << std::endl;
-    }
+    precalculate_element(sz n, fl factor_) : smooth(n, pr(0, 0)), fast(n, 0), factor(factor_) {}
     fl eval_fast(fl r2) const{
         assert(r2 * factor < fast.size());
         sz i = sz(factor * r2); // r2 is expected < cutoff_sqr, and cutoff_sqr * factor + 1 < n, so no overflow
