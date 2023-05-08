@@ -5,7 +5,8 @@
 #include <cuda_runtime_api.h>
 
 namespace dock {
-using VinaCallback = std::function<void(cudaStream_t )>;
-bool submit_vina_server(VinaCallback callback);
+extern bool submit_vina_server(StreamCallback callback);
+extern bool create_vina_server(int device, int nrinst);
+extern void destroy_vina_server() ;
 };
 #endif

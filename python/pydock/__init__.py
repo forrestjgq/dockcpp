@@ -173,3 +173,8 @@ class LBFGSBServer:
 def vina(cmd):
     args = cmd.split(" ")
     return _cu.vina(args)
+
+def start_vina(device, nrinstance):
+    return _cu.start_vina(device, nrinstance)
+def stop_vina():
+    _cu.stop_vina()

@@ -203,5 +203,20 @@ public:
     std::list<std::shared_ptr<void>> host_memories_;
     std::list<std::shared_ptr<void>> pin_memories_;
 };
+
+using StreamCallback = std::function<void(cudaStream_t )>;
+class StreamRequest : public Request {
+public:
+    StreamRequest(StreamCallback &callback) : callback_(std::move(callback)) {
+    }
+    ~StreamRequest() override = default;
+    void run(Context *ctx) override {
+        auto cudaCtx = (CudaContext *)ctx;
+        callback_(cudaCtx->stream());
+    }
+
+private:
+    std::function<void(cudaStream_t )> callback_;
+};
 };
 #endif

@@ -5,11 +5,14 @@
 #include "vinadef.h"
 #include "culog.h"
 #include "cuvina.h"
-#include "vinasrv.h"
 #include <unordered_map>
+#include "cuda_context.h"
+// #include "vinasrv.h"
 
 namespace dock {
 
+
+bool submit_vina_server(StreamCallback callback);
 
 class Memory {
 public:
@@ -209,6 +212,7 @@ void copy_qt(Qt &dst, const qt &src) {
     dst.z = src.R_component_3();
     dst.w = src.R_component_4();
 }
+// ok
 template<typename T>
 int tree_nodes_size(struct tree<T> &tree) {
     tree.nr_nodes = 0;
@@ -249,6 +253,7 @@ void segvar_tree_nodes_copy(int parent, int idx, SegmentVars *segs, const struct
     CUVDUMP("    axis", seg.axis);
     CUVDUMP("    origin", seg.origin);
 }
+// ok
 template<typename T>
 int htree_nodes_size(struct heterotree<T> &tree) {
     tree.nr_nodes = 0;
@@ -302,6 +307,7 @@ void htree_var_nodes_copy(SegmentVars *segs, const struct heterotree<T> &tree) {
 #define ALIGN(x, a) (((x) + (a) - 1) / (a) * (a))
 #define SIZEOF(t) ALIGN(sizeof(t), ALIGNMENT)
 #define SIZEOFARR(t, sz) ALIGN(sizeof(t)*sz, ALIGNMENT)
+// ok
 std::shared_ptr<Memory> create_src_model_memory(model *m) {
 
     auto npairs = int(m->inter_pairs.size() + m->glue_pairs.size() + m->other_pairs.size());
@@ -426,6 +432,7 @@ bool makeSrcModel(model *m, precalculate_byatom &p) {
     return false;
 }
 
+// ok
 std::shared_ptr<Memory> create_model_memory(model *m, SrcModel *sm) {
     Size sz = SIZEOF(Model) + SIZEOFARR(LigandVars, sm->nligand) + SIZEOFARR(ResidueVars, sm->nflex);
     for (int i = 0; i < sm->nligand; i++) {
@@ -487,6 +494,7 @@ std::shared_ptr<void> makeModel(model *m, const vec &v) {
     }
     return nullptr;
 }
+// ok
 std::shared_ptr<Memory> create_cache_memory(const cache &c) {
     Size sz = SIZEOF(Cache) + SIZEOFARR(Grid, c.m_grids.size());
     for (auto i = 0u; i <c.m_grids.size(); i++) {
@@ -604,6 +612,7 @@ bool make_conf(Memory *mem, Conf *ret, const conf &c) {
 cleanup:
     return false;
 }
+// good
 BFGSCtx *make_bfgs(Memory *mem, const change &g, const conf &c) {
     BFGSCtx *ctx;
     ALLOC(ctx, BFGSCtx);
@@ -614,7 +623,37 @@ cleanup:
     return nullptr;
 }
 
+// good
+bool makeNewBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) {
+    auto mem = create_bfgs_memory(g, c);
+    if (mem) {
+        auto ctx = make_bfgs(mem.get(), g, c);
+        if (ctx) {
+            obj = makeCuObject(mem, ctx);
+            return true;
+        }
+    }
+    return true;
+}
 bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) {
+    if (obj) {
+        auto mem = extract_memory(obj);
+        if (mem) {
+            mem->reset();
+            auto ctx = make_bfgs(mem.get(), g, c);
+            if (ctx) {
+                updateCuObject(obj, ctx);
+                return true;
+            }
+        }
+    }  else {
+        return makeNewBFGSCtx(obj, g, c);
+    }
+    return false;
+}
+#if 0
+bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) {
+#if 1
     std::shared_ptr<Memory> mem;
     if (!obj) {
         mem = create_bfgs_memory(g, c);
@@ -634,8 +673,12 @@ bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) {
     } else {
         updateCuObject(obj, ctx);
     }
+#endif
     return true;
 }
+#endif
+#if 1
+// bad
 std::shared_ptr<Memory> create_prec_byatom_memory(const precalculate_byatom &p) {
     auto pesz = p.m_data.m_data.size();
     Size sz = sizeof(PrecalculateByAtom) + sizeof(PrecalculateElement) * pesz;
@@ -688,6 +731,7 @@ bool makePrecalcByAtom(precalculate_byatom &p) {
     }
     return false;
 }
+// bad
 void output_ligand_change(ligand_change &dst, LigandChange &src) {
     vec_set(dst.rigid.position, src.rigid.position);
     vec_set(dst.rigid.orientation, src.rigid.orientation);
@@ -814,5 +858,77 @@ void comp_change(change &c1, change &c2) {
 
     CUDBG("Compare %lu ligands %lu flex Done, congratulations!", c1.ligands.size(), c1.flex.size());
 }
+#endif
+class CuVinaSrv {
+public:
+    CuVinaSrv() = default;
+    virtual ~CuVinaSrv() = default;
+#if 1
+    bool run(StreamCallback &callback) {
+        int id = 0;
+        std::uint64_t cnt = 9999999999;
+        {
+            std::unique_lock<std::mutex> lock(mt_);
+            for (auto it = running_.begin(); it != running_.end(); ++it) {
+                if (it->second < cnt) {
+                    cnt = it->second;
+                    id = it->first;
+                }
+            }
+        }
+        if (id == 0) {
+            return false;
+        }
+         auto ctx = insts_[id];
+         auto req = std::make_shared<StreamRequest>(callback);
+         {
+            std::unique_lock<std::mutex> lock(mt_);
+            running_[id]++;
+         }
+         ctx->commit(req);
+         {
+            std::unique_lock<std::mutex> lock(mt_);
+            running_[id]--;
+         }
+         return true;
 
+    }
+    bool init(int device, int nrinst) {
+        if (!insts_.empty()) {
+            std::cerr << "vina server already created" << std::endl;
+            return false;
+        }
+        device_ = device;
+        nrinst_ = nrinst;
+        for(auto i = 0; i < nrinst_; i++) {
+            auto ctx = std::make_shared<CudaContext>(device_);
+            if (ctx->create()) {
+                seq_++;
+                insts_[seq_] = ctx;
+                running_[seq_] = 0;
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+#endif
+private:
+    std::map<int, std::shared_ptr<CudaContext>> insts_;
+    std::map<int, std::uint64_t> running_;
+    std::uint64_t seq_ = 0;
+    std::mutex mt_;
+    int device_;
+    int nrinst_;
+};
+
+static CuVinaSrv instance_;
+bool create_vina_server(int device, int nrinst) {
+    return instance_.init(device, nrinst);
+}
+void destroy_vina_server() {
+}
+bool submit_vina_server(StreamCallback callback) {
+    return instance_.run(callback);
+}
 };  // namespace dock

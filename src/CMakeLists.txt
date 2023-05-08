@@ -87,8 +87,8 @@ list(APPEND VINA_SRC
     ${CUVINA_DIR}/model.cu
     ${CUVINA_DIR}/grid.cu
     ${CUVINA_DIR}/conf.cu
-    # ${CUVINA_DIR}/cuvina.cpp
-    ${CUVINA_DIR}/vinasrv.cpp
+    ${CUVINA_DIR}/cuvina.cpp
+    # ${CUVINA_DIR}/vinasrv.cpp
     ${VINA_DIR}/ad4cache.cpp
     ${VINA_DIR}/cache.cpp
     ${VINA_DIR}/conf_independent.cpp
@@ -170,7 +170,7 @@ set_target_properties(
                ARCHIVE_OUTPUT_DIRECTORY "${PYTHON_COMPILED_MODULE_DIR}")
 
 add_dependencies(cudock ${PROJECT_NAME})
-list(APPEND PYSRC bind.cpp cuda_context.cpp)
+list(APPEND PYSRC bind.cpp)
 target_sources(cudock PRIVATE ${PYSRC})
 
 list(APPEND INCDIRS ${CMAKE_CURRENT_SOURCE_DIR})

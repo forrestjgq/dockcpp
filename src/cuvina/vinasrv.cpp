@@ -1,12 +1,13 @@
 #include "cuda_context.h"
 #include <map>
 #include <memory>
-#include <utils.h>
 #include <mutex>
 #include "vinasrv.h"
-
+#if 1
 namespace dock {
 
+#pragma GCC push_options
+#pragma GCC optimize("O0")
 class StreamRequest : public Request {
 public:
     StreamRequest(VinaCallback &callback) : callback_(std::move(callback)) {
@@ -21,38 +22,12 @@ private:
     std::function<void(cudaStream_t )> callback_;
 };
 class VinaSrv {
-private:
-    explicit VinaSrv(int device, int nrinst) : device_(device), nrinst_(nrinst) { }
 public:
-    static bool create(int device, int nrinst) {
-        if (instance_) {
-            std::cerr << "vina server already created" << std::endl;
-            return false;
-        }
-        instance_ = std::shared_ptr<VinaSrv>(new VinaSrv(device, nrinst));
-        if (!instance_->init()) {
-            instance_.reset();
-            return false;
-        }
-        return true;
-    }
-    static void destroy() {
-        instance_.reset();
-    }
-    static bool submit(VinaCallback &callback) {
-        auto p = get();
-        if (p) {
-            return p->run(callback);
-        }
-        return false;
-    }
+    VinaSrv() = default;
+    ~VinaSrv() = default;
 
-private:
-    static VinaSrv *get() {
-        return instance_.get();
-    }
     bool run(VinaCallback &callback) {
-
+#if 0
         int id = 0;
         std::uint64_t cnt = 9999999999;
         {
@@ -78,10 +53,14 @@ private:
             std::unique_lock<std::mutex> lock(mt_);
             running_[id]--;
          }
+#endif
          return true;
 
     }
-    bool init() {
+    bool init(int device, int nrinst) {
+        device_ = device;
+        nrinst_ = nrinst;
+#if 0
         for(auto i = 0; i < nrinst_; i++) {
             auto ctx = std::make_shared<CudaContext>(device_);
             if (ctx->create()) {
@@ -92,27 +71,47 @@ private:
                 return false;
             }
         }
+#endif
         return true;
     }
 private:
-    static std::shared_ptr<VinaSrv> instance_;
+#if 0
     std::map<int, std::shared_ptr<CudaContext>> insts_;
     std::map<int, std::uint64_t> running_;
     std::uint64_t seq_ = 0;
     std::mutex mt_;
+#endif
     int device_;
     int nrinst_;
 };
 
+static std::shared_ptr<VinaSrv> instance_;
 bool create_vina_server(int device, int nrinst) {
-    return VinaSrv::create(device, nrinst);
+    // if (instance_) {
+    //     std::cerr << "vina server already created" << std::endl;
+    //     return false;
+    // }
+    instance_ = std::make_shared<VinaSrv>();
+    if (!instance_->init(device, nrinst)) {
+        instance_.reset();
+        return false;
+    }
+    return true;
 }
 void destroy_vina_server() {
-    VinaSrv::destroy();
+    // instance_.reset();
 }
+#pragma GCC pop_options
 bool submit_vina_server(VinaCallback callback) {
-    return VinaSrv::submit(callback);
+    if (instance_) {
+        return instance_->run(callback);
+    }
+    return false;
 }
-
-std::shared_ptr<VinaSrv> VinaSrv::instance_;
+// void vina_test() {
+//     if(create_vina_server(1, 2)) {
+//         destroy_vina_server();
+//     }
+// }
 };
+#endif
