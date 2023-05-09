@@ -136,6 +136,7 @@ if (OPT_USE_DOUBLE)
 else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DOUBLE=0)
 endif()
+target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUDA_VINA=1)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 #=======================================================================

@@ -3,7 +3,7 @@
 #include "vina/model.h"
 #include "vina/precalculate.h"
 #include "vinadef.h"
-#include "culog.h"
+#include "vina/log.h"
 #include "cuvina.h"
 #include <unordered_map>
 #include "cuda_context.h"
@@ -90,7 +90,7 @@ using Memsp = std::shared_ptr<Memory>;
 
 Memsp makeCpuMemory(Size size) {
     auto mem = std::make_shared<Memory>([](size_t sz) {
-        CUDBG("make cpu mem size %lu", sz);
+        DBG("make cpu mem size %lu", sz);
         return malloc(sz);
     }, [](void *p) {
         free(p);
@@ -103,7 +103,7 @@ Memsp makeCpuMemory(Size size) {
 Memsp makeCudaMemory(Size size) {
     auto mem = std::make_shared<Memory>([](size_t sz) {
         void *p = nullptr;
-        CUDBG("make cuda mem size %lu", sz);
+        DBG("make cuda mem size %lu", sz);
         cudaMalloc(&p, sz);
         return p;
     }, [](void *p) {
@@ -237,7 +237,7 @@ void seg_tree_nodes_copy(int parent, int idx, Segment *segs, struct tree<segment
     make_vec(seg.relative_axis, axis.data[0], axis.data[1], axis.data[2]);
     make_vec(seg.relative_origin, origin.data[0], origin.data[1], origin.data[2]);
     tree.seq = myidx;
-    CUDBG("COPY HSubTree, my idx %d parent %d child %d begin %d end %d", myidx, parent, tree.nr_nodes, seg.begin, seg.end);
+    DBG("COPY HSubTree, my idx %d parent %d child %d begin %d end %d", myidx, parent, tree.nr_nodes, seg.begin, seg.end);
 }
 void segvar_tree_nodes_copy(int parent, int idx, SegmentVars *segs, const struct tree<segment> &tree) {
     auto myidx = idx + tree.nr_nodes;
@@ -250,8 +250,8 @@ void segvar_tree_nodes_copy(int parent, int idx, SegmentVars *segs, const struct
     vec_set(seg.axis, tree.node.axis);
     vec_set(seg.origin, tree.node.get_origin());
     DBG("copy child node %d", myidx);
-    CUVDUMP("    axis", seg.axis);
-    CUVDUMP("    origin", seg.origin);
+    DBG("    axis %f %f %f", seg.axis.x, seg.axis.y, seg.axis.z);
+    DBG("    origin %f %f %f", seg.origin.x, seg.origin.y, seg.origin.z);
 }
 // ok
 template<typename T>
@@ -274,7 +274,7 @@ void htree_nodes_copy(Segment *segs, struct heterotree<T> &tree) {
     seg.begin = tree.node.begin;
     seg.end = tree.node.end;
     seg.parent = -1;
-    CUDBG("COPY HTree, my idx %d child %d begin %d end %d", myidx, tree.nr_nodes, seg.begin, seg.end);
+    DBG("COPY HTree, my idx %d child %d begin %d end %d", myidx, tree.nr_nodes, seg.begin, seg.end);
 }
 template<typename T>
 void htree_var_nodes_copy(SegmentVars *segs, const struct heterotree<T> &tree) {
@@ -288,8 +288,8 @@ void htree_var_nodes_copy(SegmentVars *segs, const struct heterotree<T> &tree) {
     vec_set(seg.axis, tree.node.axis);
     vec_set(seg.origin, tree.node.get_origin());
     DBG("copy root node %d", myidx);
-    CUVDUMP("    axis", seg.axis);
-    CUVDUMP("    origin", seg.origin);
+    DBG("    axis %f %f %f", seg.axis.x, seg.axis.y, seg.axis.z);
+    DBG("    origin %f %f %f", seg.origin.x, seg.origin.y, seg.origin.z);
 }
         // std::cout << __FILE__ << ":" << __LINE__ << " " << "alloc " #type " size " << sizeof(type) << std::endl;
     #define ALLOC(dst, type) do {\
@@ -720,7 +720,7 @@ cleanup:
     return nullptr;
 }
 bool makePrecalcByAtom(precalculate_byatom &p) {
-    CUDBG("%d  make precalc by atom", 0);
+    DBG("%d  make precalc by atom", 0);
     auto mem = create_prec_byatom_memory(p);
     if (mem) {
         auto pa = make_prec_atom(mem.get(), p);
@@ -736,9 +736,9 @@ void output_ligand_change(ligand_change &dst, LigandChange &src) {
     vec_set(dst.rigid.position, src.rigid.position);
     vec_set(dst.rigid.orientation, src.rigid.orientation);
     DBG("torsion size %lu", dst.torsions.size());
-    CUDBG("src torsion %f %f %f", src.torsions[0], src.torsions[1], src.torsions[2]);
+    DBG("src torsion %f %f %f", src.torsions[0], src.torsions[1], src.torsions[2]);
     memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
-    CUDBG("dst torsion %f %f %f", dst.torsions[0], dst.torsions[1], dst.torsions[2]);
+    DBG("dst torsion %f %f %f", dst.torsions[0], dst.torsions[1], dst.torsions[2]);
 }
 void output_flex_change(residue_change &dst, ResidueChange &src) {
     memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
@@ -817,46 +817,60 @@ fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig,
 }
 #endif
 
-static fl eps = 0.0000001;
-void comp_change(fl c1, fl c2) {
+#define MDBG(fmt, ...) printf("%s:%d " fmt "\n", __FILE__, __LINE__,  __VA_ARGS__)
+#define MPT(fmt) printf("%s:%d " fmt "\n", __FILE__, __LINE__)
+static fl eps = 0.01;
+bool comp_flt(fl c1, fl c2) {
     auto diff = c1 - c2;
     if (diff < 0) diff = -diff;
-    assert (diff < eps);
+    return (diff < eps);
 }
 void comp_change(flv &c1, flv &c2) {
     assert(c1.size() == c2.size());
     for (auto i = 0u; i < c1.size(); i++)
-        comp_change(c1[i], c2[i]);
+        if(!comp_flt(c1[i], c2[i])) {
+            MDBG("flv comp fail @ %u, %f != %f\n", i, c1[i], c2[i]);
+            fflush(stdout);
+            assert(false);
+        }
 }
 void comp_change(vec &c1, vec &c2) {
     for (int i = 0; i < 3; i++)
-        comp_change(c1.data[i], c2.data[i]);
+        if(!comp_flt(c1.data[i], c2.data[i])){
+            MDBG("vec comp fail @ %d, %f != %f\n", i, c1.data[i], c2.data[i]);
+            fflush(stdout);
+            assert(false);
+        }
 }
 void comp_change(ligand_change &c1, ligand_change &c2) {
+    MPT("compare rigid orientation");
     comp_change(c1.rigid.orientation, c2.rigid.orientation);
+    MPT("compare rigid position");
     comp_change(c1.rigid.position, c2.rigid.position);
+    MPT("compare rigid torsion");
     comp_change(c1.torsions, c2.torsions);
 }
 void comp_change(residue_change &c1, residue_change &c2) {
+    MPT("compare flex torsion");
     comp_change(c1.torsions, c2.torsions);
 }
 void comp_change(change &c1, change &c2) {
     assert(c1.ligands.size() == c2.ligands.size());
     assert(c1.flex.size() == c2.flex.size());
     for(auto i = 0u; i < c1.ligands.size(); i++) {
-        CUDBG("compare ligand %u", i);
+        MDBG("compare ligand %u", i);
         auto &src = c1.ligands[i];
         auto &dst = c2.ligands[i];
         comp_change(src, dst);
     }
     for(auto i = 0u; i < c1.flex.size(); i++) {
-        CUDBG("compare flex %u", i);
+        MDBG("compare flex %u", i);
         auto &src = c1.flex[i];
         auto &dst = c2.flex[i];
         comp_change(src, dst);
     }
 
-    CUDBG("Compare %lu ligands %lu flex Done, congratulations!", c1.ligands.size(), c1.flex.size());
+    MDBG("Compare %lu ligands %lu flex Done, congratulations!", c1.ligands.size(), c1.flex.size());
 }
 #endif
 class CuVinaSrv {

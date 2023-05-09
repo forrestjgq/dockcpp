@@ -4,7 +4,6 @@
 #include "cuda_runtime_api.h"
 #include <stdint.h>
 
-#define USE_CUDA_VINA 1
 namespace dock {
     
     struct Qt {
@@ -66,6 +65,8 @@ namespace dock {
         int begin;
         int end;
         int parent; // -1 for root
+        int layer; // 0 for root, 1 for child of root, ...
+        int *children; //children id
         // for segment, not for rigid_body and first_segment
         Vec relative_axis;
         Vec relative_origin;
@@ -97,6 +98,7 @@ namespace dock {
 
     typedef struct {
         int nr_node;
+        int nr_layer;
         Segment *tree;
     } Residue;
     typedef struct {
@@ -197,7 +199,9 @@ namespace dock {
     typedef struct  {
         Change g;
         Conf c;
-        Flt e; // output loss
+        Flt e;
+        Flt *pair_e; // output loss
+        Flt *atom_e; // output loss
     } BFGSCtx;
 
     

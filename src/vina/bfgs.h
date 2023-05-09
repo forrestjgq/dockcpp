@@ -72,6 +72,7 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 	const fl pg = scalar_product(p, g, n);
 
 	VINA_U_FOR(trial, max_trials) {
+		printf("trial %d\n", trial);
 		x_new = x; x_new.increment(p, alpha);
 		f1 = f(x_new, g_new);
 		evalcount++;

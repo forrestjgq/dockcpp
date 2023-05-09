@@ -6,6 +6,19 @@
 #define CUDEBUG 0
 
 #if CUDEBUG
+#if USE_CUDA_VINA
+// extern void dump_vecv(const char *s, const vecv& vv, const char* file, int line);
+// extern void dump_flv(const char *s, const flv& vv, const char *file, int line) ;
+// extern void dump_vecpv(const char *s, const std::vector<vecp>& vv, const char *file, int line) ;
+
+#define CUDBG(fmt, ...) printf("%d [%d:%d] [%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y,  __VA_ARGS__)
+#define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
+// #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
+#define CUVECPDUMP(hdr, vp) printf("%d [%d:%d] [%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
+    __LINE__,blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y,  \
+    vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z)
+// #define FLVDUMP(hdr, vv) dump_flv(hdr, vv, fileOf(__FILE__), __LINE__)
+#else
 static inline const char *fileOf(const char *path) {
     auto sz = strlen(path);
     auto p = path + sz;
@@ -22,14 +35,13 @@ static inline const char *fileOf(const char *path) {
 // extern void dump_vecpv(const char *s, const std::vector<vecp>& vv, const char *file, int line) ;
 
 #define CUDBG(fmt, ...) printf("%s:%d " fmt "\n", fileOf(__FILE__), __LINE__,  __VA_ARGS__)
-#define CUDBGFL(f, l, fmt, ...) printf("%s:%d " fmt "\n", f, l, __VA_ARGS__)
 #define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
 // #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
 #define CUVECPDUMP(hdr, vp) printf("%s:%d " hdr " (%f %f %f) (%f %f %f)\n", fileOf(__FILE__), __LINE__, vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z)
 // #define FLVDUMP(hdr, vv) dump_flv(hdr, vv, fileOf(__FILE__), __LINE__)
+#endif
 #else
 #define CUDBG(fmt, ...)
-#define CUDBGFL(f, l, fmt, ...)
 #define CUVDUMP(hdr, v)
 // #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
 #define CUVECPDUMP(hdr, vp)

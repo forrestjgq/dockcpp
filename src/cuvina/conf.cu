@@ -49,68 +49,74 @@ FORCE_INLINE void first_segment_set_conf(Segment *seg, SegmentVars *segvar, Atom
     atom_frame_set_coords(atoms, seg, segvar, coords);
 }
 
-GLOBAL void model_set_conf(Model *m, Conf *c) {
+GLOBAL void model_set_conf_ligand(Model *m, Conf *c) {
     SrcModel *src = m->src;
     Atom *atoms   = src->atoms;
+    int i         = blockIdx.x;
 
-    // ligands deriviative
-#if USE_CUDA_VINA
-    if (IS_GRID(0))
-#endif
-    {
-        CU_FOR(i, src->nligand) {
-            Ligand &ligand  = src->ligands[i];
-            LigandVars &var = m->ligands[i];
-            Flt *p          = c->ligands[i].torsions;
-            // first calculate all node force and torque, only for node itself, not include
-            // sub-nodes climbing from the leaves to root and accumulate force and torque
-            FOR(k, ligand.nr_node) {
-                int j               = ligand.nr_node - k - 1;  // from root to leaf
-                Segment &seg        = ligand.tree[j];
-                SegmentVars &segvar = var.tree[j];
-                CUDBG("ligand %d", j);
-                if (seg.parent >= 0) {
-                    Segment &parent        = ligand.tree[seg.parent];
-                    SegmentVars &parentVar = var.tree[seg.parent];
-                    segment_set_conf(&parentVar, &segvar, &seg, atoms, m->coords, p[k - 1]);
-                } else {
-                    // root
-                    rigid_body_set_conf(&seg, &segvar, atoms, m->coords, c->ligands[i].rigid);
-                }
-            }
+    Ligand &ligand  = src->ligands[i];
+    LigandVars &var = m->ligands[i];
+    Flt *p          = c->ligands[i].torsions;
+    FOR(k, ligand.nr_node) {
+        int j               = ligand.nr_node - k - 1;  // from root to leaf
+        Segment &seg        = ligand.tree[j];
+        SegmentVars &segvar = var.tree[j];
+        CUDBG("ligand %d", j);
+        if (seg.parent >= 0) {
+            Segment &parent        = ligand.tree[seg.parent];
+            SegmentVars &parentVar = var.tree[seg.parent];
+            segment_set_conf(&parentVar, &segvar, &seg, atoms, m->coords, p[k - 1]);
+        } else {
+            // root
+            rigid_body_set_conf(&seg, &segvar, atoms, m->coords, c->ligands[i].rigid);
         }
     }
-#if USE_CUDA_VINA
-    else if (IS_GRID(1))
-#endif
-    {
+}
+GLOBAL void model_set_conf_flex(Model *m, Conf *c) {
+    SrcModel *src = m->src;
+    Atom *atoms   = src->atoms;
+    int i         = blockIdx.x;
 
-        CU_FOR(i, src->nflex) {
-            Residue &flex    = src->flex[i];
-            ResidueVars &var = m->flex[i];
-            Flt *p           = c->flex[i].torsions;
-            // climbing from the leaves to root and accumulate force and torque
-            FOR(k, flex.nr_node) {
-                int j               = src->nflex - k - 1;
-                Segment &seg        = flex.tree[j];
-                SegmentVars &segvar = var.tree[j];
-                if (seg.parent >= 0) {
-                    Segment &parent        = flex.tree[seg.parent];
-                    SegmentVars &parentVar = var.tree[seg.parent];
-                    segment_set_conf(&parentVar, &segvar, &seg, atoms, m->coords, p[k]);
-                } else {
-                    first_segment_set_conf(&seg, &segvar, atoms, m->coords, p[k]);
-                }
-            }
+    Residue &flex    = src->flex[i];
+    ResidueVars &var = m->flex[i];
+    Flt *p           = c->flex[i].torsions;
+    // climbing from the leaves to root and accumulate force and torque
+    FOR(k, flex.nr_node) {
+        int j               = src->nflex - k - 1;
+        Segment &seg        = flex.tree[j];
+        SegmentVars &segvar = var.tree[j];
+        if (seg.parent >= 0) {
+            Segment &parent        = flex.tree[seg.parent];
+            SegmentVars &parentVar = var.tree[seg.parent];
+            segment_set_conf(&parentVar, &segvar, &seg, atoms, m->coords, p[k]);
+        } else {
+            first_segment_set_conf(&seg, &segvar, atoms, m->coords, p[k]);
         }
     }
 }
 
 #if USE_CUDA_VINA
 void cuda_model_set_conf(Model &cpum, Model &m, Conf &c, cudaStream_t stream) {
-    dim3 block(std::min(256, std::max(cpum.src->nligand, cpum.src->nflex)));
-    dim3 grid(2);
-    model_set_conf<<<grid, block, 0, stream>>>(&m, &c);
+    int nligand = cpum.src->nligand;
+    int nflex = cpum.src->nflex;
+    if (nligand > 0) {
+        int maxnode = 0;
+        for (auto i = 0; i < nligand; i++) {
+            if (cpum.src->ligands[i].nr_node > maxnode) {
+                maxnode = cpum.src->ligands[i].nr_node;
+            }
+        }
+        model_set_conf_ligand<<<dim3(nligand), dim3(1), 0, stream>>>(&m, &c);
+    }
+    if (nflex > 0) {
+        int maxnode = 0;
+        for (auto i = 0; i < nflex; i++) {
+            if (cpum.src->flex[i].nr_node > maxnode) {
+                maxnode = cpum.src->flex[i].nr_node;
+            }
+        }
+        model_set_conf_flex<<<dim3(nflex), dim3(1), 0, stream>>>(&m, &c);
+    }
 }
 #endif
 };  // namespace dock

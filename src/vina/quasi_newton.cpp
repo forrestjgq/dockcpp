@@ -26,7 +26,7 @@
 #include "cuvina/cuvina.h"
 
 
-#define VINA_CUTEST 1
+#define VINA_CUTEST 1 // 0: cpu, 1: gpu prefer 2: gpu & cpu & compare test
 struct quasi_newton_aux {
     model* m;
     const precalculate_byatom* p;
@@ -35,6 +35,7 @@ struct quasi_newton_aux {
     bool use_gpu;
     std::shared_ptr<void> m_gpu; // for model
     std::shared_ptr<void> m_bfgs_ctx; // for bfgs g&c
+    // int cnt = 0;
 
     quasi_newton_aux(model* m_, const precalculate_byatom* p_, const igrid* ig_, const vec& v_, const bool use_gpu_) : m(m_), p(p_), ig(ig_), v(v_), use_gpu(use_gpu_) {
         if (use_gpu) {
@@ -49,8 +50,14 @@ struct quasi_newton_aux {
         return m->eval_deriv(*p, *ig, v, g);
     }
     fl gpu(const conf& c, change& g) {
+        // cnt++;
+        // if (cnt > 1000) {
+        //     exit(0);
+        // }
         if (use_gpu) {
+            // printf("gpu %d start\n", cnt);
             use_gpu = dock::makeBFGSCtx(m_bfgs_ctx, g, c);
+            // printf("gpu %d end\n", cnt);
         }
         // Before evaluating conf, we have to update model
         const cache *subclass = dynamic_cast<const struct cache *>(ig);
@@ -70,28 +77,18 @@ struct quasi_newton_aux {
     }
 #else
     fl operator()(const conf& c, change& g) {
-        const cache *subclass = dynamic_cast<const struct cache *>(ig);
-        fl ret = 0;
         change g1 = g;
-
-        // Before evaluating conf, we have to update model
-        if (use_gpu && subclass != nullptr) {
-            use_gpu = dock::makeBFGSCtx(m_bfgs_ctx, g, c);
-        }
-
-        // std::cout << "VINA EVAL" << std::endl;
+        printf("\n\n\nEVAL CPU\n");
         m->set(c);
         const fl tmp = m->eval_deriv(*p, *ig, v, g);
 
-        if (use_gpu) {
-            // std::cout  << std::endl << std::endl << std::endl << std::endl << "OWR EVAL" << std::endl;
-            ret = dock::run_model_eval_deriv(*p, *ig,  g1, m_gpu, m_bfgs_ctx);
-            dock::comp_change(g1, g);
-            auto diff = std::abs(ret - tmp);
-            if (diff > 1e-6)  {
-                printf("cu ret %f cpu ret %f diff %f\n", ret, tmp, diff);
-                // assert (false);
-            }
+        printf("\n\n\nEVAL GPU\n");
+        fl ret = gpu(c, g1);
+        dock::comp_change(g1, g);
+        auto diff = std::abs(ret - tmp);
+        if (diff > 1e-6)  {
+            printf("cu ret %f cpu ret %f diff %f\n", ret, tmp, diff);
+            // assert (false);
         }
         return tmp;
     }
@@ -101,6 +98,7 @@ struct quasi_newton_aux {
 void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount) const { // g must have correct size
     quasi_newton_aux aux(&m, &p, &ig, v, use_gpu);
 
+    printf("=========================\n");
     fl res = bfgs(aux, out.c, g, max_steps, average_required_improvement, 10, evalcount);
 
     // Update model a last time after optimization
