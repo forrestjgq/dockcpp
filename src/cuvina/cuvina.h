@@ -20,6 +20,7 @@ bool makeSrcModel(model *m, precalculate_byatom &p);
 bool makeCache(cache &c);
 std::shared_ptr<void> makeModel(model *m, const vec &v);
 bool makeModel(std::shared_ptr<void> &obj, model *m, const vec &v);
+bool makeModelDesc(std::shared_ptr<void> &obj, model *m, const vec &v);
 bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c, int evalcnt=0);
 fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, 
                         change &g, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj);

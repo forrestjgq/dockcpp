@@ -4,19 +4,25 @@
 #include <cstring>
 #include "culog.h"
 #include <algorithm>
+#include "model_desc.cuh"
 
 namespace dock {
 FORCE_INLINE void frame_set_orientation(SegmentVars *segvar, const Flt *q) {
+    CUDBG("set orientation: %f %f %f %f", q[0], q[1], q[2], q[3]);
     qt_set(segvar->orq, q[0], q[1], q[2], q[3]);
     qt_to_mat(q, segvar->orm);
 }
 FORCE_INLINE void frame_set_orientation(SegmentVars *segvar, const Qt &q) {
+    CUDBG("set orientation: %f %f %f %f", q.x, q.y, q.z, q.w);
     qt_set(segvar->orq, q);
     qt_to_mat(q, segvar->orm);
 }
 FORCE_INLINE void frame_local_to_lab(SegmentVars *segvar, const Vec &local_coords, Vec &out) {
     // CUVDUMP("    orm", segvar->orm);
     CUVDUMP("    local coords(atoms)", local_coords);
+    CUVDUMP("    origin", segvar->origin);
+    auto m = segvar->orm;
+    CUDBG("    orm: %f %f %f %f %f %f %f %f %f", m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     mat_multiple(segvar->orm, local_coords, out);
     CUVDUMP("    before coord", out);
     vec_add(out, segvar->origin);
@@ -44,11 +50,18 @@ FORCE_INLINE void rigid_body_set_conf(Segment *seg, SegmentVars *segvar, Atom *a
 FORCE_INLINE void segment_set_conf(SegmentVars *parent, SegmentVars *segvar, Segment *seg, Atom *atoms,
                       Vec *coords, Flt torsion) {
     frame_local_to_lab(parent, seg->relative_origin, segvar->origin);
+    CUVDUMP("    local axis", seg->relative_axis);
     frame_local_to_lab_direction(parent, seg->relative_axis, segvar->axis);
+    CUVDUMP("    my origin", segvar->origin);
+    CUVDUMP("    axis", segvar->axis);
+    CUDBG("torsion %f", torsion);
+    CUDBG("parent orientation %f %f %f %f", parent->orq.x , parent->orq.y , parent->orq.z , parent->orq.w );
     Qt tmp;
     angle_to_quaternion(segvar->axis, torsion, tmp);
     qt_multiple(tmp, parent->orq);
+    CUDBG("tmp %f %f %f %f", tmp.x, tmp.y, tmp.z, tmp.w);
     quaternion_normalize_approx(tmp);  // normalization added in 1.1.2
+    CUDBG("approx tmp %f %f %f %f", tmp.x, tmp.y, tmp.z, tmp.w);
     // quaternion_normalize(tmp); // normalization added in 1.1.2
     frame_set_orientation(segvar, tmp);
     atom_frame_set_coords(atoms, seg, segvar, coords);
@@ -61,26 +74,25 @@ FORCE_INLINE void first_segment_set_conf(Segment *seg, SegmentVars *segvar, Atom
     atom_frame_set_coords(atoms, seg, segvar, coords);
 }
 
-FORCE_INLINE void model_set_conf_ligand_c(Model *m, const Flt *c) {
+FORCE_INLINE void model_set_conf_ligand_c(ModelDesc *m, const Flt *c, Flt *md) {
     SrcModel *src = m->src;
     Atom *atoms   = src->atoms;
     CU_FOR2 (i, src->nligand) {
         Ligand &ligand  = src->ligands[i];
-        LigandVars &var = m->ligands[i];
         auto p          = get_ligand_conf(src, c, i);
         FOR(k, ligand.nr_node) {
             int j               = ligand.nr_node - k - 1;  // from root to leaf
             Segment &seg        = ligand.tree[j];
-            SegmentVars &segvar = var.tree[j];
-            CUDBG("ligand %d", j);
+            auto segvar = model_ligand(src, m, md, i, j);
+            auto coords = model_coords(src, m, md);
+            CUDBG("ligand %d parent %d k %d", j, seg.parent, k);
             if (seg.parent >= 0) {
                 Segment &parent        = ligand.tree[seg.parent];
-                SegmentVars &parentVar = var.tree[seg.parent];
-                segment_set_conf(&parentVar, &segvar, &seg, atoms, m->coords,
-                                 get_ligand_conf_torsion(p, k - 1));
+                auto parentVar = model_ligand(src, m, md, i, seg.parent);
+                segment_set_conf(parentVar, segvar, &seg, atoms, coords, get_ligand_conf_torsion(p, k - 1));
             } else {
                 // root
-                rigid_body_set_conf(&seg, &segvar, atoms, m->coords, c);
+                rigid_body_set_conf(&seg, segvar, atoms, coords, p);
             }
         }
     }
@@ -88,26 +100,24 @@ FORCE_INLINE void model_set_conf_ligand_c(Model *m, const Flt *c) {
 
 }
 // c: conf floats
-FORCE_INLINE void model_set_conf_flex_c(Model *m, const Flt *c) {
+FORCE_INLINE void model_set_conf_flex_c(ModelDesc *m, const Flt *c, Flt *md) {
     SrcModel *src = m->src;
     Atom *atoms   = src->atoms;
     CU_FOR2 (i, src->nflex) {
         Residue &flex    = src->flex[i];
-        ResidueVars &var = m->flex[i];
         auto *p          = get_flex_conf(src, c, i);
         // climbing from the leaves to root and accumulate force and torque
         FOR(k, flex.nr_node) {
             int j               = src->nflex - k - 1;
             Segment &seg        = flex.tree[j];
-            SegmentVars &segvar = var.tree[j];
+            auto segvar = model_flex(src, m, md, i, j);
+            auto coords = model_coords(src, m, md);
             if (seg.parent >= 0) {
                 Segment &parent        = flex.tree[seg.parent];
-                SegmentVars &parentVar = var.tree[seg.parent];
-                segment_set_conf(&parentVar, &segvar, &seg, atoms, m->coords,
-                                 get_flex_conf_torsion(p, k));
+                auto parentVar = model_flex(src, m, md, i, seg.parent);
+                segment_set_conf(parentVar, segvar, &seg, atoms, coords, get_flex_conf_torsion(p, k));
             } else {
-                first_segment_set_conf(&seg, &segvar, atoms, m->coords,
-                                       get_flex_conf_torsion(p, k));
+                first_segment_set_conf(&seg, segvar, atoms, coords, get_flex_conf_torsion(p, k));
             }
         }
     }

@@ -3,6 +3,7 @@
 #include <cstring>
 #include "culog.h"
 #include <algorithm>
+#include "model_desc.cuh"
 
 
 namespace dock {
@@ -135,7 +136,7 @@ FORCE_INLINE Flt grid_eval(const Grid *g, const Vec &location, Flt slope, Flt v,
 
 // oute must has model movable_atoms size
 // depends on model coords
-__device__ void c_cache_eval_deriv(const Cache *c, Model *m) {
+__device__ void c_cache_eval_deriv(const Cache *c, ModelDesc *m, Flt *md) {
 	SrcModel *src = m->src;
 	CU_FOR2(i, src->movable_atoms) {
 		Vec deriv;
@@ -145,10 +146,13 @@ __device__ void c_cache_eval_deriv(const Cache *c, Model *m) {
 		CUDBG("cache %d t %lu ncoords %d", i, t, m->ncoords);
 		if (t < c->ngrids) {
 			auto *g = &c->grids[t];
-			e = grid_eval(g, m->coords[i], c->m_slope, m->vs[1], &deriv);
+			auto coord = model_coords(src, m, md, i);
+			e = grid_eval(g, *coord, c->m_slope, m->vs[1], &deriv);
 		}
-		vec_set( m->minus_forces[i], deriv);
-		m->movable_e[i] = e;
+		auto minus_forces = model_minus_forces(src, m, md, i);
+		vec_set(*minus_forces, deriv);
+		auto me = model_movable_e(src, m, md, i);
+		*me = e;
 		CUDBG("cache %d eval e %f", i, e);
 		CUVDUMP("force deriv", deriv);
 		

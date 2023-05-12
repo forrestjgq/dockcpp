@@ -8,8 +8,9 @@
 #include "model_c.cuh"
 #include <algorithm>
 #include <cmath>
-namespace dock {
+#include "model_desc.cuh"
 
+namespace dock {
 struct threadids {
     int tid, blksz;
 };
@@ -98,10 +99,12 @@ FORCE_INLINE void read_conf(SrcModel *sm, const Conf * dst, Flt *src) {
                     p[2] = ligand->rigid.position.z;
                     p[3] = ligand->rigid.orientation.x;
                     p[4] = ligand->rigid.orientation.y;
-                    p[5] = ligand->rigid.orientation.w;
-                    p[6] = ligand->rigid.orientation.z;
+                    p[5] = ligand->rigid.orientation.z;
+                    p[6] = ligand->rigid.orientation.w;
+                    printf("conf %f %f %f %f %f %f %f\n", p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
                 }
                 p[i+7] = ligand->torsions[i];
+                printf("ct %d: %f\n", i, ligand->torsions[i]);
             }
         }
 
@@ -336,27 +339,27 @@ FORCE_INLINE void set_diagonal(Flt *h, Flt v, int ng) {
 // cf: input conf, read only
 // cg: output change, write only
 // e: output loss
-FORCE_INLINE void model_eval_deriv(Model *m, const PrecalculateByAtom *p, const Cache *c, const Flt *cf, Flt *cg, Flt *e) {
+FORCE_INLINE void model_eval_deriv(ModelDesc *m, const PrecalculateByAtom *p, const Cache *c, const Flt *cf, Flt *cg, Flt *e, Flt *md) {
     // sed model::set, update conf
-    model_set_conf_ligand_c(m, cf);
-    model_set_conf_flex_c(m, cf);
+    model_set_conf_ligand_c(m, cf, md);
+    model_set_conf_flex_c(m, cf, md);
     SYNC();
 
-    c_cache_eval_deriv(c, m);
+    c_cache_eval_deriv(c, m, md);
     SYNC();
     // depends on c_cache_eval_deriv
-    c_model_eval_deriv_pairs(m, p);
+    c_model_eval_deriv_pairs(m, p, md);
     SYNC();
 
-    c_model_collect_deriv(m, e);
+    c_model_collect_deriv(m, e, md);
     SYNC();
 
-    c_model_eval_deriv_ligand_sum_ft(m);
-    c_model_eval_deriv_flex_sum_ft(m);
+    c_model_eval_deriv_ligand_sum_ft(m, md);
+    c_model_eval_deriv_flex_sum_ft(m, md);
     SYNC();
 
-    c_model_eval_deriv_ligand(m, cg);
-    c_model_eval_deriv_flex(m, cg);
+    c_model_eval_deriv_ligand(m, cg, md);
+    c_model_eval_deriv_flex(m, cg, md);
 
 }
 
@@ -470,14 +473,17 @@ FORCE_INLINE void conf_increament(SrcModel *sm, const Flt *g, const Flt *c, Flt 
 }
 // since warp is 32, make it 16 is much better
 #define MAX_TRIALS 8
+extern int bfgs_max_trials() {
+    return MAX_TRIALS;
+}
 __device__ Flt multipliers[MAX_TRIALS] = { 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125/*, 0.00390625, 0.001953125 */};
 
 // ng, nc: size of Flt for a change and conf
 // tmp: require MAX_TRIALS * (nc+ng+1) Flts
 // outc: write only, output conf
 // outg: write only, output change
-__device__ void line_search(Model *m, PrecalculateByAtom *pa, Cache *ch, Flt f0, Flt &f1,
-                const Flt *c, const Flt *g,Flt *p, Flt *tmp, Flt *outc, Flt *outg, int ng, int nc, int &evalcnt, Flt &out_alpha, const threadids &tids) {
+__device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt f0, Flt &f1,
+                const Flt *c, const Flt *g,Flt *p, Flt *tmp, Flt *outc, Flt *outg, int ng, int nc, int &evalcnt, Flt &out_alpha, const threadids &tids, Flt *md) {
     const Flt c0 = 0.0001;
     scalar_product_array(p, g, tmp, ng, TIDS); // tmp require n
     SYNC();
@@ -485,15 +491,17 @@ __device__ void line_search(Model *m, PrecalculateByAtom *pa, Cache *ch, Flt f0,
 
     Flt *es = tmp;
     tmp += MAX_TRIALS;
+    // todo: copy md
     for (int dz = threadIdx.z; dz < MAX_TRIALS; dz += blockDim.z) {
         Flt alpha = multipliers[dz];
         Flt *tc = tmp + (nc+ng) * dz; // c_new
         Flt *tg = tc + nc; // g_new
         Flt *e = &es[dz];
+        Flt *mdz = md + dz * m->szflt;
 
         conf_increament(m->src, p, c, tc, alpha);
         SYNC();
-        model_eval_deriv(m, pa, ch, tc, tg, e);
+        model_eval_deriv(m, pa, ch, tc, tg, e, mdz);
         SYNC();
         if (threadIdx.x == 0 && threadIdx.y == 0) {
             CUDBG("line search %d der e %f", dz, *e);
@@ -527,9 +535,56 @@ __device__ void line_search(Model *m, PrecalculateByAtom *pa, Cache *ch, Flt f0,
     copy_conf(outc, tc);
 
 }
-
+__device__ void printc(SrcModel *sm, const Flt *c) {
+    for (int i = 0; i < sm->nligand; i++) {
+        printf("(%f %f %f) (%f %f %f %f)[", c[0], c[1], c[2], c[3], c[4], c[5], c[6]);
+        for (int j = 0; j < sm->ligands[i].nr_node-1; j++) {
+            if (j > 0) {
+                printf(" ");
+            }
+            printf("%f", c[7+j]);
+        }
+        printf("]\n");
+        c += 7 + sm->ligands[i].nr_node-1;
+    }
+    for (int i = 0; i < sm->nflex; i++) {
+        printf("[");
+        for (int j = 0; j < sm->flex[i].nr_node; j++) {
+            if (j > 0) {
+                printf(" ");
+            }
+            printf("%f", c[j]);
+        }
+        printf("]\n");
+        c += sm->flex[i].nr_node;
+    }
+}
+__device__ void printg(SrcModel *sm, const Flt *c) {
+    for (int i = 0; i < sm->nligand; i++) {
+        printf("(%f %f %f) (%f %f %f)[", c[0], c[1], c[2], c[3], c[4], c[5]);
+        for (int j = 0; j < sm->ligands[i].nr_node-1; j++) {
+            if (j > 0) {
+                printf(" ");
+            }
+            printf("%f", c[6+j]);
+        }
+        printf("]\n");
+        c += 6 + sm->ligands[i].nr_node-1;
+    }
+    for (int i = 0; i < sm->nflex; i++) {
+        printf("[");
+        for (int j = 0; j < sm->flex[i].nr_node; j++) {
+            if (j > 0) {
+                printf(" ");
+            }
+            printf("%f", c[j]); 
+        }
+        printf("]\n");
+        c += sm->flex[i].nr_node;
+    }
+}
 #define BFGSIDX threadIdx.z
-__device__ void bfgs(Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over, Flt *c, Flt *f0, Flt *mem) {
+__device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over, Flt *c, Flt *f0, Flt *mem) {
     int offset = 0; // mem alloc offset
     DECL_TIDS;
     tids.tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x *blockDim.y;
@@ -540,8 +595,10 @@ __device__ void bfgs(Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, 
 
     // mem requirement:
     //    4 + ((ng * (ng+1)) >> 1) + 6 *ng + 3 *nc + (max_steps + 1) + max(max(blockDim.x * blockDim.y, ng), MAX_TRIALS * (nc+ng+1)) 
+    Flt *md = m->data;
     Flt *h, *g, *g_new, *c_new, *g_orig, *c_orig, *p, *y, *fs, *hy, *tmp;
     Flt * f_orig, *f1, *alpha;
+
     // f0 = mem + offset, offset += 1;
     f1 = mem + offset, offset += 1;
     f_orig = mem + offset, offset += 1;
@@ -559,6 +616,9 @@ __device__ void bfgs(Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, 
     fs = mem + offset, offset += max_steps + 1;
     tmp = mem + offset; offset += max(max(blockDim.x * blockDim.y, ng), MAX_TRIALS * (nc+ng+1)) ;
 
+    // copy input data into shared memory
+    copy_array<Flt>(md, m->data, m->szflt, TIDS);
+
     init_triangle_mat(h, ng);
     // in cpu version, here is a declare and copy, but there is no need because it will be used in linesearch for
     // output only.
@@ -568,9 +628,17 @@ __device__ void bfgs(Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, 
 
     if (BFGSIDX == 0) {
         // initial evaluation, get f0, initial conf and change
-        model_eval_deriv(m, pa, ch, c, g, f0);
+        model_eval_deriv(m, pa, ch, c, g, f0, md);
+        ctx->eval_cnt++;
     }
     SYNC();
+    if(INMAIN()) {
+        printf("f0 %f\n", *f0);
+        printf("c:\n");
+        printc(srcm, c);
+        printf("g:\n");
+        printg(srcm, g);
+    }
 
     copy_change(g_orig, g);
     copy_conf(c_orig, c);
@@ -581,6 +649,7 @@ __device__ void bfgs(Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, 
     }
 
     SYNC();
+    #if 0
     for(int step = 0; step < max_steps; step++) {
         minus_mat_vec_product(h, g, p, mem, ng, TIDS);
         SYNC();
@@ -620,6 +689,7 @@ __device__ void bfgs(Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, 
         bfgs_update(h, p, y, hy, tmp, *alpha, ng, TIDS);
         SYNC();
     }
+    #endif
 
     if (!(*f0 <= *f_orig)) {
         *f0 = *f_orig;
@@ -628,7 +698,7 @@ __device__ void bfgs(Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, 
     }
 }
 // used for single mc call
-GLOBAL void bfgs_kernel(Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over) {
+GLOBAL void bfgs_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over) {
     extern __shared__ Flt sm[];
     int nc = m->src->nrflts_conf;
     int offset = 0;
@@ -647,7 +717,7 @@ GLOBAL void bfgs_kernel(Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ct
         ctx->e = *f0;
     }
 }
-void run_bfgs(Model *cpum, Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over , cudaStream_t stream) {
+void run_bfgs(ModelDesc *cpum, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over , cudaStream_t stream) {
     auto srcm = cpum->src;
     int ng = srcm->nrflts_change;
     int nc = srcm->nrflts_conf;
@@ -655,7 +725,7 @@ void run_bfgs(Model *cpum, Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx 
     // sm requirement:
     dim3 block(4, 8, MAX_TRIALS);
     dim3 grid(1);
-    int sm =  4 + ((ng * (ng+1)) >> 1) + 6 *ng + 3 *nc + (max_steps + 1) + std::max(std::max(int(block.x * block.y), ng), MAX_TRIALS * (nc+ng+1));
+    int sm = 4 + ((ng * (ng+1)) >> 1) + 6 *ng + 3 *nc + (max_steps + 1) + std::max(std::max(int(block.x * block.y), ng), MAX_TRIALS * (nc+ng+1));
     sm *= sizeof(Flt);
     printf("ng %d nc %d sm size %d\n", ng, nc, sm);
     bfgs_kernel<<<grid, block, sm, stream>>>(m, pa, ch, ctx, max_steps, average_required_improvement, over);

@@ -3,7 +3,7 @@
 #include "stdio.h"
 #include <cstring>
 #include "culog.h"
-
+#include "model_desc.cuh"
 
 namespace dock {
 
@@ -160,139 +160,135 @@ FORCE_INLINE void set_derivative(const Vecp& force_torque, Flt *r) {
 // }
 
 // eval pairs der, stores in model pair_res, and model coords will be refreshed
-FORCE_INLINE  void c_model_eval_deriv_pairs(Model *m, const PrecalculateByAtom *p) {
+FORCE_INLINE  void c_model_eval_deriv_pairs(ModelDesc *m, const PrecalculateByAtom *p, Flt *md) {
 	SrcModel *src = m->src;
 	CU_FOR2(i, src->npairs) {
-		eval_interacting_pair_deriv(i, p, src->pairs[i], m->coords, m->pair_res[i], m->vs);
+        auto coords = model_coords(src, m, md);
+        auto pair_res = model_pair_res(src, m, md, i);
+		eval_interacting_pair_deriv(i, p, src->pairs[i], coords, *pair_res, m->vs);
 	}
 }
 // collect e and setup forces
-FORCE_INLINE void c_model_collect_deriv(Model *m, Flt *e) {
+FORCE_INLINE void c_model_collect_deriv(ModelDesc *m, Flt *e, Flt *md) {
 	SrcModel *src = m->src;
 
 	// accumulate e as deriviative result
 	if (IS_2DMAIN()) {
 		*e = 0;
 		FOR(i, src->movable_atoms) {
-			*e += m->movable_e[i];
+			*e += *model_movable_e(src, m, md, i);
 		}
 		FOR(i, src->npairs) {
-			PairEvalResult &res = m->pair_res[i];
-			*e += res.e;
+			auto res = model_pair_res(src, m, md, i);
+			*e += res->e;
 		}
 	}
 	// accumulate minus_forces
 	if (IS_2DSUB()) {
 		FOR(i, src->npairs) {
 			InteractingPair &pair = src->pairs[i];
-			PairEvalResult &res = m->pair_res[i];
-			vec_sub(m->minus_forces[pair.a], res.force);
-			vec_add(m->minus_forces[pair.b], res.force);
+			auto res = model_pair_res(src, m, md, i);
+            auto paira = model_minus_forces(src, m, md, pair.a);
+            auto pairb = model_minus_forces(src, m, md, pair.b);
+			vec_sub(*paira, res->force);
+			vec_add(*pairb, res->force);
 		}
 	}
 }
-FORCE_INLINE void c_model_eval_deriv_ligand_sum_ft(Model *m) {
+FORCE_INLINE void c_model_eval_deriv_ligand_sum_ft(ModelDesc *m, Flt *md) {
     SrcModel *src = m->src;
+    auto coords = model_coords(src, m, md);
     CU_FORY(i, src->nligand) {
         Ligand &ligand  = src->ligands[i];
-        LigandVars &var = m->ligands[i];
         // first calculate all node force and torque, only for node itself, not include sub-nodes
         CU_FOR(j, ligand.nr_node) {
             CUDBG("ligand %d", j);
-            sum_force_and_torque<Segment>(ligand.tree[j], var.tree[j].origin, m->coords,
-                                        m->minus_forces, var.tree[j].ft);
-            var.tree[j].dirty = 0;  // once force accumulated, dirty will be set to non-0 and torque
-                                    // should be re-calculated
+            auto var = model_ligand(src, m, md, i, j);
+            auto minus_forces = model_minus_forces(src, m, md);
+            sum_force_and_torque<Segment>(ligand.tree[j], var->origin, coords, minus_forces, var->ft);
         }
     }
 
 }
 
-FORCE_INLINE void c_model_eval_deriv_ligand(Model *m, Flt *gs) {
+FORCE_INLINE void c_model_eval_deriv_ligand(ModelDesc *m, Flt *gs, Flt *md) {
     SrcModel *src = m->src;
     CU_FOR2(i, src->nligand) {
         Flt *g = get_ligand_change(src, gs, i);
 
         Ligand &ligand  = src->ligands[i];
-        LigandVars &var = m->ligands[i];
         // climbing from the leaves to root and accumulate force and torque
         if (IS_2DMAIN()) {
             FOR(j, ligand.nr_node - 1) {
                 Segment &seg        = ligand.tree[j];
-                SegmentVars &segvar = var.tree[j];
+                auto segvar = model_ligand(src, m, md, i, j);
                 CUDBG("ligand %d", j);
                 Segment &parent        = ligand.tree[seg.parent];
-                SegmentVars &parentVar = var.tree[seg.parent];
+                auto parentVar = model_ligand(src, m, md, i, seg.parent);
                 CUDBG("    parent %d", seg.parent);
-                CUVECPDUMP("    parent ft", parentVar.ft);
-                CUVECPDUMP("    child ft", segvar.ft);
-                CUVDUMP("    parent origin", parentVar.origin);
-                CUVDUMP("    child origin", segvar.origin);
-                vec_add(parentVar.ft.first, segvar.ft.first);
-                var.tree[seg.parent].dirty++;
+                CUVECPDUMP("    parent ft", parentVar->ft);
+                CUVECPDUMP("    child ft", segvar->ft);
+                CUVDUMP("    parent origin", parentVar->origin);
+                CUVDUMP("    child origin", segvar->origin);
+                vec_add(parentVar->ft.first, segvar->ft.first);
 
                 // this is not a leaf, calculate torque with new force
                 Vec r, product;
-                vec_sub(segvar.origin, parentVar.origin, r);
-                cross_product(r, segvar.ft.first, product);
-                vec_add(product, segvar.ft.second);
-                vec_add(parentVar.ft.second, product);
-                CUVECPDUMP("    childft added", parentVar.ft);
+                vec_sub(segvar->origin, parentVar->origin, r);
+                cross_product(r, segvar->ft.first, product);
+                vec_add(product, segvar->ft.second);
+                vec_add(parentVar->ft.second, product);
+                CUVECPDUMP("    childft added", parentVar->ft);
                 // note that torsions has reversed order from segments
-                set_derivative(segvar.axis, segvar.ft,
+                set_derivative(segvar->axis, segvar->ft,
                                get_ligand_change_torsion(g, ligand.nr_node - j - 2));
                 CUDBG("set ligands %d ligand %d torsion[%d] %f", i, j, ligand.nr_node - j - 2,
                       get_ligand_change_torsion(g, ligand.nr_node - j - 2));
-                CUVDUMP("    axis", segvar.axis);
-                CUVECPDUMP("    ft", segvar.ft);
+                CUVDUMP("    axis", segvar->axis);
+                CUVECPDUMP("    ft", segvar->ft);
             }
-            SegmentVars &segvar = var.tree[ligand.nr_node - 1];
-            set_derivative(segvar.ft, g);
+            auto svar = model_ligand(src, m, md, i, ligand.nr_node - 1);
+            set_derivative(svar->ft, g);
         }
     }
 }
-FORCE_INLINE void c_model_eval_deriv_flex_sum_ft(Model *m) {
+FORCE_INLINE void c_model_eval_deriv_flex_sum_ft(ModelDesc *m, Flt *md) {
     SrcModel *src = m->src;
     CU_FORY(i, src->nflex) {
         Residue &flex    = src->flex[i];
-        ResidueVars &var = m->flex[i];
         // first calculate all node force and torque, only for node itself, not include sub-nodes
         CU_FOR(j, flex.nr_node) {
             CUDBG("flex %d", j);
-            sum_force_and_torque<Segment>(flex.tree[j], var.tree[j].origin, m->coords,
-                                          m->minus_forces, var.tree[j].ft);
-            var.tree[j].dirty = 0;  // once force accumulated, dirty will be set to non-0 and torque
-                                    // should be re-calculated
+            auto coords = model_coords(src, m, md);
+            auto minus_forces = model_minus_forces(src, m, md);
+            auto seg = model_flex(src, m, md, i, j);
+            sum_force_and_torque<Segment>(flex.tree[j], seg->origin, coords, minus_forces, seg->ft);
         }
     }
 }
-FORCE_INLINE void c_model_eval_deriv_flex(Model *m, Flt *gs) {
+FORCE_INLINE void c_model_eval_deriv_flex(ModelDesc *m, Flt *gs, Flt *md) {
     SrcModel *src = m->src;
     CU_FOR2(i, src->nflex) {
         Flt *g           = get_flex_change(src, gs, i);
         Residue &flex    = src->flex[i];
-        ResidueVars &var = m->flex[i];
         if (IS_2DMAIN()) {
             FOR(j, flex.nr_node) {
                 Segment &seg        = flex.tree[j];
-                SegmentVars &segvar = var.tree[j];
+                auto segvar = model_flex(src, m, md, i, j);
                 if (seg.parent >= 0) {
                     Segment &parent        = flex.tree[seg.parent];
-                    SegmentVars &parentVar = var.tree[seg.parent];
-                    vec_add(parentVar.ft.first, segvar.ft.first);
-                    var.tree[seg.parent].dirty++;
+                    auto parentVar = model_flex(src, m, md, i, seg.parent);
+                    vec_add(parentVar->ft.first, segvar->ft.first);
 
-                    // if (segvar.dirty > 0) {
                     // this is not a leaf, calculate torque with new force
                     Vec r, product;
-                    vec_sub(segvar.origin, parentVar.origin, r);
-                    cross_product(r, segvar.ft.first, product);
-                    vec_add(product, segvar.ft.second);
-                    vec_add(parentVar.ft.second, product);
-                    // }
+                    vec_sub(segvar->origin, parentVar->origin, r);
+                    cross_product(r, segvar->ft.first, product);
+                    vec_add(product, segvar->ft.second);
+                    vec_add(parentVar->ft.second, product);
                 }
                 // note that torsions has reversed order from segments
-                set_derivative(segvar.axis, segvar.ft,
+                set_derivative(segvar->axis, segvar->ft,
                                get_flex_change_torsion(g, flex.nr_node - j - 1));
             }
         }

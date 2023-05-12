@@ -31,6 +31,9 @@ struct frame {
 	frame(const vec& origin_) : origin(origin_), orientation_q(qt_identity), orientation_m(quaternion_to_r3(qt_identity)) {}
 	vec local_to_lab(const vec& local_coords) const {
 		vec tmp;
+		VDUMP("    origin", origin);
+		auto m = orientation_m.data;
+		DBG("    orm: %f %f %f %f %f %f %f %f %f", m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
 		tmp = origin + orientation_m*local_coords; 
 		return tmp;
 	}
@@ -44,6 +47,11 @@ struct frame {
 protected:
 	vec origin;
 	void set_orientation(const qt& q) { // does not normalize the orientation
+			fl q1 = q.R_component_1();
+			fl q2 = q.R_component_2();
+			fl q3 = q.R_component_3();
+			fl q4 = q.R_component_4();
+			DBG("set orientation: %f %f %f %f", q1, q2, q3, q4);
 		orientation_q = q;
 		orientation_m = quaternion_to_r3(orientation_q);
 	}
@@ -66,8 +74,13 @@ struct atom_range {
 struct atom_frame : public frame, public atom_range {
 	atom_frame(const vec& origin_, sz begin_, sz end_) : frame(origin_), atom_range(begin_, end_) {}
 	void set_coords(const atomv& atoms, vecv& coords) const {
-		VINA_RANGE(i, begin, end)
+		VINA_RANGE(i, begin, end) {
+			DBG("set coords %lu", i);
+			VDUMP("    local coords(atoms)", atoms[i].coords);
+			VDUMP("    before coords", coords[i]);
 			coords[i] = local_to_lab(atoms[i].coords);
+			VDUMP("    coords", coords[i]);
+		}
 	}
 	vecp sum_force_and_torque(const vecv& coords, const vecv& forces) const {
 		vecp tmp;
@@ -131,10 +144,31 @@ struct segment : public axis_frame {
 	void set_conf(const frame& parent, const atomv& atoms, vecv& coords, flv::const_iterator& c) {
 		const fl torsion = *c;
 		++c;
+		VDUMP("    local coords", relative_origin);
+		VDUMP("    local axis", relative_axis);
 		origin = parent.local_to_lab(relative_origin);
 		axis = parent.local_to_lab_direction(relative_axis);
+		VDUMP("    my origin", origin);
+		VDUMP("    axis", axis);
+		DBG("torsion %f", torsion);
+		auto &t = parent.orientation();
+			fl q1 = t.R_component_1();
+			fl q2 = t.R_component_2();
+			fl q3 = t.R_component_3();
+			fl q4 = t.R_component_4();
+		DBG("parent orientation %f %f %f %f", q1, q2, q3, q4);
 		qt tmp = angle_to_quaternion(axis, torsion) * parent.orientation();
+			q1 = tmp.R_component_1();
+			q2 = tmp.R_component_2();
+			q3 = tmp.R_component_3();
+			q4 = tmp.R_component_4();
+		DBG("tmp %f %f %f %f", q1, q2, q3, q4);
 		quaternion_normalize_approx(tmp); // normalization added in 1.1.2
+			q1 = tmp.R_component_1();
+			q2 = tmp.R_component_2();
+			q3 = tmp.R_component_3();
+			q4 = tmp.R_component_4();
+		DBG("approx tmp %f %f %f %f", q1, q2, q3, q4);
 		//quaternion_normalize(tmp); // normalization added in 1.1.2
 		set_orientation(tmp);
 		set_coords(atoms, coords);

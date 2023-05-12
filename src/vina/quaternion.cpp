@@ -141,6 +141,15 @@ vec quaternion_difference(const qt& b, const qt& a) { // rotation that needs to 
 	return quaternion_to_angle(tmp); // already assert normalization
 }
 
+inline void printqt(const qt& v, std::ostream& out = std::cout) {
+	fl q1 = v.R_component_1();
+	fl q2 = v.R_component_2();
+	fl q3 = v.R_component_3();
+	fl q4 = v.R_component_4();
+	out << "(" << q1 << ", " << q2 << ", " << q3 << ", " << q4 << ")";
+}
+
 void print(const qt& q, std::ostream& out) { // print as an angle
+	printqt(q, out);
 	print(quaternion_to_angle(q), out);
 }

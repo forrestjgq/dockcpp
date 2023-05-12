@@ -5,7 +5,6 @@
 #include <stdint.h>
 
 namespace dock {
-    
     struct Qt {
         double x, y, z, w;
     };
@@ -71,6 +70,9 @@ namespace dock {
         Vec relative_axis;
         Vec relative_origin;
     } Segment;
+
+    // This struct must NOT define any pointers and should be all Flts
+    // Alignment: sizeof(Flt)
     typedef struct {
         // inputs, changes in set_conf
         Vec axis; // for first_segment, it's const, for others updated in set_conf
@@ -80,9 +82,6 @@ namespace dock {
 
         // outputs
         Vecp ft; // force and torque
-
-        // temp
-        int dirty;
     } SegmentVars;
 
 #define CU_XS_TYPE_SIZE 32
@@ -93,7 +92,7 @@ namespace dock {
     } Ligand;
 
     typedef struct {
-        SegmentVars *tree;
+        SegmentVars *tree; // array size: Ligand.nr_node
     } LigandVars;
 
     typedef struct {
@@ -181,12 +180,31 @@ namespace dock {
         Vec * coords; // array of atom size, for atom coords, see model::coords
 
         // for der eval
-        LigandVars *ligands;
-        ResidueVars *flex;
+        LigandVars *ligands; // array size: SrcModel.nligand
+        ResidueVars *flex; // array size: SrcModel.nflex
         Vec *minus_forces; // size: movable atoms, see SrcModel.movable_atoms, used in eval_deriv, no init value
         Flt *movable_e; // result of movable atoms, size: src->movable_atoms, used in eval_deriv, no init value
         PairEvalResult *pair_res; // size: src->nparis, used in eval deriv, no init value
     } Model;
+    typedef struct {
+        SrcModel *src;
+        int szflt; // how many flts ModelVars takes
+        int ncoords;
+        Flt vs[3];
+
+        // offset of each fields
+        int coords;
+        // offset of each ligands, array size: SrcModel.nligand
+        int *ligands; 
+        int *flex;
+        int minus_forces;
+        int movable_e;
+        int pair_res;
+
+        Flt *data;
+    } ModelDesc;
+
+
     typedef struct {
         Flt m_slope;
         int ngrids;

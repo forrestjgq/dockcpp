@@ -198,8 +198,6 @@ GLOBAL void model_eval_deriv_ligand(Model *m, PrecalculateByAtom *p, BFGSCtx *ct
         CUDBG("ligand %d", j);
         sum_force_and_torque<Segment>(ligand.tree[j], var.tree[j].origin, m->coords,
                                       m->minus_forces, var.tree[j].ft);
-        var.tree[j].dirty = 0;  // once force accumulated, dirty will be set to non-0 and torque
-                                // should be re-calculated
     }
 
     SYNC();
@@ -218,7 +216,6 @@ GLOBAL void model_eval_deriv_ligand(Model *m, PrecalculateByAtom *p, BFGSCtx *ct
             CUVDUMP("    parent origin", parentVar.origin);
             CUVDUMP("    child origin", segvar.origin);
             vec_add(parentVar.ft.first, segvar.ft.first);
-            var.tree[seg.parent].dirty++;
 
             // this is not a leaf, calculate torque with new force
             Vec r, product;
@@ -249,8 +246,6 @@ GLOBAL void model_eval_deriv_flex(Model *m, PrecalculateByAtom *p, BFGSCtx *ctx)
             CUDBG("flex %d", j);
             sum_force_and_torque<Segment>(flex.tree[j], var.tree[j].origin, m->coords,
                                           m->minus_forces, var.tree[j].ft);
-            var.tree[j].dirty = 0;  // once force accumulated, dirty will be set to non-0 and torque
-                                    // should be re-calculated
         }
 
         SYNC();
@@ -263,16 +258,13 @@ GLOBAL void model_eval_deriv_flex(Model *m, PrecalculateByAtom *p, BFGSCtx *ctx)
                 Segment &parent        = flex.tree[seg.parent];
                 SegmentVars &parentVar = var.tree[seg.parent];
                 vec_add(parentVar.ft.first, segvar.ft.first);
-                var.tree[seg.parent].dirty++;
 
-                // if (segvar.dirty > 0) {
                 // this is not a leaf, calculate torque with new force
                 Vec r, product;
                 vec_sub(segvar.origin, parentVar.origin, r);
                 cross_product(r, segvar.ft.first, product);
                 vec_add(product, segvar.ft.second);
                 vec_add(parentVar.ft.second, product);
-                // }
             }
             // note that torsions has reversed order from segments
             set_derivative(segvar.axis, segvar.ft, g->flex[i].torsions[flex.nr_node - j - 1]);

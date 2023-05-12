@@ -333,7 +333,6 @@ inline void print(const vec& v, std::ostream& out = std::cout) {
 	}
 	out << ")";
 }
-
 template<typename T>
 void print(const std::vector<T>& v, std::ostream& out = std::cout) {
 	out << "[";

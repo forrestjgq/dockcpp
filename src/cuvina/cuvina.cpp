@@ -9,9 +9,9 @@
 #include "cuda_context.h"
 // #include "vinasrv.h"
 
+#define ATTR inline
+#include "model_desc.h"
 namespace dock {
-
-
 bool submit_vina_server(StreamCallback callback);
 
 class Memory {
@@ -445,6 +445,108 @@ bool makeSrcModel(model *m, precalculate_byatom &p) {
     return false;
 }
 
+extern int bfgs_max_trials();
+std::shared_ptr<Memory> create_model_desc_memory(model *m, SrcModel *sm) {
+    Size sz = SIZEOF(ModelDesc) + SIZEOFARR(int, sm->nligand)+ SIZEOFARR(int, sm->nflex);
+    int offset = 0;
+    /*md->coords = offset,*/ offset += sizeof(Vec) * m->coords.size();
+
+    for (int i = 0; i < sm->nligand; i++) {
+        auto &ligand = sm->ligands[i];
+        /*md->ligands[i] = offset,*/ offset += sizeof(SegmentVars) * ligand.nr_node;
+    }
+    for (int i = 0; i < sm->nflex; i++) {
+        auto &flex = sm->flex[i];
+        /*md->flex[i] = offset,*/ offset += sizeof(SegmentVars) * flex.nr_node;
+    }
+
+    /*md->minus_forces = offset,*/ offset += sizeof(Vec) * sm->movable_atoms;
+    /*md->movable_e = offset,*/ offset += sizeof(Flt) * sm->movable_atoms;
+    /*md->pair_res = offset,*/ offset += sm->npairs * sizeof(PairEvalResult);
+
+    sz += Size(offset * bfgs_max_trials());
+    sz = (sz + 4096 -1) / 4096*4096;
+    return makeMemory(sz);
+}
+ModelDesc *make_model_desc(Memory *mem, SrcModel *sm, model *m, const vec &v) {
+    ModelDesc *md;
+    int offset = 0;
+
+    ALLOC(md, ModelDesc);
+    md->src = sm;
+    md->ncoords = m->coords.size();
+    md->vs[0] = v.data[0], md->vs[1] = v.data[1], md->vs[2] = v.data[2];
+
+    md->coords = offset, offset += sizeof(Vec) * md->ncoords;
+    ALLOC_ARR(md->ligands, int, sm->nligand);
+    ALLOC_ARR(md->flex, int, sm->nflex);
+
+    for (int i = 0; i < sm->nligand; i++) {
+        auto &ligand = sm->ligands[i];
+        md->ligands[i] = offset, offset += sizeof(SegmentVars) * ligand.nr_node;
+    }
+    for (int i = 0; i < sm->nflex; i++) {
+        auto &flex = sm->flex[i];
+        md->flex[i] = offset, offset += sizeof(SegmentVars) * flex.nr_node;
+    }
+
+    md->minus_forces = offset, offset += sizeof(Vec) * sm->movable_atoms;
+    md->movable_e = offset, offset += sizeof(Flt) * sm->movable_atoms;
+    md->pair_res = offset, offset += sm->npairs * sizeof(PairEvalResult);
+
+    assert (offset % sizeof(Flt) == 0);
+    md->szflt = offset /sizeof(Flt);
+    ALLOC_ARR(md->data, Flt, md->szflt);
+
+    for (int i = 0; i < sm->nligand; i++) {
+        auto ligandvar = model_ligand(sm, md, md->data, i, 0);
+        htree_var_nodes_copy(ligandvar, m->ligands[i]);
+    }
+    for (int i = 0; i < sm->nflex; i++) {
+        auto flexvar = model_flex(sm, md, md->data, i, 0);
+        htree_var_nodes_copy(flexvar, m->flex[i]);
+    }
+
+    copy_vecs(model_coords(sm, md, md->data), m->coords);
+
+
+    return md;
+cleanup:
+    return nullptr;
+}
+std::shared_ptr<void> makeModelDesc(model *m, const vec &v) {
+    auto sm = extract_object<SrcModel>(m->m_gpu);
+    auto mem = create_model_desc_memory(m, sm);
+    if (mem) {
+        auto md = make_model_desc(mem.get(), sm, m, v);
+        if (md) {
+            auto gpusm = extract_cuda_object<SrcModel>(m->m_gpu);
+            md->src = gpusm;
+            auto ret = makeCuObject(mem, md);
+            md->src = sm;
+            return ret;
+        }
+    }
+    return nullptr;
+}
+bool makeModelDesc(std::shared_ptr<void> &obj, model *m, const vec &v) {
+    if (obj) {
+        auto mem = extract_memory(obj);
+        if (mem) {
+            mem->reset();
+            auto sm = extract_object<SrcModel>(m->m_gpu);
+            auto ctx = make_model_desc(mem.get(), sm, m, v);
+            if (ctx) {
+                updateCuObject(obj, ctx);
+                return true;
+            }
+        }
+    }  else {
+        obj = makeModelDesc(m, v);
+        return bool(obj);
+    }
+    return false;
+}
 // ok
 std::shared_ptr<Memory> create_model_memory(model *m, SrcModel *sm) {
     Size sz = SIZEOF(Model) + SIZEOFARR(LigandVars, sm->nligand) + SIZEOFARR(ResidueVars, sm->nflex);
@@ -861,7 +963,7 @@ fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig,
 }
 #endif
 
-extern void run_bfgs(Model *cpum, Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx,
+extern void run_bfgs(ModelDesc *cpum, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx,
                      int max_steps, Flt average_required_improvement, Size over,
                      cudaStream_t stream);
 fl run_cuda_bfgs(const precalculate_byatom &p, const igrid &ig, change &g, conf &c,
@@ -872,9 +974,10 @@ fl run_cuda_bfgs(const precalculate_byatom &p, const igrid &ig, change &g, conf 
         // const
         auto ch = extract_cuda_object<Cache>(che.m_gpu);
         auto pa = extract_cuda_object<PrecalculateByAtom>(p.m_gpu);
-        auto md = extract_cuda_object<Model>(mobj);
-        auto cpum = extract_object<Model>(mobj);
+        auto md = extract_cuda_object<ModelDesc>(mobj);
+        auto cpum = extract_object<ModelDesc>(mobj);
         auto ctx = extract_cuda_object<BFGSCtx>(ctxobj);
+        PRINT("RUN BFGS CUDA");
         run_bfgs(cpum, md, pa, ch, ctx, max_steps, average_required_improvement, over, stream);
 
         auto cpumem = extract_memory(ctxobj);

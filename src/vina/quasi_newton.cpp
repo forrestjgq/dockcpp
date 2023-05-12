@@ -27,7 +27,7 @@
 
 
 #define CUBFGS 1
-#define VINA_CUTEST 1 // 0: cpu, 1: gpu prefer 2: gpu & cpu & compare test
+#define VINA_CUTEST 0 // 0: cpu, 1: gpu prefer 2: gpu & cpu & compare test
 struct quasi_newton_aux {
     model* m;
     const precalculate_byatom* p;
@@ -97,7 +97,7 @@ struct quasi_newton_aux {
 };
 
 void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount) { // g must have correct size
-#if 0
+#if 1
     int cnt = evalcount;
     model m1(m);
     change g1(g);
@@ -105,7 +105,9 @@ void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igri
 
     cpu(m, p, ig, out, g, v, evalcount);
     gpu(m1, p, ig, out1, g1, v, cnt);
-    // exit (0);
+    printf("last eval cnt %d\n", evalcount);
+    out.c.print();
+    exit (0);
 #else
     cpu(m, p, ig, out, g, v, evalcount);
 #endif
@@ -117,7 +119,7 @@ void quasi_newton::gpu(model& m, const precalculate_byatom& p, const igrid& ig, 
         std::cerr << "newton init not use gpu" << std::endl;
     }
     if (use_gpu) {
-        use_gpu = dock::makeModel(m_gpu, &m, v);
+        use_gpu = dock::makeModelDesc(m_gpu, &m, v);
         if (!use_gpu) {
             std::cerr << "make model not use gpu" << std::endl;
         }
@@ -142,6 +144,8 @@ void quasi_newton::gpu(model& m, const precalculate_byatom& p, const igrid& ig, 
     // printf("=========================\n");
 
     // Update model a last time after optimization
+    printf("gpu done, e: %f cnt %d\n", res, evalcount);
+    out.c.print();
     m.set(out.c);
     out.e = res;
 }
@@ -152,6 +156,8 @@ void quasi_newton::cpu(model& m, const precalculate_byatom& p, const igrid& ig, 
     // printf("=========================\n");
 
     // Update model a last time after optimization
+    printf("cpu done, e: %f cnt %d\n", res, evalcount);
+    out.c.print();
     m.set(out.c);
     out.e = res;
     // exit (0);

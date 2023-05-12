@@ -365,7 +365,7 @@ FORCE_INLINE T get_ligand_conf(SrcModel *src, T g, int idx) {
     }
     return g + offset; 
 }
-#define get_ligand_conf_torsion(g, idx) (g)[6+(idx)]
+#define get_ligand_conf_torsion(g, idx) (g)[7+(idx)]
 
 template<typename T>// T = Flt * or const Flt *
 FORCE_INLINE T get_flex_conf(SrcModel *src, T g, int idx) {

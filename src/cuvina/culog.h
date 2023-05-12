@@ -3,7 +3,7 @@
 #include <cstring>
 #include <cstdio>
 
-#define CUDEBUG 0
+#define CUDEBUG 1
 
 #if CUDEBUG
 #if USE_CUDA_VINA
