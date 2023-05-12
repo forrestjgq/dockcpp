@@ -156,7 +156,11 @@ namespace dock {
         int npairs; // include: ligands pairs, inter, other, glue pairs
         InteractingPair *pairs;
 
-        int nligand, nflex;
+        int nligand, nflex; // how many ligand and flex in model
+        int nrflts_change, nrflts_conf; // how many Flt in a change and conf
+        // in a change, how may floats for ligands and flex
+        // note that nrfligands + nligand will be Flt number of conf for ligand, and nrfflex are same for conf and change
+        int nrfligands, nrfflex; 
         Ligand *ligands;
         Residue *flex;
     } SrcModel;
@@ -170,7 +174,7 @@ namespace dock {
     typedef struct {
         SrcModel *src;
 
-        Flt vs[3];
+        Flt vs[3]; // const value used to eval der
 
         // changes at conf updating, and as input of der eval
         int ncoords;
@@ -200,8 +204,26 @@ namespace dock {
         Change g;
         Conf c;
         Flt e;
-        Flt *pair_e; // output loss
-        Flt *atom_e; // output loss
+        // Flt *pair_e; // output loss
+        // Flt *atom_e; // output loss
+        int eval_cnt; // how many model eval called in this bfgs
+
+        // tmp for bfgs
+
+        // see bfgs.h(flmat) , todo
+        // int dimh; // dim of h, its value will be SrcModel::nrflts
+        // Flt *h; // size dimh, init value 0
+        // Change g_new;
+        // Conf c_new;
+
+        // Change g_orig;
+        // Conf c_orig;
+
+        // Change p;
+        // Change y;
+
+        // int max_step;
+        // Flt *fs; // size: max_step + 1
     } BFGSCtx;
 
     

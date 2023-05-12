@@ -24,14 +24,19 @@
 #define VINA_QUASI_NEWTON_H
 
 #include "model.h"
+#include <memory>
 
 struct quasi_newton {
     unsigned max_steps;
     fl average_required_improvement;
     bool use_gpu;
+    std::shared_ptr<void> m_gpu; // for model
+    std::shared_ptr<void> m_bfgs_ctx; // for bfgs g&c
     quasi_newton() : max_steps(1000), average_required_improvement(0.0), use_gpu(false) {}
     // clean up
-    void operator()(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount) const; // g must have correct size
+    void operator()(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount); // g must have correct size
+    void cpu(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount); // g must have correct size
+    void gpu(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int &evalcount); // g must have correct size
 };
 
 #endif

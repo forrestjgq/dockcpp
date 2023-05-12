@@ -71,15 +71,17 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 
 	const fl pg = scalar_product(p, g, n);
 
+	int t = 0;
 	VINA_U_FOR(trial, max_trials) {
-		printf("trial %d\n", trial);
 		x_new = x; x_new.increment(p, alpha);
 		f1 = f(x_new, g_new);
 		evalcount++;
+		t++;
 		if(f1 - f0 < c0 * alpha * pg) // FIXME check - div by norm(p) ? no?
 			break;
 		alpha *= multiplier;
 	}
+	// printf("line search tries %d times\n", t);
 	return alpha;
 }
 

@@ -18,9 +18,13 @@ namespace dock {
     #define COULD_INLINE __forceinline__ __device__
     #define GLOBAL __global__ 
     #define CU_FOR(i, n) for (int i = threadIdx.x; i < n; i += blockDim.x)
+    #define CU_FORY(i, n) for (int i = threadIdx.y; i < n; i += blockDim.y)
     #define SYNC() __syncthreads()
     #define IS_MAIN_THREAD() (threadIdx.x == 0)
     #define IS_SUB_THREAD() (threadIdx.x == 1)
+    #define IS_2DMAIN() (threadIdx.x == 0 && threadIdx.y == 0)
+    #define IS_2DSUB() (threadIdx.x == 1 && threadIdx.y == 0)
+    #define CU_FOR2(i, n) for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < n; i += blockDim.x * blockDim.y)
     #define IS_GRID(n) (blockIdx.x == n)
     #define CEIL(x) ceil(x)
     #define SIN(x) sin(x)
@@ -30,6 +34,7 @@ namespace dock {
     #define ABS(x) abs(x)
     #define SQRT(x) sqrt(x)
     #define RSQRT(x) rsqrt(x)
+    #define reciprocal(x) __drcp_rn(x)
 #else
     #define FORCE_INLINE inline
     #define COULD_INLINE inline
@@ -47,6 +52,7 @@ namespace dock {
     #define ABS(x) std::abs(x)
     #define SQRT(x) std::sqrt(x)
     #define RSQRT(x) (1.0 / std::sqrt(x))
+    #define reciprocal(x) (1.0/x)
 #endif
 
     FORCE_INLINE void make_vec(Vec &v, Flt a, Flt b, Flt c) {
@@ -62,6 +68,9 @@ namespace dock {
     }
     FORCE_INLINE void vec_set(Vec &dst, const Vec &src) {
         dst = src;
+    }
+    FORCE_INLINE void vec_copy_to(const Vec &src, Flt *dst) {
+        dst[0] = src.x, dst[1] = src.y, dst[2] = src.z;
     }
 
     FORCE_INLINE void vec_add(const Vec &v1, const Vec &v2, Vec &out) {
@@ -123,6 +132,12 @@ namespace dock {
         dst.z *= x;
         dst.w *= x;
     }
+    FORCE_INLINE void qt_multiple(Flt *dst, Flt x) {
+        dst[0] *= x;
+        dst[1] *= x;
+        dst[2] *= x;
+        dst[3] *= x;
+    }
     FORCE_INLINE void qt_multiple(Qt &dst, const Qt &src) {
         Flt xr = src.x, yr = src.y, zr = src.z, wr = src.w;
         Flt x = dst.x, y = dst.y, z = dst.z, w = dst.w;
@@ -138,6 +153,33 @@ namespace dock {
 
     FORCE_INLINE void mat_set(Flt *mat, int i, int j, Flt v) {
         mat[i + 3 *j] = v;
+    }
+    FORCE_INLINE void qt_to_mat(const Flt *qt, Flt *mat) {
+        const Flt a = qt[0];
+        const Flt b = qt[1];
+        const Flt c = qt[2];
+        const Flt d = qt[3];
+
+        const Flt aa = a * a;
+        const Flt ab = a * b;
+        const Flt ac = a * c;
+        const Flt ad = a * d;
+        const Flt bb = b * b;
+        const Flt bc = b * c;
+        const Flt bd = b * d;
+        const Flt cc = c * c;
+        const Flt cd = c * d;
+        const Flt dd = d * d;
+
+        mat_set(mat, 0, 0, (aa + bb - cc - dd));
+        mat_set(mat, 0, 1, 2 * (-ad + bc));
+        mat_set(mat, 0, 2, 2 * (ac + bd));
+        mat_set(mat, 1, 0, 2 * (ad + bc));
+        mat_set(mat, 1, 1, (aa - bb + cc - dd));
+        mat_set(mat, 1, 2, 2 * (-ab + cd));
+        mat_set(mat, 2, 0, 2 * (-ac + bd));
+        mat_set(mat, 2, 1, 2 * (ab + cd));
+        mat_set(mat, 2, 2, (aa - bb - cc + dd));
     }
     FORCE_INLINE void qt_to_mat(const Qt &qt, Flt *mat) {
         const Flt a = qt.x;
@@ -167,30 +209,34 @@ namespace dock {
         mat_set(mat, 2, 2, (aa - bb - cc + dd));
     }
     template <typename T>
-    FORCE_INLINE T arr3d_get(struct Arr3d<T> *a, int i, int j, int k) {
+    FORCE_INLINE T arr3d_get(const struct Arr3d<T> *a, int i, int j, int k) {
         return a->data[i + a->dim[0] * (j + a->dim[1] * k)];
     }
     FORCE_INLINE Grid *cache_get_grid(Cache &c, int idx) {
         return &c.grids[idx];
     }
 
-#define FLT_EPSILON       1.19209e-07
+// #define FLT_EPSILON       1.19209e-07
 #define DBL_EPSILON       2.22045e-16
-#define FLT_MAX           3.40282e+38
-#define DBL_MAX           1.79769e+308
+#define EPSILON DBL_EPSILON
+
+#define FLOAT_MAX           3.40282e+38
+#define DOUBLE_MAX           1.79769e+308
+#define FLT_MAX DOUBLE_MAX
+
 
 #define FLT_NOT_MAX(f) ((f) < (FLT_MAX * 0.1))
 
 FORCE_INLINE void curl(Flt& e, Flt& deriv, Flt v) {
 	if(e > 0 && FLT_NOT_MAX(v)) { // FIXME authentic_v can be gotten rid of everywhere now
-		Flt tmp = (v < FLT_EPSILON) ? 0 : (v / (v + e));
+		Flt tmp = (v < DBL_EPSILON) ? 0 : (v / (v + e));
 		e *= tmp;
 		deriv *= tmp * tmp;
 	}
 }
 FORCE_INLINE void curl(Flt& e, Vec& deriv, Flt v) {
 	if(e > 0 && FLT_NOT_MAX(v)) { // FIXME authentic_v can be gotten rid of everywhere now
-		Flt tmp = (v < FLT_EPSILON) ? 0 : (v / (v + e));
+		Flt tmp = (v < DBL_EPSILON) ? 0 : (v / (v + e));
 		e *= tmp;
         tmp *= tmp;
         vec_product(deriv, tmp, deriv);
@@ -199,7 +245,7 @@ FORCE_INLINE void curl(Flt& e, Vec& deriv, Flt v) {
 
 FORCE_INLINE void curl(Flt& e, Flt v) {
 	if(e > 0 && FLT_NOT_MAX(v)) {
-		Flt tmp = (v < FLT_EPSILON) ? 0 : (v / (v + e));
+		Flt tmp = (v < DBL_EPSILON) ? 0 : (v / (v + e));
 		e *= tmp;
 	}
 }
@@ -222,6 +268,44 @@ FORCE_INLINE void normalize_angle(Flt& x) { // subtract or add enough 2*pi's to 
         }
     }
 }
+FORCE_INLINE Flt normalized_angle(Flt x) { // subtract or add enough 2*pi's to make x be in [-pi, pi]
+    normalize_angle(x);
+    return x;
+}
+FORCE_INLINE void angle_to_quaternion(const Flt *axis, Flt angle, Flt *out) { // axis is assumed to be a unit vector
+	//assert(eq(tvmet::norm2(axis), 1));
+	// assert(eq(axis.norm(), 1));
+	normalize_angle(angle); // this is probably only necessary if angles can be very big
+	Flt c = COS(angle/2);
+	Flt s = SIN(angle/2);
+    out[0] = c, out[1] = s * axis[0], out[2] = s * axis[1], out[3] = s * axis[2];
+}
+FORCE_INLINE void angle_to_quaternion(const Flt *rotation, Flt *out) {
+	//fl angle = tvmet::norm2(rotation); 
+	Flt angle = norm3d(rotation[0], rotation[1], rotation[2]); 
+	if(angle > EPSILON) {
+		//vec axis; 
+		//axis = rotation / angle;	
+        Flt r = reciprocal(angle);
+        Flt axis[3];
+        axis[0] = rotation[0] * r, axis[1] = rotation[1] * r, axis[2] = rotation[2] * r;
+        angle_to_quaternion(axis, angle, out);
+    } else {
+        out[0] = 1., out[1] = 0, out[2] = 0, out[3] = 0;
+    }
+}
+FORCE_INLINE void qt_multiple(Flt *dst, const Flt *left, const Flt *right) {
+    Flt xr = right[0], yr = right[1], zr = right[2], wr = right[3];
+    Flt x = left[0], y = left[1], z = left[2], w = left[3];
+    dst[0] = x * xr - y * yr - z * zr - w * wr, dst[1] = x * yr + y * xr + z * wr - w * zr,
+    dst[2] = x * zr - y * wr + z * xr + w * yr, dst[3] = x * wr + y * zr - z * yr + w * xr;
+}
+FORCE_INLINE void qt_multiple(Flt *dst, const Flt *src) {
+    Flt xr = src[0], yr = src[1], zr = src[2], wr = src[3];
+    Flt x = dst[0], y = dst[1], z = dst[2], w = dst[3];
+    dst[0] = x * xr - y * yr - z * zr - w * wr, dst[1] = x * yr + y * xr + z * wr - w * zr,
+    dst[2] = x * zr - y * wr + z * xr + w * yr, dst[3] = x * wr + y * zr - z * yr + w * xr;
+}
 FORCE_INLINE void angle_to_quaternion(const Vec& axis, Flt angle, Qt &out) { // axis is assumed to be a unit vector
 	//assert(eq(tvmet::norm2(axis), 1));
 	normalize_angle(angle); // this is probably only necessary if angles can be very big
@@ -241,5 +325,56 @@ FORCE_INLINE void quaternion_normalize_approx(Qt& q, const Flt tolerance = 1e-6)
         qt_multiple(q, a);
 	}
 }
+FORCE_INLINE Flt quaternion_norm_sqr(const Flt * q) { // equivalent to sqr(boost::math::abs(const qt&))
+	return SQR(q[0]) + SQR(q[1]) + SQR(q[2]) + SQR(q[3]);
+}
+FORCE_INLINE void quaternion_normalize_approx(Flt * q, const Flt tolerance = 1e-6) {
+	const Flt s = quaternion_norm_sqr(q);
+	if(ABS(s - 1) < tolerance)
+		; // most likely scenario
+	else {
+		const Flt a = RSQRT(s);
+        qt_multiple(q, a);
+	}
+}
+template<typename T>// T = Flt * or const Flt *
+FORCE_INLINE T get_ligand_change(SrcModel *src, T g, int idx) {
+    int offset = 0;
+    for (int i = 0; i < idx; i++) {
+        offset += src->ligands[i].nr_node - 1 + 6;// 3+3 for position and oritentation, rest will be torsions
+    }
+    return g + offset; 
+}
+#define get_ligand_change_torsion(g, idx) (g)[6+(idx)]
+
+template<typename T> // T = Flt * or const Flt *
+FORCE_INLINE T get_flex_change(SrcModel *src, T g, int idx) {
+    int offset = src->nrfligands;
+    for (int i = 0; i < idx; i++) {
+        offset += src->flex[i].nr_node;
+    }
+    return g + offset; 
+}
+#define get_flex_change_torsion(g, idx) (g)[idx]
+
+template<typename T>// T = Flt * or const Flt *
+FORCE_INLINE T get_ligand_conf(SrcModel *src, T g, int idx) {
+    int offset = 0;
+    for (int i = 0; i < idx; i++) {
+        offset += src->ligands[i].nr_node - 1 + 7;// 3+4 for position and oritentation, rest will be torsions
+    }
+    return g + offset; 
+}
+#define get_ligand_conf_torsion(g, idx) (g)[6+(idx)]
+
+template<typename T>// T = Flt * or const Flt *
+FORCE_INLINE T get_flex_conf(SrcModel *src, T g, int idx) {
+    int offset = src->nrfligands;
+    for (int i = 0; i < idx; i++) {
+        offset += src->flex[i].nr_node;
+    }
+    return g + offset; 
+}
+#define get_flex_conf_torsion(g, idx)  (g)[idx]
 };
 #endif

@@ -88,6 +88,7 @@ list(APPEND VINA_SRC
     ${CUVINA_DIR}/grid.cu
     ${CUVINA_DIR}/conf.cu
     ${CUVINA_DIR}/cuvina.cpp
+    ${CUVINA_DIR}/bfgs.cu
     # ${CUVINA_DIR}/vinasrv.cpp
     ${VINA_DIR}/ad4cache.cpp
     ${VINA_DIR}/cache.cpp

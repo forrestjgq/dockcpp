@@ -11,11 +11,11 @@
 // extern void dump_flv(const char *s, const flv& vv, const char *file, int line) ;
 // extern void dump_vecpv(const char *s, const std::vector<vecp>& vv, const char *file, int line) ;
 
-#define CUDBG(fmt, ...) printf("%d [%d:%d] [%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y,  __VA_ARGS__)
+#define CUDBG(fmt, ...) printf("%d [%d:%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__)
 #define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
 // #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
-#define CUVECPDUMP(hdr, vp) printf("%d [%d:%d] [%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
-    __LINE__,blockIdx.x, blockIdx.y, threadIdx.x, threadIdx.y,  \
+#define CUVECPDUMP(hdr, vp) printf("%d [%d:%d:%d] [%d:%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
+    __LINE__,blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  \
     vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z)
 // #define FLVDUMP(hdr, vv) dump_flv(hdr, vv, fileOf(__FILE__), __LINE__)
 #else

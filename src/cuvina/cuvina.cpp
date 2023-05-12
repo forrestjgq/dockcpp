@@ -191,9 +191,13 @@ void copy_vec(Vec &dst, const vec &src) {
 }
 void copy_vecs(Vec *dst, const vecv &srcs) {
     for (auto &v : srcs) {
+        VDUMP("copy vec", v);
         copy_vec(*dst, v);
         dst++;
     }
+}
+static inline void qt_set(qt &dst, const Qt &src) {
+    dst = qt(src.x, src.y, src.z, src.w);
 }
 void copy_pair(InteractingPair *dst, interacting_pair *src,Flt cutoff_sqr, int v) {
     dst->a = src->a, dst->b = src->b, dst->type_pair_index = src->type_pair_index;
@@ -404,18 +408,27 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
     sm->nflex = m->flex.size();
     ALLOC_ARR(sm->ligands, Ligand, sm->nligand);
     ALLOC_ARR(sm->flex, Residue, sm->nflex);
+    sm->nrfligands = 0;
+    sm->nrfflex = 0;
     for (int i = 0; i < sm->nligand; i++) {
         auto &ligand = sm->ligands[i];
         ligand.nr_node = htree_nodes_size(m->ligands[i]);
+        // see change::num_floats, torsion size in ligand will be nr_node -1(no torsion for rigid-body)
+        sm->nrfligands += 6 + ligand.nr_node - 1;
         ALLOC_ARR(ligand.tree, Segment, ligand.nr_node);
         htree_nodes_copy(ligand.tree, m->ligands[i]);
     }
     for (int i = 0; i < sm->nflex; i++) {
         auto &flex = sm->flex[i];
+        sm->nrfflex += flex.nr_node;
         flex.nr_node = htree_nodes_size(m->flex[i]);
         ALLOC_ARR(flex.tree, Segment, flex.nr_node);
         htree_nodes_copy(flex.tree, m->flex[i]);
     }
+    sm->nrflts_change = sm->nrfligands + sm->nrfflex;
+    // conf has qt orientation and change has vec orientation, so each ligand in conf
+    // has an extra floats
+    sm->nrflts_conf = sm->nrflts_change + sm->nligand;
     return sm;
 cleanup:
     return nullptr;
@@ -474,6 +487,7 @@ Model *make_model(Memory *mem, SrcModel *sm, model *m, const vec &v) {
 
     md->ncoords = m->coords.size();
     ALLOC_ARR(md->coords, Vec, md->ncoords);
+    PRINT("Copy model vec");
     copy_vecs(md->coords, m->coords);
     return md;
 cleanup:
@@ -493,6 +507,24 @@ std::shared_ptr<void> makeModel(model *m, const vec &v) {
         }
     }
     return nullptr;
+}
+bool makeModel(std::shared_ptr<void> &obj, model *m, const vec &v) {
+    if (obj) {
+        auto mem = extract_memory(obj);
+        if (mem) {
+            mem->reset();
+            auto sm = extract_object<SrcModel>(m->m_gpu);
+            auto ctx = make_model(mem.get(), sm, m, v);
+            if (ctx) {
+                updateCuObject(obj, ctx);
+                return true;
+            }
+        }
+    }  else {
+        obj = makeModel(m, v);
+        return bool(obj);
+    }
+    return false;
 }
 // ok
 std::shared_ptr<Memory> create_cache_memory(const cache &c) {
@@ -613,21 +645,22 @@ cleanup:
     return false;
 }
 // good
-BFGSCtx *make_bfgs(Memory *mem, const change &g, const conf &c) {
+BFGSCtx *make_bfgs(Memory *mem, const change &g, const conf &c, int evalcnt) {
     BFGSCtx *ctx;
     ALLOC(ctx, BFGSCtx);
     if (!make_change(mem, &ctx->g, g)) goto cleanup;
     if (!make_conf(mem, &ctx->c, c)) goto cleanup;
+    ctx->eval_cnt = evalcnt;
     return ctx;
 cleanup:
     return nullptr;
 }
 
 // good
-bool makeNewBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) {
+bool makeNewBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c, int evalcnt) {
     auto mem = create_bfgs_memory(g, c);
     if (mem) {
-        auto ctx = make_bfgs(mem.get(), g, c);
+        auto ctx = make_bfgs(mem.get(), g, c, evalcnt);
         if (ctx) {
             obj = makeCuObject(mem, ctx);
             return true;
@@ -635,19 +668,19 @@ bool makeNewBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) 
     }
     return true;
 }
-bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) {
+bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c, int evalcnt) {
     if (obj) {
         auto mem = extract_memory(obj);
         if (mem) {
             mem->reset();
-            auto ctx = make_bfgs(mem.get(), g, c);
+            auto ctx = make_bfgs(mem.get(), g, c, evalcnt);
             if (ctx) {
                 updateCuObject(obj, ctx);
                 return true;
             }
         }
     }  else {
-        return makeNewBFGSCtx(obj, g, c);
+        return makeNewBFGSCtx(obj, g, c, evalcnt);
     }
     return false;
 }
@@ -743,6 +776,17 @@ void output_ligand_change(ligand_change &dst, LigandChange &src) {
 void output_flex_change(residue_change &dst, ResidueChange &src) {
     memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
 }
+void output_ligand_conf(ligand_conf &dst, LigandConf &src) {
+    vec_set(dst.rigid.position, src.rigid.position);
+    qt_set(dst.rigid.orientation, src.rigid.orientation);
+    DBG("conf torsion size %lu", dst.torsions.size());
+    DBG("conf src torsion %f %f %f", src.torsions[0], src.torsions[1], src.torsions[2]);
+    memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
+    DBG("conf dst torsion %f %f %f", dst.torsions[0], dst.torsions[1], dst.torsions[2]);
+}
+void output_flex_conf(residue_conf &dst, ResidueConf &src) {
+    memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
+}
 #if USE_CUDA_VINA
 void cuda_model_set_conf(Model &cpum, Model &m, Conf &c, cudaStream_t stream);
 void cuda_cache_eval_deriv(Model *cpum, Cache *c, Model *m, cudaStream_t stream);
@@ -777,10 +821,10 @@ fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig,
     auto chg = &ctx->g;
     // output changes
     for (auto i = 0u; i < g.ligands.size(); i ++) {
-        output_ligand_change(g.ligands[0], chg->ligands[0]);
+        output_ligand_change(g.ligands[i], chg->ligands[i]);
     }
     for (auto i = 0u; i < g.flex.size(); i ++) {
-        output_flex_change(g.flex[0], chg->flex[0]);
+        output_flex_change(g.flex[i], chg->flex[i]);
     }
 
     return ctx->e;
@@ -817,8 +861,48 @@ fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig,
 }
 #endif
 
-#define MDBG(fmt, ...) printf("%s:%d " fmt "\n", __FILE__, __LINE__,  __VA_ARGS__)
-#define MPT(fmt) printf("%s:%d " fmt "\n", __FILE__, __LINE__)
+extern void run_bfgs(Model *cpum, Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx,
+                     int max_steps, Flt average_required_improvement, Size over,
+                     cudaStream_t stream);
+fl run_cuda_bfgs(const precalculate_byatom &p, const igrid &ig, change &g, conf &c,
+                 const unsigned max_steps, const fl average_required_improvement, const sz over,
+                 int &evalcount, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj) {
+    submit_vina_server([&](cudaStream_t stream) {
+        auto &che = (const cache &)ig;
+        // const
+        auto ch = extract_cuda_object<Cache>(che.m_gpu);
+        auto pa = extract_cuda_object<PrecalculateByAtom>(p.m_gpu);
+        auto md = extract_cuda_object<Model>(mobj);
+        auto cpum = extract_object<Model>(mobj);
+        auto ctx = extract_cuda_object<BFGSCtx>(ctxobj);
+        run_bfgs(cpum, md, pa, ch, ctx, max_steps, average_required_improvement, over, stream);
+
+        auto cpumem = extract_memory(ctxobj);
+        auto cudamem = extract_cuda_memory(ctxobj);
+        cudaMemcpyAsync(cpumem->ptr(), cudamem->ptr(), cpumem->size(), cudaMemcpyDeviceToHost, stream);
+        auto err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            std::cerr << "vina eval fail, err: " << cudaGetErrorString(err) << std::endl;
+        }
+    }) ;
+
+    auto cpumem = extract_memory(ctxobj);
+    cpumem->restore();
+    auto ctx = extract_object<BFGSCtx>(ctxobj);
+    auto cf = &ctx->c;
+    // output conf
+    for (auto i = 0u; i < c.ligands.size(); i ++) {
+        output_ligand_conf(c.ligands[i], cf->ligands[i]);
+    }
+    for (auto i = 0u; i < c.flex.size(); i ++) {
+        output_flex_conf(c.flex[i], cf->flex[i]);
+    }
+    evalcount = ctx->eval_cnt;
+    return ctx->e;
+}
+
+# define MDBG(fmt, ...) printf("%s:%d " fmt "\n", __FILE__, __LINE__, __VA_ARGS__)
+# define MPT(fmt)       printf("%s:%d " fmt "\n", __FILE__, __LINE__)
 static fl eps = 0.01;
 bool comp_flt(fl c1, fl c2) {
     auto diff = c1 - c2;
