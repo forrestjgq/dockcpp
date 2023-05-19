@@ -35,16 +35,17 @@ struct parallel_mc_task {
 typedef boost::ptr_vector<parallel_mc_task> parallel_mc_task_container;
 
 struct parallel_mc_aux {
-	const monte_carlo* mc;
+	monte_carlo* mc;
 	precalculate_byatom* p;
 	igrid* ig;
 	const vec* corner1;
 	const vec* corner2;
 	parallel_progress* pg;
-	parallel_mc_aux(const monte_carlo* mc_, precalculate_byatom* p_, igrid* ig_, const vec* corner1_, const vec* corner2_, parallel_progress* pg_)
-		: mc(mc_), p(p_), ig(ig_), corner1(corner1_), corner2(corner2_), pg(pg_) {}
+	int gpu_nmc;
+	parallel_mc_aux(monte_carlo* mc_, precalculate_byatom* p_, igrid* ig_, const vec* corner1_, const vec* corner2_, parallel_progress* pg_, int gpu_nmc_)
+		: mc(mc_), p(p_), ig(ig_), corner1(corner1_), corner2(corner2_), pg(pg_), gpu_nmc(gpu_nmc_) {}
 	void operator()(parallel_mc_task& t) const {
-		(*mc)(t.m, t.out, *p, *ig, *corner1, *corner2, pg, t.generator);
+		(*mc)(t.m, t.out, *p, *ig, *corner1, *corner2, pg, t.generator, gpu_nmc);
 	}
 };
 
@@ -60,19 +61,25 @@ void merge_output_containers(const parallel_mc_task_container& many, output_cont
 	out.sort();
 }
 
-void parallel_mc::enable_gpu(bool enable) {
-	use_gpu = enable;
-	mc.enable_gpu(enable);
+void parallel_mc::enable_gpu(int nmc) {
+	gpu_nmc = nmc;
 }
 
-void parallel_mc::operator()(const model& m, output_container& out, precalculate_byatom& p, igrid& ig, const vec& corner1, const vec& corner2, rng& generator, std::function<void(double)>* progress_callback) const {
-	parallel_progress pp (progress_callback);
-	parallel_mc_aux parallel_mc_aux_instance(&mc, &p, &ig, &corner1, &corner2, (display_progress ? (&pp) : NULL));
+void parallel_mc::operator()(const model& m, output_container& out, precalculate_byatom& p,
+                             igrid& ig, const vec& corner1, const vec& corner2, rng& generator,
+                             std::function<void(double)>* progress_callback) {
+    parallel_progress pp (progress_callback);
+	parallel_mc_aux parallel_mc_aux_instance(&mc, &p, &ig, &corner1, &corner2, (display_progress ? (&pp) : NULL), gpu_nmc);
 	parallel_mc_task_container task_container;
-	VINA_FOR(i, num_tasks)
+
+	sz nr_threads = num_tasks;
+	if (gpu_nmc > 0) {
+		nr_threads = (num_tasks + gpu_nmc -1) / gpu_nmc;
+	}
+	VINA_FOR(i, nr_threads)
 		task_container.push_back(new parallel_mc_task(m, random_int(0, 1000000, generator)));
 	if(display_progress) 
-		pp.init(num_tasks * mc.global_steps);
+		pp.init(nr_threads * mc.global_steps);
 	parallel_iter<parallel_mc_aux, parallel_mc_task_container, parallel_mc_task, true> parallel_iter_instance(&parallel_mc_aux_instance, num_threads);
 	parallel_iter_instance.run(task_container);
 	merge_output_containers(task_container, out, mc.min_rmsd, mc.num_saved_mins);

@@ -895,52 +895,68 @@ std::shared_ptr<Memory> create_mcin_memory(int nmc) {
     sz = (sz + 4096 -1) / 4096*4096;
     return makeMemory(sz);
 }
-MCInputs * make_inputs(Memory *mem, const conf &c, int nmc, int num_mutable_entities, int steps, rng& generator) {
-    MCInputs *ins;
-    ALLOC_ARR(ins, MCInputs, nmc);
-    for(int i = 0; i < steps; i++) {
-        ins->steps = steps;
-        auto &in = ins->in[i];
-        auto v = random_inside_sphere(generator);
-        in.rsphere.x = v.data[0], in.rsphere.y = v.data[1], in.rsphere.z = v.data[2]; 
-        in.rpi = random_fl(-pi,pi, generator);
-        in.groups[0] = -1;
+MCInputs * make_inputs(Memory *mem, const conf &c, int nmc, int num_mutable_entities, int steps, std::vector<std::shared_ptr<rng>> & generators) {
+    MCInputs *ret;
+    ALLOC_ARR(ret, MCInputs, nmc);
+    for (auto idx = 0; idx < nmc; idx++) {
+        auto &generator = *(generators[idx]);
+        auto ins = ret + idx;
+        for (int i = 0; i < steps; i++) {
+            ins->steps   = steps;
+            auto &in     = ins->in[i];
+            auto v       = random_inside_sphere(generator);
+            in.rsphere.x = v.data[0], in.rsphere.y = v.data[1], in.rsphere.z = v.data[2];
+            in.rpi       = random_fl(-pi, pi, generator);
+            in.groups[0] = -1;
 
-        int which_int = random_int(0, num_mutable_entities, generator);
-        sz which = sz(which_int);
-        VINA_FOR_IN(i, c.ligands) {
-            if(which == 0) { in.groups[0] = 0, in.groups[1] = i; break; }
-            --which;
-            if(which == 0) { in.groups[0] = 1, in.groups[1] = i; break; }
-            --which;
-            if(which < c.ligands[i].torsions.size()) {in.groups[0] = 2, in.groups[1] = i, in.groups[2] = which; break;}
-            which -= c.ligands[i].torsions.size();
-        }
-        VINA_FOR_IN(i, c.flex) {
-            if(which < c.flex[i].torsions.size()) {in.groups[0] = 3, in.groups[1] = i, in.groups[2] = which; break;}
-            which -= c.flex[i].torsions.size();
+            int which_int = random_int(0, num_mutable_entities, generator);
+            sz which      = sz(which_int);
+            VINA_FOR_IN(i, c.ligands) {
+                if (which == 0) {
+                    in.groups[0] = 0, in.groups[1] = i;
+                    break;
+                }
+                --which;
+                if (which == 0) {
+                    in.groups[0] = 1, in.groups[1] = i;
+                    break;
+                }
+                --which;
+                if (which < c.ligands[i].torsions.size()) {
+                    in.groups[0] = 2, in.groups[1] = i, in.groups[2] = which;
+                    break;
+                }
+                which -= c.ligands[i].torsions.size();
+            }
+            VINA_FOR_IN(i, c.flex) {
+                if (which < c.flex[i].torsions.size()) {
+                    in.groups[0] = 3, in.groups[1] = i, in.groups[2] = which;
+                    break;
+                }
+                which -= c.flex[i].torsions.size();
+            }
         }
     }
-    return ins;
+    return ret;
 cleanup:
     return nullptr;
 }
-std::shared_ptr<void> makeMCInputs(const model &m, int nmc,int num_mutable_entities, int steps, rng &generator, conf &c) {
+std::shared_ptr<void> makeMCInputs(const model &m, int nmc,int num_mutable_entities, int steps, rngs &generators, conf &c) {
     auto mem = create_mcin_memory(nmc);
     if (mem) {
-        auto ctx = make_inputs(mem.get(), c, nmc, num_mutable_entities, steps, generator);
+        auto ctx = make_inputs(mem.get(), c, nmc, num_mutable_entities, steps, generators);
         if (ctx) {
             return makeCuObject(mem, ctx);
         }
     }
     return nullptr;
 }
-bool makeMCInputs(std::shared_ptr<void> &obj, const model &m, int nmc,int num_mutable_entities, int steps, rng &generator, conf &c) {
+bool makeMCInputs(std::shared_ptr<void> &obj, const model &m, int nmc,int num_mutable_entities, int steps, rngs &generators, conf &c) {
     if (obj) {
         auto mem = extract_memory(obj);
         if (mem) {
             mem->reset();
-            auto ins = make_inputs(mem.get(), c, nmc, num_mutable_entities, steps, generator);
+            auto ins = make_inputs(mem.get(), c, nmc, num_mutable_entities, steps, generators);
             if (ins) {
                 updateCuObject(obj, ins);
                 return true;
@@ -948,7 +964,7 @@ bool makeMCInputs(std::shared_ptr<void> &obj, const model &m, int nmc,int num_mu
         }
         return false;
     } else {
-        obj = makeMCInputs(m, nmc, num_mutable_entities, steps, generator, c);
+        obj = makeMCInputs(m, nmc, num_mutable_entities, steps, generators, c);
         return bool(obj);
     }
 }
@@ -988,7 +1004,7 @@ std::shared_ptr<void> makeMCOutputs(const model &m, SrcModel *sm, ModelDesc *md,
 
 bool makeMC(std::shared_ptr<void> &pmd, std::shared_ptr<void> &pctx, std::shared_ptr<void> &pin,
             std::shared_ptr<void> &pout, model &m, int num_mutable_entities, int steps, int nmc,
-            rng &generator, conf &c, sz over, fl average_required_improvement, int local_steps,
+            rngs &generators, conf &c, sz over, fl average_required_improvement, int local_steps,
             int max_evalcnt, const vec &v1, const vec &v2, fl amplitude, fl temperature, 
             std::function<void (int i, fl *c)> init) {
 
@@ -1024,7 +1040,7 @@ bool makeMC(std::shared_ptr<void> &pmd, std::shared_ptr<void> &pctx, std::shared
             goto cleanup;
         }
     }
-    if(!makeMCInputs(pin, m, nmc, num_mutable_entities, steps, generator, c)) {
+    if(!makeMCInputs(pin, m, nmc, num_mutable_entities, steps, generators, c)) {
         goto cleanup;
     }
 

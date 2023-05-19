@@ -35,32 +35,17 @@ struct monte_carlo {
 	fl min_rmsd;
 	sz num_saved_mins;
 	fl mutation_amplitude;
-    bool use_gpu;
 	unsigned local_steps;
 
-    std::shared_ptr<void> m_gpu_model_desc;
-    std::shared_ptr<void> m_gpu_mc_ctx;
-    std::shared_ptr<void> m_gpu_mc_inputs;
-    std::shared_ptr<void> m_gpu_mc_outputs;
-
-    std::vector<output_container> containers;
-    std::vector<std::shared_ptr<rng>> generators;
-    int gpu_steps = 50;
-
     // T = 600K, R = 2cal/(K*mol) -> temperature = RT = 1.2;  global_steps = 50*lig_atoms = 2500
-    monte_carlo() : max_evals(0), global_steps(2500), temperature(1.2), hunt_cap(10, 1.5, 10), min_rmsd(0.5), num_saved_mins(50), mutation_amplitude(2), use_gpu(false) {}
+    monte_carlo() : max_evals(0), global_steps(2500), temperature(1.2), hunt_cap(10, 1.5, 10), min_rmsd(0.5), num_saved_mins(50), mutation_amplitude(2) {}
 
-    void enable_gpu(bool enable);
-    bool prepare_gpu(model& m, precalculate_byatom& p,const igrid& ig, const vec& corner1, const vec& corner2,
-                     incrementable* increment_me, rng& generator, int nmc);
     output_type operator()(model& m, precalculate_byatom& p, const igrid& ig, const vec& corner1,
-                           const vec& corner2, incrementable* increment_me, rng& generator) const;
+                           const vec& corner2, incrementable* increment_me, rng& generator, int gpu_nmc = 0) const;
 	// out is sorted
 	void operator()(model& m, output_container& out, precalculate_byatom& p, const igrid& ig,
-                    const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const;
+                    const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator, int gpu_nmc = 0) const;
 	void cpu(model& m, output_container& out, precalculate_byatom& p, const igrid& ig,
-                    const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const;
-	bool gpu(model& m, output_container& out, precalculate_byatom& p, const igrid& ig,
                     const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const;
 };
 

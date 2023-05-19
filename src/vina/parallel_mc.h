@@ -30,10 +30,12 @@ struct parallel_mc {
 	sz num_tasks;
 	sz num_threads;
 	bool display_progress;
-    bool use_gpu;
-	parallel_mc() : num_tasks(8), num_threads(1), display_progress(true), use_gpu(false) {}
-    void enable_gpu(bool enable);
-	void operator()(const model& m, output_container& out, precalculate_byatom& p, igrid& ig, const vec& corner1, const vec& corner2, rng& generator, std::function<void(double)>* progress_callback) const;
+    int gpu_nmc;
+	parallel_mc() : num_tasks(8), num_threads(1), display_progress(true), gpu_nmc(0) {}
+    void enable_gpu(int nmc);
+    void operator()(const model& m, output_container& out, precalculate_byatom& p, igrid& ig,
+                    const vec& corner1, const vec& corner2, rng& generator,
+                    std::function<void(double)>* progress_callback);
 };
 
 #endif
