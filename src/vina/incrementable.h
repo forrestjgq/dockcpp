@@ -25,6 +25,7 @@
 
 struct incrementable {
 	virtual void operator++() = 0;
+    virtual void increase( unsigned long increment) = 0;
 };
 
 #endif

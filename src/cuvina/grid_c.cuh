@@ -136,23 +136,24 @@ FORCE_INLINE Flt grid_eval(const Grid *g, const Vec &location, Flt slope, Flt v,
 
 // oute must has model movable_atoms size
 // depends on model coords
-__device__ void c_cache_eval_deriv(const Cache *c, ModelDesc *m, Flt *md) {
-	SrcModel *src = m->src;
+__device__ void c_cache_eval_deriv(const Cache *c, const ModelDesc *m, Flt *md, const Flt *vs) {
+	auto src = m->src;
 	CU_FOR2(i, src->movable_atoms) {
 		Vec deriv;
 		make_vec(deriv, 0, 0, 0);
 		Flt e = 0;
 		Size t = src->xs_sizes[i];
-		CUDBG("cache %d t %lu ncoords %d", i, t, m->ncoords);
+		// NNCUDBG("cache %d t %lu ncoords %d md %p mforce offset %d", i, t, m->ncoords, md, m->minus_forces);
 		if (t < c->ngrids) {
 			auto *g = &c->grids[t];
 			auto coord = model_coords(src, m, md, i);
-			e = grid_eval(g, *coord, c->m_slope, m->vs[1], &deriv);
+			e = grid_eval(g, *coord, c->m_slope, vs[1], &deriv);
 		}
 		auto minus_forces = model_minus_forces(src, m, md, i);
-		vec_set(*minus_forces, deriv);
+		vec_set(*minus_forces, deriv);//i = 0, t = 1
 		auto me = model_movable_e(src, m, md, i);
 		*me = e;
+		CUDBG("cme %d t %lu %f %p e %f\n", i, t, *me, me, e);
 		CUDBG("cache %d eval e %f", i, e);
 		CUVDUMP("force deriv", deriv);
 		

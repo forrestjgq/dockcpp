@@ -1,4 +1,4 @@
-
+#include <assert.h>
 #include "vinautil.h"
 #include "stdio.h"
 #include <cstring>
@@ -10,6 +10,15 @@
 #include <cmath>
 #include "model_desc.cuh"
 
+#define MAX_TRIALS 8
+#define DIMX 8
+#define DIMY 4
+
+#if EVAL_IN_WARP
+#if DIMX * DIMY != 32
+#error to eval model der in a single warp, block dim x * y must be 32 to avoid sync
+#endif
+#endif
 namespace dock {
 struct threadids {
     int tid, blksz;
@@ -23,6 +32,54 @@ struct threadids {
 #define copy_change(dst, src) copy_array<Flt>(dst, src, ng, tids)
 #define copy_conf(dst, src) copy_array<Flt>(dst, src, nc, tids)
 
+__device__ void printc(SrcModel *sm, const Flt *c) {
+    for (int i = 0; i < sm->nligand; i++) {
+        printf("(%f %f %f) (%f %f %f %f)[", c[0], c[1], c[2], c[3], c[4], c[5], c[6]);
+        for (int j = 0; j < sm->ligands[i].nr_node-1; j++) {
+            if (j > 0) {
+                printf(" ");
+            }
+            printf("%f", c[7+j]);
+        }
+        printf("]\n");
+        c += 7 + sm->ligands[i].nr_node-1;
+    }
+    for (int i = 0; i < sm->nflex; i++) {
+        printf("[");
+        for (int j = 0; j < sm->flex[i].nr_node; j++) {
+            if (j > 0) {
+                printf(" ");
+            }
+            printf("%f", c[j]);
+        }
+        printf("]\n");
+        c += sm->flex[i].nr_node;
+    }
+}
+__device__ void printg(SrcModel *sm, const Flt *c) {
+    for (int i = 0; i < sm->nligand; i++) {
+        printf("(%f %f %f) (%f %f %f)[", c[0], c[1], c[2], c[3], c[4], c[5]);
+        for (int j = 0; j < sm->ligands[i].nr_node-1; j++) {
+            if (j > 0) {
+                printf(" ");
+            }
+            printf("%f", c[6+j]);
+        }
+        printf("]\n");
+        c += 6 + sm->ligands[i].nr_node-1;
+    }
+    for (int i = 0; i < sm->nflex; i++) {
+        printf("[");
+        for (int j = 0; j < sm->flex[i].nr_node; j++) {
+            if (j > 0) {
+                printf(" ");
+            }
+            printf("%f", c[j]); 
+        }
+        printf("]\n");
+        c += sm->flex[i].nr_node;
+    }
+}
 
 // todo: do we need these? if we need, use threadIdx correctly
 template <typename Ligand> // T = LigandChange, or LigandConf
@@ -64,7 +121,7 @@ FORCE_INLINE void copy_change_conf(SrcModel *sm, T * dst, const T *src) {
 #define FOR_TID(i, sz) for(int i = tids.tid; i < sz; i += tids.blksz)
 
 FORCE_INLINE void convert_conf(SrcModel *sm, Conf * dst, const Flt *src) {
-    if (threadIdx.z == 0) {
+    if (Z0) {
         CU_FORY(idx, sm->nligand) {
             LigandConf *ligand = &dst->ligands[idx];
             auto p = get_ligand_conf(sm, src, idx);
@@ -101,10 +158,10 @@ FORCE_INLINE void read_conf(SrcModel *sm, const Conf * dst, Flt *src) {
                     p[4] = ligand->rigid.orientation.y;
                     p[5] = ligand->rigid.orientation.z;
                     p[6] = ligand->rigid.orientation.w;
-                    printf("conf %f %f %f %f %f %f %f\n", p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
+                    // printf("conf %f %f %f %f %f %f %f\n", p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
                 }
                 p[i+7] = ligand->torsions[i];
-                printf("ct %d: %f\n", i, ligand->torsions[i]);
+                // printf("ct %d: %f\n", i, ligand->torsions[i]);
             }
         }
 
@@ -116,6 +173,12 @@ FORCE_INLINE void read_conf(SrcModel *sm, const Conf * dst, Flt *src) {
                  p[i] = flex->torsions[i];
             }
         }
+    }
+}
+template<typename T>
+FORCE_INLINE void copy_array2d(T * dst, const T *src, int sz) {
+    CU_FOR2(idx, sz) {
+        dst[idx] = src[idx];
     }
 }
 
@@ -148,7 +211,7 @@ FORCE_INLINE void init_triangle_mat(Flt *v, int ng) {
     if (Z0) {
         for (int y = threadIdx.y; y < ng; y += blockDim.y) {
             int w = y + 1;  // w elements in line y
-            int offset = ((y + 1) * (y + 2)) >> 1; // where this line starts
+            int offset = (y * (y + 1)) >> 1; // where this line starts
             for (int x = threadIdx.x; x < w; x += blockDim.x) {
                 v[offset + x] = x == y ? 1.0 : 0.;
             }
@@ -156,10 +219,10 @@ FORCE_INLINE void init_triangle_mat(Flt *v, int ng) {
     }
 }
 FORCE_INLINE int triangular_matrix_index(int ng, int i, int j) {
-	return i + j*(j+1)/2; 
+	return i + ((j*(j+1)) >> 1); 
 }
 FORCE_INLINE int triangular_matrix_index_permissive(int ng, int i, int j) {
-	return (i <= j) ? triangular_matrix_index(ng, i, j)
+	return (i < j) ? triangular_matrix_index(ng, i, j)
 		            : triangular_matrix_index(ng, j, i);
 }
 FORCE_INLINE Flt get_change_value(const SrcModel *sm, const Change *c, int idx) {
@@ -233,33 +296,31 @@ FORCE_INLINE void set_change_value(const SrcModel *sm, const Change *c, int idx,
 //     }
 
 // }
-// tmp: size requirement blockDim.x * blockDim.y
-// todo:
-FORCE_INLINE void minus_mat_vec_product(const Flt* h, const	Flt * in, Flt* out, Flt *tmp, int ng, const threadids &tids) {
+// tmp: size requirement ng * ng
+// out: ng flts
+FORCE_INLINE void minus_mat_vec_product(const Flt* h, const	Flt * in, Flt* out, Flt *tmp, int ng) {
     // use blockDim.x * blockDim.y for sums
     Flt *sums = tmp; // [rows: blockDim.y, cols: blockDim.x]
-    FOR_TID(idx, blockDim.x * blockDim.y) {
-        sums[idx] = 0;
-    }
     if (Z0) {
         for (int i = threadIdx.y; i < ng; i += blockDim.y) {
-            Flt *sum = sums + i * blockDim.x;
+            // row i
+            Flt *sum = sums + i * ng;
             for (int j = threadIdx.x; j < ng; j += blockDim.x) {
-                sum[threadIdx.x] += h[triangular_matrix_index_permissive(ng, i, j)] * in[j];
+                // row i col j
+                CUDBG("mmvps %d %d: h[%d] %f * %f", i, j,triangular_matrix_index_permissive(ng, i, j) , h[triangular_matrix_index_permissive(ng, i, j)], in[j]);
+                sum[j] = h[triangular_matrix_index_permissive(ng, i, j)] * in[j];
             }
         }
-    }
-    SYNC();
-    if (X0 && Z0) {
-        for (int i = threadIdx.y; i < ng; i += blockDim.y) {
-            Flt *sum = sums + i * blockDim.x;
-            for (int j =1; j < blockDim.x; j++) {
-                sum[0] += sum[j];
+        // sum up each line
+        CU_FOR2(row, ng) {
+            auto sum = sums + row * ng;
+            for (int i = 1; i < ng; i++) {
+                sum[0] += sum[i];
             }
-            out[i] = -sum[0];
+            CUDBG("minus_mat_vec_product sum %d: %f", row, sum[0]);
+            out[row] = -sum[0];
         }
     }
-
 }
 // calc sqrt(sum(v[x]^2)) and set to v[0], v will be corrupted
 FORCE_INLINE void sqrt_product_array(Flt *v, int n, const threadids &tids) {
@@ -276,8 +337,8 @@ FORCE_INLINE void sqrt_product_array(Flt *v, int n, const threadids &tids) {
         v[0] = sqrt(sum);
     }
 }
-// calc sqrt(sum(v[x]^2)) and set to tmp[0], tmp should has same siz of v, which is n
-FORCE_INLINE void scalar_product_array(const Flt *v, Flt *tmp, int n, const threadids &tids) {
+// calc sum(v[x]^2) and set to out, tmp should has same siz of v, which is n
+FORCE_INLINE void scalar_product_array(const Flt *v, Flt *tmp, Flt *out,int n, const threadids &tids) {
     FOR_TID(idx, n) {
         Flt item = v[idx];
         tmp[idx] = item * item;
@@ -288,12 +349,12 @@ FORCE_INLINE void scalar_product_array(const Flt *v, Flt *tmp, int n, const thre
         for (int i = 0; i < n; i++) {
             sum += tmp[i];
         }
-        tmp[0] = sqrt(sum);
+        *out = sum;
     }
 }
-// calc sqrt(sum(v[x]^2)) and set to tmp[0], tmp should has same siz of v
-// tmp should have size of n
-FORCE_INLINE void scalar_product_array(const Flt *v1, const Flt *v2,  Flt *tmp, int n, const threadids &tids) {
+// calc sum(v1[x] * v2[x]) for x in [0,n-1] and set to out, tmp should has same siz of v1 and v1, which is n
+// out requires n, tmp requires n
+FORCE_INLINE void scalar_product_array(const Flt *v1, const Flt *v2, Flt *out,  Flt *tmp, int n, const threadids &tids) {
     FOR_TID(idx, n) {
         tmp[idx] = v1[idx] * v2[idx];
     }
@@ -303,14 +364,14 @@ FORCE_INLINE void scalar_product_array(const Flt *v1, const Flt *v2,  Flt *tmp, 
         for (int i = 0; i < n; i++) {
             sum += tmp[i];
         }
-        tmp[0] = sqrt(sum);
+        *out = sum;
     }
 }
 FORCE_INLINE void set_diagonal(Flt *h, Flt v, int ng, const threadids &tids) {
     // x for index in line
     // y index of line
     FOR_TID(i, ng) {
-        int idx = (i * (i+1)) << 1 - 1;
+        int idx = triangular_matrix_index(ng, i, i);
         h[idx] = v;
     }
 }
@@ -333,49 +394,66 @@ FORCE_INLINE void set_diagonal(Flt *h, Flt v, int ng) {
 }
 #endif
 
-// todo
-
-
 // cf: input conf, read only
 // cg: output change, write only
 // e: output loss
-FORCE_INLINE void model_eval_deriv(ModelDesc *m, const PrecalculateByAtom *p, const Cache *c, const Flt *cf, Flt *cg, Flt *e, Flt *md) {
+// m: model description, used for parsing md
+// md: model variable data, will be updated
+FORCE_INLINE void model_eval_deriv(ModelDesc *m, const PrecalculateByAtom *p, const Cache *c, const Flt *cf, Flt *cg, Flt *e, Flt *md, const Flt *vs) {
     // sed model::set, update conf
     model_set_conf_ligand_c(m, cf, md);
     model_set_conf_flex_c(m, cf, md);
-    SYNC();
+    WARPSYNC();
 
-    c_cache_eval_deriv(c, m, md);
-    SYNC();
+    c_cache_eval_deriv(c, m, md, vs);
+    WARPSYNC();
+
     // depends on c_cache_eval_deriv
-    c_model_eval_deriv_pairs(m, p, md);
-    SYNC();
+    c_model_eval_deriv_pairs(m, p, md, vs);
+    WARPSYNC();
 
     c_model_collect_deriv(m, e, md);
-    SYNC();
+    WARPSYNC();
 
     c_model_eval_deriv_ligand_sum_ft(m, md);
     c_model_eval_deriv_flex_sum_ft(m, md);
-    SYNC();
+    WARPSYNC();
 
     c_model_eval_deriv_ligand(m, cg, md);
     c_model_eval_deriv_flex(m, cg, md);
-
 }
 
-// require max(blockDim.x*blockDim.y, ng)
-FORCE_INLINE void bfgs_update(Flt *h, const Flt *p, const Flt *y, Flt *hy, Flt *tmp, Flt alpha, int ng, const threadids &tids) {
-    scalar_product_array(y, p, tmp, ng, tids);
+// require ng * ng + ng+ 4
+FORCE_INLINE void bfgs_update(Flt *h, const Flt *p, const Flt *y, Flt *tmp, Flt alpha, int ng, const threadids &tids) {
+    Flt *yp, *beta, *r, *yhy, *hy;
+    int offset = 0;
+    yp = tmp + offset, offset++;
+    beta = tmp + offset, offset++;
+    r = tmp + offset, offset++;
+    yhy = tmp + offset, offset++;
+    hy = tmp + offset, offset += ng;
+    tmp += offset;
+    scalar_product_array(y, p, yp, tmp, ng, tids);
+    if (INMAIN()) {
+        *beta = alpha * (*yp);
+        *r = reciprocal(*beta);
+        CUDBG("yp %f r %f", *yp, *r);
+    }
     SYNC();
-    Flt yp = tmp[0];
-    Flt beta = alpha * yp;
-    if (beta >= EPSILON) {
-        minus_mat_vec_product(h, y, hy, tmp, ng, tids);
+    if (*beta >= EPSILON) {
+        minus_mat_vec_product(h, y, hy, tmp, ng); // require ng * ng
         SYNC();
-        scalar_product_array(y, hy, tmp, ng, tids);
+        scalar_product_array(y, hy, yhy, tmp, ng, tids); // require ng
+        if(INMAIN()) {
+            Flt tyhy = *yhy, tr = *r;
+            tyhy = -tyhy;
+            CUDBG("yhy %f", tyhy, tr);
+            // alpha * alpha * (r*r * yhy  + r) * p(i) * p(j)
+            *yhy = alpha * alpha * (tr * tr * tyhy + tr);
+            // alpha * r |* (minus_hy(i) * p(j)|
+            *r = tr * alpha;
+        }
         SYNC();
-        Flt yhy = -tmp[0];
-        Flt r = reciprocal(beta);
         if (Z0) {
             for (int i = threadIdx.y; i < ng; i += blockDim.y) {
                 // for (j = i; j < ng; j++)
@@ -396,8 +474,10 @@ FORCE_INLINE void bfgs_update(Flt *h, const Flt *p, const Flt *y, Flt *hy, Flt *
                 for (int k = threadIdx.x; k < ng - i; k += blockDim.x) {
                     int j = k + i; // note that j >= i && j < ng 
                     int idx = triangular_matrix_index(ng, i, j);
-                    h[idx] += alpha * r * hy[i] * p[j] + hy[j] * p[i]
-                                + alpha * alpha * (r * r * yhy + r) * p[i] * p[j];
+                    CUDBG("bfgs before update [%d,%d]:h: %f", i, j, h[idx]);
+                    h[idx] += (*r) * (hy[i] * p[j] + hy[j] * p[i]) + (*yhy) * p[i] * p[j];
+
+                    CUDBG("bfgs update [%d,%d]: p %f %f hy %f %f h: %f", i, j, p[i], p[j], hy[i], hy[j], h[idx]);
                 }
                 #endif
             }
@@ -419,9 +499,13 @@ FORCE_INLINE void quaternion_increment(Flt *out, const Flt * q, const Flt * rota
 FORCE_INLINE void ligand_conf_increament(const Flt *g, const Flt *c, Flt *out, int ntorsion, Flt alpha) {
     // rigid conf increament
     out[0] = c[0] + alpha * g[0], out[1] = c[1] + alpha * g[1], out[2] = c[2]+ alpha * g[2]; // set position
+    CUDBG("ligand ci torsion %d alpha %f", ntorsion, alpha);
+    CUDBG("position g %f %f %f, c %f %f %f", g[0], g[1], g[2], out[0], out[1], out[2]);
     Flt rot[3];
     rot[0] = alpha * g[3], rot[1] = alpha * g[4], rot[2] = alpha * g[5];
+    CUDBG("rotation g: %f %f %f, r %f %f %f", g[3], g[4], g[5], rot[0], rot[1], rot[2]);
     quaternion_increment(out+3, c+3, rot); // set orientation
+    CUDBG("orientation c: %f %f %f %f", out[3], out[4], out[5], out[6]);
 
     // torsions increament
     const Flt *gt = g + 6;
@@ -443,148 +527,165 @@ FORCE_INLINE void flex_conf_increament(const Flt *g, const Flt *c, Flt *out, int
 FORCE_INLINE void conf_increament(SrcModel *sm, const Flt *g, const Flt *c, Flt *out, Flt alpha) {
     int tid = threadIdx.x + threadIdx.y * blockDim.x;
     int bsz = blockDim.x * blockDim.y;
-    if (tid < 32) {
-        for (int dx = tid; dx < sm->nligand; dx += bsz) {
-            int ntorsion  = sm->ligands[dx].nr_node - 1;
-            const Flt *lc = get_ligand_conf(sm, c, dx);
-            Flt *outc     = get_ligand_conf(sm, out, dx);
-            const Flt *lg = get_ligand_change(sm, g, dx);
-            ligand_conf_increament(lg, lc, outc, ntorsion, alpha);
-            if (dx < sm->nligand) {
-            } else {
-                int idx       = dx - sm->nligand;  // index of flex
-                int ntorsion  = sm->flex[idx].nr_node - 1;
-                const Flt *lc = get_flex_conf(sm, c, idx);
-                Flt *outc     = get_flex_conf(sm, out, idx);
-                const Flt *lg = get_flex_change(sm, g, idx);
-                flex_conf_increament(lg, lc, outc, ntorsion, alpha);
-            }
-        }
-    } else if (tid < 64) {
-        for (int dx = tid; dx < sm->nflex; dx += bsz) {
-            int ntorsion  = sm->flex[dx].nr_node - 1;
-            const Flt *lc = get_flex_conf(sm, c, dx);
-            Flt *outc     = get_flex_conf(sm, out, dx);
-            const Flt *lg = get_flex_change(sm, g, dx);
-            flex_conf_increament(lg, lc, outc, ntorsion, alpha);
-            
-        }
+    for (int dx = tid; dx < sm->nligand; dx += bsz) {
+        int ntorsion  = sm->ligands[dx].nr_node - 1;
+        const Flt *lc = get_ligand_conf(sm, c, dx);
+        Flt *outc     = get_ligand_conf(sm, out, dx);
+        const Flt *lg = get_ligand_change(sm, g, dx);
+        ligand_conf_increament(lg, lc, outc, ntorsion, alpha);
+    }
+    for (int dx = tid; dx < sm->nflex; dx += bsz) {
+        int ntorsion  = sm->flex[dx].nr_node - 1;
+        const Flt *lc = get_flex_conf(sm, c, dx);
+        Flt *outc     = get_flex_conf(sm, out, dx);
+        const Flt *lg = get_flex_change(sm, g, dx);
+        flex_conf_increament(lg, lc, outc, ntorsion, alpha);
+        
     }
 }
 // since warp is 32, make it 16 is much better
-#define MAX_TRIALS 8
 extern int bfgs_max_trials() {
     return MAX_TRIALS;
 }
-__device__ Flt multipliers[MAX_TRIALS] = { 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125/*, 0.00390625, 0.001953125 */};
+__device__ Flt multipliers[]
+    =  //{ 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625, 0.0078125, 0.00390625, 0.001953125,
+       //0.0625, 0.03125, 0.015625, 0.0078125, 0.00390625, 0.001953125};
+    {
+        1.0,
+        0.5,
+        0.25,
+        0.125,
+        0.0625,
+        0.03125,
+        0.015625,
+        0.0078125,
+        0.00390625,
+        0.001953125,
+        0.0009765625,
+        0.00048828125,
+        0.000244140625,
+        0.0001220703125,
+        6.103515625e-05,
+        3.0517578125e-05,
+        1.52587890625e-05,
+        7.62939453125e-06,
+        3.814697265625e-06,
+        1.9073486328125e-06
+    };
 
 // ng, nc: size of Flt for a change and conf
-// tmp: require MAX_TRIALS * (nc+ng+1) Flts
+// tmp: require MAX_TRIALS * (nc+ng+1) Flts + 2
 // outc: write only, output conf
 // outg: write only, output change
+// tmp layout:
+// | pg(1) | es(MAX_TRIALS) | tc0(nc) tg0(ng) | tc1(nc) tg1(ng) | ... | tc-MAX_TRIALS(nc) tg-MAX_TRIALS(ng)|
+// output: outc, outg, out_alpha,
+// evalcnt will be added to steps count used
 __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt f0, Flt &f1,
-                const Flt *c, const Flt *g,Flt *p, Flt *tmp, Flt *outc, Flt *outg, int ng, int nc, int &evalcnt, Flt &out_alpha, const threadids &tids, Flt *md) {
+                const Flt *c, const Flt *g, const Flt *p, Flt *tmp, Flt *outc, Flt *outg, int ng, int nc, int &evalcnt, Flt &out_alpha, const threadids &tids, Flt *md, const Flt *vs) {
     const Flt c0 = 0.0001;
-    scalar_product_array(p, g, tmp, ng, TIDS); // tmp require n
+    Flt *pg = tmp;
+    tmp++;
+    Flt *active_md = md + m->active *m->szflt;
+
+    scalar_product_array(p, g, pg, tmp, ng, TIDS); // tmp require ng
     SYNC();
-    Flt pg = tmp[0];
+    if(INMAIN()) {
+        CUDBG("pg: %f", *pg);
+    }
 
     Flt *es = tmp;
     tmp += MAX_TRIALS;
-    // todo: copy md
-    for (int dz = threadIdx.z; dz < MAX_TRIALS; dz += blockDim.z) {
-        Flt alpha = multipliers[dz];
+    for (int dz = threadIdx.z; dz < MAX_TRIALS; dz += blockDim.z) 
+    {
         Flt *tc = tmp + (nc+ng) * dz; // c_new
         Flt *tg = tc + nc; // g_new
         Flt *e = &es[dz];
         Flt *mdz = md + dz * m->szflt;
 
-        conf_increament(m->src, p, c, tc, alpha);
-        SYNC();
-        model_eval_deriv(m, pa, ch, tc, tg, e, mdz);
-        SYNC();
-        if (threadIdx.x == 0 && threadIdx.y == 0) {
-            CUDBG("line search %d der e %f", dz, *e);
+        if (dz != m->active) {
+            copy_array2d<Flt>(mdz, active_md, m->szflt);
         }
+        Flt alpha = multipliers[dz];
+        conf_increament(m->src, p, c, tc, alpha);
+#if 0
+        if (threadIdx.x == 0 && threadIdx.y == 0) {
+            printf("gpu before conf inc at %d\n", dz);
+            printc(m->src, c);
+            printf("gpu before conf inc at %d\n", dz);
+            printc(m->src, tc);
+        }
+#endif
+        // copy_array2d<Flt>(tc, c, nc);
+        WARPSYNC();
+        model_eval_deriv(m, pa, ch, tc, tg, e, mdz, vs);
+        WARPSYNC();
+        if(threadIdx.x == 0 && threadIdx.y == 0) printf("line search end %d der e %f\n", dz, *e);
     }
+    SYNC();
 
-    int best      = -1;
     if (INMAIN()) {
+        m->active = -1;
         // find min(f1) for (f1 - f0 < threshold)
         for (int dy = 0; dy < MAX_TRIALS; dy++) {
             Flt alpha = multipliers[dy];
-            Flt threshold = c0 * alpha * pg;
+            Flt threshold = c0 * alpha * (*pg);
+            printf("gpu lsm %d alpha %f f1 %f f0 %f threashold %f\n", dy, alpha, es[dy], f0, threshold);
+#if 1
+            // find first satisfied f1
             if (es[dy] - f0 < threshold) {
-                if (best == -1 || es[dy] < f1) {
-                    best = dy, f1 = es[dy];
+                m->active = dy, f1 = es[dy];
+                break;
+            }
+#else
+            // find min(f1)
+            if (es[dy] - f0 < threshold) {
+                if (m->active == -1 || es[dy] < f0) {
+                    m->active = dy, f1 = es[dy];
                 }
             }
+#endif
         }
 
-        if (best == -1) {
-            best = MAX_TRIALS - 1;
-            f1   = es[best];
+        if (m->active == -1) {
+            m->active = MAX_TRIALS - 1;
+            f1   = es[m->active];
+            // note that in cpu bfgs, if no satisfied f1 is found, alpha still will be multiplied by 0.5 and return,
+            // so we should also do that
+            out_alpha = multipliers[m->active] * 0.5;
+        } else {
+            out_alpha = multipliers[m->active];
+
         }
-        evalcnt += best+1;
-        out_alpha = multipliers[best];
+        evalcnt += m->active+1;
+        printf("gpu line search tries %d times, alpha %f f1 %f\n", m->active+1, out_alpha, f1);
     }
     SYNC();
-    Flt *tc = tmp + (nc+ng) * best; // c_new
+    Flt *tc = tmp + (nc+ng) * m->active; // c_new
     Flt *tg = tc + nc; // g_new
     copy_change(outg, tg);
     copy_conf(outc, tc);
+    // debug
+#if 0
+    if (INMAIN()) {
+        for (int i = 0; i < MAX_TRIALS; i++) {
+            Flt *tc = tmp + (nc+ng) * i; // c_new
+            Flt *tg = tc + nc; // g_new
+            MCUDBG("lsm tc for step %d", i);
+            printc(m->src, tc);
+            MCUDBG("lsm tg for step %d", i);
+            printc(m->src, tg);
+        }
+
+    }
+#endif
 
 }
-__device__ void printc(SrcModel *sm, const Flt *c) {
-    for (int i = 0; i < sm->nligand; i++) {
-        printf("(%f %f %f) (%f %f %f %f)[", c[0], c[1], c[2], c[3], c[4], c[5], c[6]);
-        for (int j = 0; j < sm->ligands[i].nr_node-1; j++) {
-            if (j > 0) {
-                printf(" ");
-            }
-            printf("%f", c[7+j]);
-        }
-        printf("]\n");
-        c += 7 + sm->ligands[i].nr_node-1;
-    }
-    for (int i = 0; i < sm->nflex; i++) {
-        printf("[");
-        for (int j = 0; j < sm->flex[i].nr_node; j++) {
-            if (j > 0) {
-                printf(" ");
-            }
-            printf("%f", c[j]);
-        }
-        printf("]\n");
-        c += sm->flex[i].nr_node;
-    }
-}
-__device__ void printg(SrcModel *sm, const Flt *c) {
-    for (int i = 0; i < sm->nligand; i++) {
-        printf("(%f %f %f) (%f %f %f)[", c[0], c[1], c[2], c[3], c[4], c[5]);
-        for (int j = 0; j < sm->ligands[i].nr_node-1; j++) {
-            if (j > 0) {
-                printf(" ");
-            }
-            printf("%f", c[6+j]);
-        }
-        printf("]\n");
-        c += 6 + sm->ligands[i].nr_node-1;
-    }
-    for (int i = 0; i < sm->nflex; i++) {
-        printf("[");
-        for (int j = 0; j < sm->flex[i].nr_node; j++) {
-            if (j > 0) {
-                printf(" ");
-            }
-            printf("%f", c[j]); 
-        }
-        printf("]\n");
-        c += sm->flex[i].nr_node;
-    }
-}
 #define BFGSIDX threadIdx.z
-__device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over, Flt *c, Flt *f0, Flt *mem) {
+// mem requirement
+#define SMSIZE(ng, nc, max_steps) (32 + ((ng * (ng+1)) >> 1) + 5 *ng + 2 *nc + (max_steps + 1) + std::max(ng * ng + 4, MAX_TRIALS * (nc+ng+1)+2))
+// Model data will be updated to m->data, conf will be write to c
+__device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_steps, Flt average_required_improvement, Size over, Flt *c, Flt *f0, int &evalcnt, Flt *vs, Flt *mem) {
     int offset = 0; // mem alloc offset
     DECL_TIDS;
     tids.tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x *blockDim.y;
@@ -593,31 +694,31 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *c
     int ng = srcm->nrflts_change;
     int nc = srcm->nrflts_conf;
 
-    // mem requirement:
-    //    4 + ((ng * (ng+1)) >> 1) + 6 *ng + 3 *nc + (max_steps + 1) + max(max(blockDim.x * blockDim.y, ng), MAX_TRIALS * (nc+ng+1)) 
     Flt *md = m->data;
-    Flt *h, *g, *g_new, *c_new, *g_orig, *c_orig, *p, *y, *fs, *hy, *tmp;
-    Flt * f_orig, *f1, *alpha;
+    Flt *h, *g, *g_new, *c_new, *g_orig, *c_orig, *p, *y, *fs, *tmp;
+    Flt * f_orig, *f1, *alpha, *yy, *yp, *beta;
 
-    // f0 = mem + offset, offset += 1;
     f1 = mem + offset, offset += 1;
     f_orig = mem + offset, offset += 1;
     alpha = mem + offset, offset += 1;
+    beta = mem + offset, offset += 1;
+    yy = mem + offset, offset += 1;
+    yp = mem + offset, offset += 1;
+
     h = mem + offset, offset += ((ng * (ng+1)) >> 1);
     g = mem + offset, offset += ng;
-    // c = mem + offset, offset += nc;
     g_new = mem + offset, offset += ng;
     c_new = mem + offset, offset += nc;
     g_orig = mem + offset, offset += ng;
     c_orig = mem + offset, offset += nc;
     p = mem + offset, offset += ng;
     y = mem + offset, offset += ng;
-    hy = mem + offset, offset += ng;
     fs = mem + offset, offset += max_steps + 1;
-    tmp = mem + offset; offset += max(max(blockDim.x * blockDim.y, ng), MAX_TRIALS * (nc+ng+1)) ;
+    tmp = mem + offset; offset += max(ng * ng + ng + 4, MAX_TRIALS * (nc+ng+1) + 2) ;
 
+    // enable this line if sm is used for model data
     // copy input data into shared memory
-    copy_array<Flt>(md, m->data, m->szflt, TIDS);
+    // copy_array<Flt>(md, m->data, m->szflt, TIDS);
 
     init_triangle_mat(h, ng);
     // in cpu version, here is a declare and copy, but there is no need because it will be used in linesearch for
@@ -628,74 +729,299 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *c
 
     if (BFGSIDX == 0) {
         // initial evaluation, get f0, initial conf and change
-        model_eval_deriv(m, pa, ch, c, g, f0, md);
-        ctx->eval_cnt++;
+        model_eval_deriv(m, pa, ch, c, g, f0, md + m->active*m->szflt, vs);
+        if(INMAIN()) {
+            evalcnt++;
+        }
     }
     SYNC();
+#if 1
     if(INMAIN()) {
-        printf("f0 %f\n", *f0);
+        // printf("f0 eval synced\n");
+        printf("gpu f0 %f\n", *f0);
         printf("c:\n");
         printc(srcm, c);
         printf("g:\n");
         printg(srcm, g);
     }
+#endif
 
     copy_change(g_orig, g);
     copy_conf(c_orig, c);
     copy_change(p, g);
+
     if (INMAIN()) {
         *f_orig = *f0;
         fs[0] = *f0;
     }
 
     SYNC();
-    #if 0
+    // require max(ng * ng, MAX_TRIALS * (nc+ng+1) + 2, ng * ng + 4)
     for(int step = 0; step < max_steps; step++) {
-        minus_mat_vec_product(h, g, p, mem, ng, TIDS);
+        minus_mat_vec_product(h, g, p, tmp, ng); // require ng * ng
         SYNC();
-        // requires MAX_TRIALS * (nc+ng+1)
-        line_search(m, pa, ch, *f0, *f1, c, g, p, tmp, c_new, g_new, ng, nc, ctx->eval_cnt, *alpha, TIDS);
+        // requires MAX_TRIALS * (nc+ng+1) + 2
+        line_search(m, pa, ch, *f0, *f1, c, g, p, tmp, c_new, g_new, ng, nc, evalcnt, *alpha, TIDS, md, vs);
         SYNC();
         // y = g_new - g
         sub_array<Flt>(y, g_new, g, ng, TIDS);
         if (INMAIN()) {
             fs[step+1] = *f1; 
             *f0 = *f1;
+            printf("step %d alpha %f f1 %f\n", step, *alpha, *f1);
+#if 0
+            CUDBG("g new in step %d", step);
+            printg(srcm, g_new);
+            CUDBG("g in step %d", step);
+            printg(srcm, g);
+#endif
         }
         copy_conf(c, c_new);
         sqrt_product_array(g, ng , TIDS);
         SYNC();
+#if 0
+        if (INMAIN()) {
+            MCUDBG("step %d sqrt g %f", g[0]);
+            MCUDBG("y in step %d", step);
+            printg(srcm, y);
+        }
+#endif
         if (!(g[0] >= 1e-5)) {
             // done
             break;
         }
         
         if (step == 0) {
-            // use g as tmp, note that we move the g = g_new after this
-            scalar_product_array(y, g, ng, TIDS);
+            scalar_product_array(y, tmp, yy, ng, TIDS); // require ng
             SYNC();
-            Flt yy = g[0];
-            if (abs(yy) > EPSILON) {
-                scalar_product_array(y, p, g, ng , TIDS);
+            if (INMAIN()) {
+                CUDBG("yy %f", *yy);
+            }
+            if (abs(*yy) > EPSILON) {
+                scalar_product_array(y, p, yp, tmp, ng , TIDS);// require ng
+                if (INMAIN()) {
+                    *beta = (*alpha) * (*yp) / (*yy);
+                    CUDBG("step %d set diag %f", step, *beta);
+                }
                 SYNC();
-                Flt beta = *alpha * g[0] / yy;
-                set_diagonal(h, beta, ng, TIDS);
+                set_diagonal(h, *beta, ng, TIDS);
                 SYNC();
             }
         }
 
         copy_change(g, g_new);
-        // require max(blockDim.x*blockDim.y, ng)
-        bfgs_update(h, p, y, hy, tmp, *alpha, ng, TIDS);
+        // require ng * ng + ng + 4
+        bfgs_update(h, p, y, tmp, *alpha, ng, TIDS);
         SYNC();
+        if (INMAIN()) {
+            printf("bfgscu searches %d times\n", step+1);
+        }
     }
-    #endif
 
     if (!(*f0 <= *f_orig)) {
         *f0 = *f_orig;
         copy_conf(c, c_orig);
-        copy_change(g, g_orig);
+        // todo, no output change?
+        // copy_change(g, g_orig);
     }
+}
+// flags at least has atom size, acc has 3 Flts for each atom
+// tmp require src->natoms * 4
+// rout = 1/out
+FORCE_INLINE void gyration_radius(const ModelDesc *m, Flt *md, int idx, Flt *out, Flt *rout, Flt *tmp) {
+
+    Flt *acc = tmp;
+    tmp += m->src->natoms * 3;
+    int *flags = (int *)tmp;
+    tmp += m->src->natoms;
+
+    auto &lig = m->src->ligands[idx];
+    auto &root = lig.tree[lig.nr_node-1];
+    CU_FOR2(i, m->src->natoms) {
+        flags[i] = 0;
+    }
+    WARPSYNC();
+    int dx = threadIdx.x;
+    CU_FORY(dy, root.end - root.begin) {
+        auto idxligand = dy + root.begin;
+        if(m->src->atoms[idxligand].el != 0 /*EL_TYPE_H*/ && dx < 3) {
+            auto *coord = model_coords(m->src, m, md, idxligand);
+            auto *seg = model_ligand(m->src, m, md, idxligand, lig.nr_node-1); // root is last seg
+            Flt sub = vec_get(*coord, dx) - vec_get(seg->origin, dx);
+            acc[dy * 3 + dx] = sub * sub;
+            if (dx == 0) {
+                flags[dy] = 1;
+            }
+        }
+    }
+    WARPSYNC();
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        int cnt = 0;
+        Flt total = 0;
+        for(int i = 0; i < m->src->natoms; i++) {
+            if (flags[i] == 1) {
+                auto *p = acc + i * 3;
+                total += p[0] + p[1] + p[2];
+                cnt++;
+            }
+        }
+        *out = 0;
+        if (cnt > 0) {
+            *out = sqrt(total *reciprocal(cnt));
+            if (*out > EPSILON) {
+                *rout = reciprocal(*out);
+            }
+        }
+    }
+}
+// conf will be updated
+// tmp require SrcModel.natoms * 4 + 2
+__device__ void mutate_conf_xy(const ModelDesc *m, const MCCtx *ctx, const MCStepInput *in, Flt *c, Flt *md, Flt *tmp) {
+    if (ctx->num_mutable_entities > 0 && threadIdx.z == 0) {
+        auto g = in->groups;
+        if (g[0] == 0) {
+            // update ligand position
+            if (threadIdx.x == 0) {
+                Flt *f = get_ligand_conf(m->src, c, g[1]);
+                for (int dy = threadIdx.y; dy < 3; dy += blockDim.y) {
+                    f[dy] += vec_get(in->rsphere, dy) * ctx->amplitude;
+                }
+            }
+        } else if (g[0] == 1) {
+            // update ligand orientation
+            Flt *gy = tmp;
+            tmp++;
+            Flt *rgy = tmp;
+            tmp++;
+            gyration_radius(m, md, g[1], gy, rgy, tmp);  // require natoms * 4
+            WARPSYNC();
+            if (*gy > EPSILON && threadIdx.x == 0 && threadIdx.y == 0) {
+                Flt rot[3];
+                *rgy *= ctx->amplitude;
+                rot[0] = (*rgy) * in->rsphere.x, rot[1] = (*rgy) * in->rsphere.y,
+                rot[2] = (*rgy) * in->rsphere.z;
+                Flt *f = get_ligand_conf(m->src, c, g[1]);
+                Flt q[4];
+                q[0] = f[0], q[1] = f[1], q[2] = f[2], q[3] = f[3];
+                quaternion_increment(f, q, rot);
+            }
+
+        } else if (g[0] == 2) {
+            // update ligand torsion
+            if (threadIdx.x == 0 && threadIdx.y == 0) {
+                Flt *f                           = get_ligand_conf(m->src, c, g[1]);
+                get_ligand_conf_torsion(f, g[2]) = in->rpi;
+            }
+        } else {
+            // update flex torsion
+            if (threadIdx.x == 0 && threadIdx.y == 0) {
+                Flt *f                         = get_flex_conf(m->src, c, g[1]);
+                get_flex_conf_torsion(f, g[2]) = in->rpi;
+            }
+        }
+    }
+}
+
+__device__ bool metropolis_accept(Flt old_f, Flt new_f, Flt rtemperature, Flt threshold) {
+    if (new_f < old_f) {
+        return true;
+    } else {
+        Flt acc = exp(old_f - new_f) * rtemperature;
+        return threshold < acc;
+    }
+}
+#define MCSIZE(natoms, ng, nc, local_steps) (3+2*nc+std::max((int)(4 * (natoms) + 2), SMSIZE(ng, nc, local_steps)))
+template <bool forceadd>
+__device__ void mc_xyz(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *ctx, MCInputs *ins,
+                       MCOutputs *outs, Flt *e_and_c, Flt *mem, int *evalcnt, int steps) {
+    int offset = 0;
+    DECL_TIDS;
+    tids.tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x *blockDim.y;
+    tids.blksz = blockDim.x * blockDim.y * blockDim.z;
+
+
+    SrcModel *srcm = m->src;
+    int ng = srcm->nrflts_change;
+    int nc = srcm->nrflts_conf;
+    Flt *md = m->data + m->szflt * m->active;
+    Flt *src_conf = e_and_c+1;
+    Flt *g_best_e = e_and_c;
+
+    Flt *ctemp, *candidate,  *tmp, *beste;
+    // ctemp and candidate includes Flt e + nc Flt conf
+    ctemp = mem + offset, offset += nc+1;
+    candidate = mem + offset, offset += nc+1;
+    beste = mem + offset, offset++;
+
+    tmp = mem + offset, offset += max((int)(4 * srcm->natoms + 2), SMSIZE(ng, nc, ctx->local_steps));
+
+#define CANDIDATE (candidate+1)
+#define TEMP (ctemp+1)
+#define FCANDIDATE (*candidate)
+#define FTEMP (*ctemp)
+#define PFCANDIDATE candidate
+#define PFTEMP ctemp
+
+#define SWAP() do {Flt *p = ctemp; ctemp = candidate; candidate = p;} while(0)
+
+    if (INMAIN()) {
+        FTEMP = 0;
+        *beste = *g_best_e;
+    }
+    copy_conf(TEMP, src_conf);
+    SYNC();
+    
+    int commited = 0;
+    for (int dz = 0; dz < steps; dz++) {
+        if (ctx->max_evalcnt > 0 && *evalcnt > ctx->max_evalcnt) {
+            break;
+        }
+        auto in = ins->in + dz;
+        copy_conf(CANDIDATE, TEMP);
+        SYNC();
+
+        mutate_conf_xy(m, ctx, in, CANDIDATE, md, tmp); // update c, requires 4 * srcm->natoms + 2
+        SYNC();
+
+        bfgs(m, pa, ch, ctx->local_steps, ctx->average_required_improvement, ctx->over, CANDIDATE, PFCANDIDATE,
+             *evalcnt, ctx->vs, tmp);  // requires SMSIZE()
+        SYNC();
+
+        if (dz == 0 || metropolis_accept(FCANDIDATE, FTEMP, ctx->rtemperature, in->raccept)) {
+            if (INMAIN()) {
+                // discard temp, use candidate
+                SWAP(); // candidate <-> temp, in next for loop new conf will be used as conf
+            }
+            // check if this conf should be commited, if so, fine tune with new vs
+            // the bfgs should be performed on TEMP because we swapped before
+            if (forceadd || FTEMP < *beste) {
+                bfgs(m, pa, ch, ctx->local_steps, ctx->average_required_improvement, ctx->over, TEMP,
+                     PFTEMP, *evalcnt, ctx->vs+3, tmp);  // requires SMSIZE()
+                SYNC();
+                // now add temp as new output
+                auto &out = outs->out[outs->n];
+                // copy e and conf
+                copy_array<Flt>(out.e_and_c, ctemp, nc+1, TIDS);
+                FOR_TID(i, m->ncoords) {
+                    vec_set(*(out.coords+i), *model_coords(srcm, m, m->data + m->szflt*m->active, i));
+                }
+                commited++;
+                if (INMAIN()) {
+                    if (FTEMP < *beste) {
+                        *beste = FTEMP;
+                    }
+                }
+            }
+        }
+    }
+    copy_conf(src_conf, TEMP);
+    if (INMAIN()) {
+        *g_best_e = *beste;
+        outs->n = commited;
+    }
+#undef CANDIDATE
+#undef SWAP
+#undef TEMP
 }
 // used for single mc call
 GLOBAL void bfgs_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over) {
@@ -709,25 +1035,55 @@ GLOBAL void bfgs_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx
     read_conf(m->src, &ctx->c, c);
     SYNC();
 
-    bfgs(m, pa, ch, ctx, max_steps, average_required_improvement, over, c, f0, mem);
+    bfgs(m, pa, ch, max_steps, average_required_improvement, over, c, f0, ctx->eval_cnt, ctx->vs, mem);
     SYNC();
 
+    // todo
     convert_conf(m->src, &ctx->c, c);
     if (INMAIN()) {
         ctx->e = *f0;
     }
+    // this covers model.set(out.c) in the end of quasi_newton()
+    Flt *active = m->data + m->szflt * m->active;
+    model_set_conf_ligand_c(m, c, active);
+    model_set_conf_flex_c(m, c, active);
+}
+GLOBAL void mc_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *ctx, MCInputs *ins, MCOutputs *outs, int steps) {
+    extern __shared__ Flt sm[];
+    Flt *mem = sm;
+    SrcModel *srcm = m->src;
+    int nc = srcm->nrflts_conf;
+    int mcidx = blockIdx.x;
+    auto c = ctx->best_e_and_c + (nc+1) * mcidx;
+    if (*(ctx->curr_evalcnt + mcidx) < ctx->max_evalcnt) {
+        mc_xyz<false>(m+mcidx, pa, ch, ctx, ins+mcidx, outs+mcidx, c, mem, ctx->curr_evalcnt+mcidx, steps);
+    }
+
 }
 void run_bfgs(ModelDesc *cpum, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over , cudaStream_t stream) {
     auto srcm = cpum->src;
+    dim3 block(DIMX, DIMY, MAX_TRIALS);
+    dim3 grid(1);
+
     int ng = srcm->nrflts_change;
     int nc = srcm->nrflts_conf;
+    int sm = SMSIZE(ng, nc, max_steps) * sizeof(Flt);
 
     // sm requirement:
-    dim3 block(4, 8, MAX_TRIALS);
-    dim3 grid(1);
-    int sm = 4 + ((ng * (ng+1)) >> 1) + 6 *ng + 3 *nc + (max_steps + 1) + std::max(std::max(int(block.x * block.y), ng), MAX_TRIALS * (nc+ng+1));
-    sm *= sizeof(Flt);
     printf("ng %d nc %d sm size %d\n", ng, nc, sm);
     bfgs_kernel<<<grid, block, sm, stream>>>(m, pa, ch, ctx, max_steps, average_required_improvement, over);
+}
+void run_mc(SrcModel *srcm, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *ctx,
+            MCInputs *ins, MCOutputs *outs, int nmc, int steps, int local_steps, cudaStream_t stream) {
+    dim3 block(DIMX, DIMY, MAX_TRIALS);
+    dim3 grid(nmc);
+
+    int ng = srcm->nrflts_change;
+    int nc = srcm->nrflts_conf;
+    int sm = MCSIZE(srcm->natoms, ng, nc, local_steps) * sizeof(Flt);
+
+    // sm requirement:
+    printf("ng %d nc %d sm size %d\n", ng, nc, sm);
+    mc_kernel<<<grid, block, sm, stream>>>(m, pa, ch, ctx, ins, outs, steps);
 }
 };

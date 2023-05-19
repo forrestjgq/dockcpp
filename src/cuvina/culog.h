@@ -3,20 +3,25 @@
 #include <cstring>
 #include <cstdio>
 
-#define CUDEBUG 1
-
+#define MCUDBG(fmt, ...) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
+#define MCUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
+// #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
+#define MCUVECPDUMP(hdr, vp) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
+    __LINE__,blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  \
+    vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z); }while(0)
+#define CUDEBUG 0
 #if CUDEBUG
 #if USE_CUDA_VINA
 // extern void dump_vecv(const char *s, const vecv& vv, const char* file, int line);
 // extern void dump_flv(const char *s, const flv& vv, const char *file, int line) ;
 // extern void dump_vecpv(const char *s, const std::vector<vecp>& vv, const char *file, int line) ;
 
-#define CUDBG(fmt, ...) printf("%d [%d:%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__)
+#define CUDBG(fmt, ...) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
 #define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
 // #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
-#define CUVECPDUMP(hdr, vp) printf("%d [%d:%d:%d] [%d:%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
+#define CUVECPDUMP(hdr, vp) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
     __LINE__,blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  \
-    vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z)
+    vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z); }while(0)
 // #define FLVDUMP(hdr, vv) dump_flv(hdr, vv, fileOf(__FILE__), __LINE__)
 #else
 static inline const char *fileOf(const char *path) {

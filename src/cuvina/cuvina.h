@@ -20,11 +20,16 @@ bool makeSrcModel(model *m, precalculate_byatom &p);
 bool makeCache(cache &c);
 std::shared_ptr<void> makeModel(model *m, const vec &v);
 bool makeModel(std::shared_ptr<void> &obj, model *m, const vec &v);
-bool makeModelDesc(std::shared_ptr<void> &obj, model *m, const vec &v);
-bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c, int evalcnt=0);
+bool makeModelDesc(std::shared_ptr<void> &obj, model *m, int nmc=1);
+bool makeBFGSCtx(std::shared_ptr<void> &obj, const model &m, const change &g, const conf &c, const vec &v, int evalcnt=0);
+bool makeMC(std::shared_ptr<void> &pmd, std::shared_ptr<void> &pctx, std::shared_ptr<void> &pin,
+            std::shared_ptr<void> &pout, model &m, int num_mutable_entities, int steps, int nmc,
+            rng &generator, conf &c, sz Over, fl average_required_improvement, int local_steps,
+            int max_evalcnt, const vec &v1, const vec &v2, fl amplitude, fl temperature, 
+            std::function<void (int i, fl *c)> init);
 fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, 
                         change &g, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj);
-fl run_cuda_bfgs(const precalculate_byatom &p, const igrid &ig, change &g, conf &c,
+fl run_cuda_bfgs(model *m, const precalculate_byatom &p, const igrid &ig, change &g, conf &c,
                  const unsigned max_steps, const fl average_required_improvement, const sz over,
                  int &evalcount, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj);
 bool create_vina_server(int device, int nrinst);

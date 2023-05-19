@@ -27,6 +27,7 @@
 
 #include "quaternion.h"
 #include "random.h"
+#include "log.h"
 
 struct scale {
 	fl position;
@@ -97,8 +98,13 @@ struct rigid_conf {
 	}
 	void increment(const rigid_change& c, fl factor) {
 		position += factor * c.position;
+        DBG("position g %f %f %f, c %f %f %f", c.position.data[0], c.position.data[1],
+             c.position.data[2], position.data[0], position.data[1], position.data[2]);
 		vec rotation; rotation = factor * c.orientation;
+        DBG("rotation g: %f %f %f, r %f %f %f", c.orientation.data[0], c.orientation.data[1], c.orientation.data[2],
+		 rotation.data[0], rotation.data[1], rotation.data[2]);
 		quaternion_increment(orientation, rotation); // orientation does not get normalized; tests show rounding errors growing very slowly
+        DBG("orientation c: %f %f %f %f", orientation.R_component_1(), orientation.R_component_2(), orientation.R_component_3(), orientation.R_component_4());
 	}
 	void randomize(const vec& corner1, const vec& corner2, rng& generator) {
 		position = random_in_box(corner1, corner2, generator);
@@ -162,6 +168,7 @@ struct ligand_conf {
 		torsions_set_to_null(torsions);
 	}
 	void increment(const ligand_change& c, fl factor) {
+		DBG("ligand ci torsion %lu alpha %f", torsions.size(), factor);
 		rigid.increment(c.rigid, factor);
 		torsions_increment(torsions, c.torsions, factor);
 	}
@@ -281,6 +288,54 @@ struct conf {
 			ligands[i].torsions.resize(s.ligands[i], 0); // FIXME?
 		VINA_FOR_IN(i, flex)
 			flex[i].torsions.resize(s.flex[i], 0); // FIXME?
+	}
+	conf(const conf_size& s, fl *arr) : ligands(s.ligands.size()), flex(s.flex.size()) {
+		VINA_FOR_IN(i, ligands)
+			ligands[i].torsions.resize(s.ligands[i], 0); // FIXME?
+		VINA_FOR_IN(i, flex)
+			flex[i].torsions.resize(s.flex[i], 0); // FIXME?
+		load_from(arr);
+	}
+	sz num_floats() const {
+		sz tmp = 0;
+		VINA_FOR_IN(i, ligands)
+			tmp += 7 + ligands[i].torsions.size();
+		VINA_FOR_IN(i, flex)
+			tmp += flex[i].torsions.size();
+		return tmp;
+	}
+	void dump_to(fl *arr) {
+		VINA_FOR_IN(i, ligands) {
+			auto &p = ligands[i].rigid.position;
+			auto &o = ligands[i].rigid.orientation;
+			*arr++ = p.data[0], *arr++ = p.data[1], *arr++ = p.data[2];
+			*arr++ = o.R_component_1(), *arr++ = o.R_component_2(), *arr++ = o.R_component_3(), *arr++ = o.R_component_4();
+			VINA_FOR_IN(j, ligands[i].torsions) {
+				*arr++ = ligands[i].torsions[j];
+			}
+		}
+		VINA_FOR_IN(i, flex) {
+			VINA_FOR_IN(j, ligands[i].torsions) {
+				*arr++ = flex[i].torsions[j];
+			}
+		}
+	}
+	void load_from(fl *arr) {
+		VINA_FOR_IN(i, ligands) {
+			auto &p = ligands[i].rigid.position;
+			auto &o = ligands[i].rigid.orientation;
+			p.data[0] = *arr++, p.data[1] = *arr++, p.data[2] = *arr++;
+			o = qt(arr[0], arr[1], arr[2], arr[3]);
+			arr += 4;
+			VINA_FOR_IN(j, ligands[i].torsions) {
+                ligands[i].torsions[j] = *arr++;
+            }
+		}
+		VINA_FOR_IN(i, flex) {
+			VINA_FOR_IN(j, ligands[i].torsions) {
+                flex[i].torsions[j] = *arr++;
+			}
+		}
 	}
 	void set_to_null() {
 		VINA_FOR_IN(i, ligands)

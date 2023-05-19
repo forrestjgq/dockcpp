@@ -132,6 +132,8 @@ namespace dock {
 
     typedef  struct {
         Vec coords;
+        // todo: 
+        Size el;
     }Atom;
 
     // never changed model vars
@@ -190,16 +192,16 @@ namespace dock {
         SrcModel *src;
         int szflt; // how many flts ModelVars takes
         int ncoords;
-        Flt vs[3];
 
-        // offset of each fields
-        int coords;
+        // offset of each fields in Flt unit
+        int coords; // will be updated after model der
         // offset of each ligands, array size: SrcModel.nligand
-        int *ligands; 
-        int *flex;
-        int minus_forces;
-        int movable_e;
-        int pair_res;
+        int *ligands;  // will be updated after model der
+        int *flex; // will be updated after model der
+        int minus_forces; // used only inside model der
+        int movable_e; // used only inside model der
+        int pair_res; // used only inside model der
+        int active = 0; // data contains some model description data, this indicates the active one
 
         Flt *data;
     } ModelDesc;
@@ -219,9 +221,11 @@ namespace dock {
         ResidueConf *flex;
     } Conf;
     typedef struct  {
+        Flt vs[3];
         Change g;
-        Conf c;
-        Flt e;
+        Conf c; // input c
+        Flt e; // output e
+        Vec *coords; // output model coords , size: SrcModel:: ncoords
         // Flt *pair_e; // output loss
         // Flt *atom_e; // output loss
         int eval_cnt; // how many model eval called in this bfgs
@@ -244,8 +248,60 @@ namespace dock {
         // Flt *fs; // size: max_step + 1
     } BFGSCtx;
 
+    #define MC_MAX_STEP_BATCH 100
+    typedef struct {
+        Vec rsphere; // same size as which, random_inside_sphere(generator); 
+        Flt rpi; // same size as which, random_fl(-pi, pi, generator)
+        Flt raccept; // random probalility, see metropolis_accept
+
+        // for each group there are 3 ints
+        // int -1: no mutate conf, 0: 0-ligand pos, 1-ligand orientation, 2-ligand torsion, 3-flex torsion
+        // int 1: ligand or flex index
+        // int 2: torsion index
+        int groups[3]; 
+    } MCStepInput;
+    typedef struct {
+        int steps;// how many steps at most should be executed, also the size of [in]
+        MCStepInput in[MC_MAX_STEP_BATCH];
+    } MCInputs;
+
+    typedef struct {
+        Flt *e_and_c; // conf
+        Vec *coords; // size: SrcModel.ncoords, for all coords, not just heavy ones
+    } MCStepOutput;
+
+    // outputs for one MC instance
+    typedef struct {
+        int n; // num of out, it might be smaller then steps, or even 0
+        MCStepOutput out[MC_MAX_STEP_BATCH]; // alloc size must be MCInputs.steps
+    } MCOutputs;
+
+    // MC const values
+    // shared by all MC instances
+    typedef struct {
+        // newton parameters
+        Size over;
+        Flt average_required_improvement;
+
+        int local_steps;// bfgs max steps
+        int num_mutable_entities;
+        int max_evalcnt; // max allowed model der evaluations
+        int *curr_evalcnt; // array, each for one MC, records how many model der eval has been exeucted
+
+        Flt vs[6]; // v[0-2] for initial newton, v[3-5] for promising one
+        Flt amplitude;
+        Flt rtemperature; // 1.0/temperature
+
+        // group of e + conf for each MC
+        // these values are maintained by cuda and never be updated by host
+        // e: 1 Flt, initial with max flt
+        // c: nc Flt, initial with random values
+        Flt *best_e_and_c;
+
+    } MCCtx;
     
 const Flt PI = Flt(3.1415926535897931);
+const Flt R2PI = Flt(0.15915494309189535); // 1/(2*pi)
 
 
 

@@ -44,6 +44,14 @@ struct parallel_progress : public incrementable {
                 (*callback)(static_cast<double>(value) / count);
 		}
 	}
+	void increase(unsigned long increament) {
+		if(p) {
+			boost::mutex::scoped_lock self_lk(self);
+			const unsigned long value = (*p += increament);
+            if(callback)
+                (*callback)(static_cast<double>(value) / count);
+		}
+	}
 	virtual ~parallel_progress() { delete p; }
 public:
 	boost::mutex self;

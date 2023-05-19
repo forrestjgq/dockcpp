@@ -151,5 +151,23 @@ private:
     bool manual_reset_ = true;
     int blocked_       = 0;
 };  // class Event
+
+class Clock {
+public:
+    std::uint64_t ts_ = 0;
+    std::uint64_t mark() {
+        auto cur = now();
+        auto du  = cur - ts_;
+        ts_      = cur;
+        return du;
+    }
+
+private:
+    std::uint64_t now() {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::high_resolution_clock::now().time_since_epoch())
+            .count();
+    }
+};
 };
 #endif

@@ -35,7 +35,7 @@
 #include "atom_constants.h"
 #include "file.h"
 #include "convert_substring.h"
-#include "utils.h"
+#include "vina_utils.h"
 #include "parse_pdbqt.h"
 #include "parse_error.h"
 

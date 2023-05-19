@@ -29,7 +29,7 @@ namespace dock {
 // void run_bfgs(Model *cpum, Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over , cudaStream_t stream);
 };
 
-output_type monte_carlo::operator()(model& m, const precalculate_byatom& p, const igrid& ig, const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const {
+output_type monte_carlo::operator()(model& m, precalculate_byatom& p, const igrid& ig, const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const {
 	output_container tmp;
 	this->operator()(m, tmp, p, ig, corner1, corner2, increment_me, generator); // call the version that produces the whole container
 	VINA_CHECK(!tmp.empty());
@@ -45,64 +45,44 @@ bool metropolis_accept(fl old_f, fl new_f, fl temperature, rng& generator) {
 void monte_carlo::enable_gpu(bool enable) {
 	use_gpu = enable;
 }
+
+extern sz count_mutable_entities(const conf& c);
+bool monte_carlo::prepare_gpu(model& m, precalculate_byatom& p,const igrid& ig, const vec& corner1,
+                              const vec& corner2, incrementable* increment_me, rng& generator, int nmc) {
+	
+	const cache *subclass = dynamic_cast<const struct cache *>(&ig);
+	if (!subclass) {
+		use_gpu = false;
+		return false;
+	}
+	for (int i = 0; i < nmc; i++) {
+		auto seed = random_int(0, 1000000, generator);
+		generators.push_back(std::make_shared<rng>(static_cast<rng::result_type>(seed)));
+	}
+
+	conf_size s = m.get_size();
+	conf tmp(s);
+	sz mutable_entities_num = count_mutable_entities(tmp);
+	auto f = [&](int idx, fl *c) {
+		output_type ot(s, 0);
+		ot.c.randomize(corner1, corner2, *generators[idx]);
+	};
+
+	#define OVER 10
+	#define AVERAGE_REQ_IMPROVEMENT 0
+	vec authentic_v(1000, 1000, 1000); // FIXME? this is here to avoid max_fl/max_fl
+	use_gpu = dock::makeMC(m_gpu_model_desc, m_gpu_mc_ctx, m_gpu_mc_inputs, m_gpu_mc_outputs, 
+	m, mutable_entities_num, gpu_steps, nmc, generator, tmp, OVER, AVERAGE_REQ_IMPROVEMENT,
+	local_steps, max_evals, authentic_v, hunt_cap, mutation_amplitude, 1.0/temperature, f);
+	return use_gpu;
+}
 // out is sorted
-bool monte_carlo::gpu(model& m, output_container& out, const precalculate_byatom& p, const igrid& ig, const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const {
-	vec authentic_v(1000, 1000, 1000); // FIXME? this is here to avoid max_fl/max_fl
-	// if (use_gpu) {
-	// 	m_gpu = dock::makeModel(m, authentic_v);
-	// 	if (!m_gpu) {
-	// 		use_gpu = false;
-	// 	}
-	// }
-	// if (!use_gpu) {
-	// 	return false;
-	// }
-    int evalcount = 0;
-	conf_size s = m.get_size();
-	change g(s);
-	output_type tmp(s, 0);
-	tmp.c.randomize(corner1, corner2, generator);
-	fl best_e = max_fl;
-	quasi_newton quasi_newton_par;
-	quasi_newton_par.use_gpu = use_gpu;
-    quasi_newton_par.max_steps = local_steps;
-	int bfgscnt = 0;
-	// printf("mc global steps %u max_evals %u\n", global_steps, max_evals);
-	VINA_U_FOR(step, global_steps) {
-		if(increment_me)
-			++(*increment_me);
-		if((max_evals > 0) & ((unsigned)evalcount > max_evals)) {
-			// printf("evals %u times, step %u\n", evalcount, step);
-			break;
-		}
-		output_type candidate = tmp;
-		mutate_conf(candidate.c, m, mutation_amplitude, generator);
-		bfgscnt++;
-		// printf("mc calls bfgs %d\n", bfgscnt);
-		quasi_newton_par(m, p, ig, candidate, g, hunt_cap, evalcount);
-		if(step == 0 || metropolis_accept(tmp.e, candidate.e, temperature, generator)) {
-			tmp = candidate;
-
-			m.set(tmp.c); // FIXME? useless?
-
-			// FIXME only for very promising ones
-			if(tmp.e < best_e || out.size() < num_saved_mins) {
-				bfgscnt++;
-				// printf("    mc calls bfgs %d\n", bfgscnt);
-				quasi_newton_par(m, p, ig, tmp, g, authentic_v, evalcount);
-				m.set(tmp.c); // FIXME? useless?
-				tmp.coords = m.get_heavy_atom_movable_coords();
-				add_to_output_container(out, tmp, min_rmsd, num_saved_mins); // 20 - max size
-				if(tmp.e < best_e)
-					best_e = tmp.e;
-			}
-		}
-	}
-	VINA_CHECK(!out.empty());
-	VINA_CHECK(out.front().e <= out.back().e); // make sure the sorting worked in the correct order
-	return true;
+bool monte_carlo::gpu(model& m, output_container& out, precalculate_byatom& p, const igrid& ig,
+                      const vec& corner1, const vec& corner2, incrementable* increment_me,
+                      rng& generator) const {
+						return false;
 }
-void monte_carlo::cpu(model& m, output_container& out, const precalculate_byatom& p, const igrid& ig, const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const {
+void monte_carlo::cpu(model& m, output_container& out, precalculate_byatom& p, const igrid& ig, const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const {
     int evalcount = 0;
 	vec authentic_v(1000, 1000, 1000); // FIXME? this is here to avoid max_fl/max_fl
 	conf_size s = m.get_size();
@@ -148,7 +128,7 @@ void monte_carlo::cpu(model& m, output_container& out, const precalculate_byatom
 	VINA_CHECK(!out.empty());
 	VINA_CHECK(out.front().e <= out.back().e); // make sure the sorting worked in the correct order
 }
-void monte_carlo::operator()(model& m, output_container& out, const precalculate_byatom& p, const igrid& ig, const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const {
+void monte_carlo::operator()(model& m, output_container& out, precalculate_byatom& p, const igrid& ig, const vec& corner1, const vec& corner2, incrementable* increment_me, rng& generator) const {
 #if 0
 	if (!gpu(m, out, p, ig, corner1, corner2, increment_me, generator)) {
         cpu(m, out, p, ig, corner1, corner2, increment_me, generator);

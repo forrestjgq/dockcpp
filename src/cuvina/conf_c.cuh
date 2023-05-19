@@ -36,6 +36,7 @@ FORCE_INLINE void atom_frame_set_coords(Atom *atoms, Segment *seg, SegmentVars *
     FOR_RANGE(i, seg->begin, seg->end) {
         CUDBG("set coords %d", i);
         frame_local_to_lab(segvar, atoms[i].coords, coords[i]);
+        CUVDUMP("update coords", coords[i]);
     }
 }
 FORCE_INLINE void rigid_body_set_conf(Segment *seg, SegmentVars *segvar, Atom *atoms, Vec *coords,
@@ -77,6 +78,9 @@ FORCE_INLINE void first_segment_set_conf(Segment *seg, SegmentVars *segvar, Atom
 FORCE_INLINE void model_set_conf_ligand_c(ModelDesc *m, const Flt *c, Flt *md) {
     SrcModel *src = m->src;
     Atom *atoms   = src->atoms;
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        CUDBG("nligand %d", src->nligand);
+    }
     CU_FOR2 (i, src->nligand) {
         Ligand &ligand  = src->ligands[i];
         auto p          = get_ligand_conf(src, c, i);
@@ -103,6 +107,9 @@ FORCE_INLINE void model_set_conf_ligand_c(ModelDesc *m, const Flt *c, Flt *md) {
 FORCE_INLINE void model_set_conf_flex_c(ModelDesc *m, const Flt *c, Flt *md) {
     SrcModel *src = m->src;
     Atom *atoms   = src->atoms;
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        CUDBG("nflex: %d", src->nflex);
+    }
     CU_FOR2 (i, src->nflex) {
         Residue &flex    = src->flex[i];
         auto *p          = get_flex_conf(src, c, i);

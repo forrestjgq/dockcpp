@@ -32,8 +32,11 @@ void minus_mat_vec_product(const flmat& m, const Change& in, Change& out) {
 	sz n = m.dim();
 	VINA_FOR(i, n) {
 		fl sum = 0;
-		VINA_FOR(j, n)
+		VINA_FOR(j, n) {
+			// MCDBG("mmvps %ld %ld: h[%ld] %f * %f", i, j, m.index_permissive(i, j), m(m.index_permissive(i, j)), in(j));
 			sum += m(m.index_permissive(i, j)) * in(j);
+		}
+		DBG("minus_mat_vec_product sum %ld: %f", i, sum);
 		out(i) = -sum;
 	}
 }
@@ -54,18 +57,24 @@ inline bool bfgs_update(flmat& h, const Change& p, const Change& y, const fl alp
 	const fl yhy = - scalar_product(y, minus_hy, h.dim());
 	const fl r = 1 / (alpha * yp); // 1 / (s^T * y) , where s = alpha * p // FIXME   ... < epsilon
 	const sz n = p.num_floats();
+	DBG("yp %f yhy %f r %f", yp, yhy, r);
 	VINA_FOR(i, n)
-		VINA_RANGE(j, i, n) // includes i
+		VINA_RANGE(j, i, n) { // includes i 
+			DBG("bfgs before update [%ld,%ld]:h: %f", i, j, h(i, j));
 			h(i, j) +=   alpha * r * (minus_hy(i) * p(j)
 	                                + minus_hy(j) * p(i)) +
 			           + alpha * alpha * (r*r * yhy  + r) * p(i) * p(j); // s * s == alpha * alpha * p * p
+			DBG("bfgs update [%ld,%ld]: p %f %f hy %f %f h: %f", i, j, p(i), p(j), minus_hy(i), minus_hy(j), h(i, j));
+
+		}
 	return true;
 }
 
 template<typename F, typename Conf, typename Change>
 fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Change& p, Conf& x_new, Change& g_new, fl& f1, int& evalcount) { // returns alpha
 	const fl c0 = 0.0001;
-	const unsigned max_trials = 10;
+	const unsigned max_trials = 8; // todo
+	// const unsigned max_trials = 10;
 	const fl multiplier = 0.5;
 	fl alpha = 1;
 
@@ -73,15 +82,26 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 
 	int t = 0;
 	VINA_U_FOR(trial, max_trials) {
+#if 0
+        printf("cpu before conf inc at %d\n", trial);
+		x.print();
+        printf("cpu before change inc at %d\n", trial);
+		p.print();
+#endif
 		x_new = x; x_new.increment(p, alpha);
+#if 0
+        printf("cpu after conf inc at %d\n", trial);
+		x_new.print();
+#endif
 		f1 = f(x_new, g_new);
 		evalcount++;
 		t++;
+		DBG("cpu lsm %d alpha %f f1 %f f0 %f", trial, alpha, f1, f0);
 		if(f1 - f0 < c0 * alpha * pg) // FIXME check - div by norm(p) ? no?
 			break;
 		alpha *= multiplier;
 	}
-	// printf("line search tries %d times\n", t);
+	DBG("cpu line search tries %d times, alpha %f f1 %f", t, alpha, f1);
 	return alpha;
 }
 
@@ -121,29 +141,50 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 
 	flv f_values; f_values.reserve(max_steps+1);
 	f_values.push_back(f0);
-#if 0
+#if 1
 	VINA_U_FOR(step, max_steps) {
 		minus_mat_vec_product(h, g, p);
 		fl f1 = 0;
 		const fl alpha = line_search(f, n, x, g, f0, p, x_new, g_new, f1, evalcount);
 		printf("step %d alpha %f f1 %f\n", step, alpha, f1);
+#if 0
+		printf("step %d alpha %f f1 %f\n", step, alpha, f1);
 		printf("c:\n");
 		x_new.print();
 		printf("g:\n");
 		g_new.print();
-
+#endif
+#if 0
+		MCDBG("g_new in step %d", step);
+		g_new.print();
+		MCDBG("g in step %d", step);
+		g.print();
+#endif
 		Change y(g_new); subtract_change(y, g, n);
+#if 0
+		MCDBG("y in step %d", step);
+		y.print();
+#endif
 
 		f_values.push_back(f1);
 		f0 = f1;
 		x = x_new;
+		// auto sg = std::sqrt(scalar_product(g, g, n));
+		// DBG("step %d sqrt g %f", step,sg);
 		if(!(std::sqrt(scalar_product(g, g, n)) >= 1e-5)) break; // breaks for nans too // FIXME !!?? 
 		g = g_new; // ?
+#if 0
+		MCDBG("g new in step %d", step);
+		g.print();
+#endif
 
 		if(step == 0) {
 			const fl yy = scalar_product(y, y, n);
-			if(std::abs(yy) > epsilon_fl)
+			DBG("yy %f", yy);
+			if(std::abs(yy) > epsilon_fl) {
+				DBG("step %d set diag %f", step, alpha * scalar_product(y, p, n) / yy);
 				set_diagonal(h, alpha * scalar_product(y, p, n) / yy);
+			}
 		}
 
 		// bool h_updated =
@@ -151,7 +192,7 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 	}
 #endif
 	if(!(f0 <= f_orig)) { // succeeds for nans too
-		printf("restore f0\n");
+		// printf("restore f0\n");
 		f0 = f_orig;
 		x = x_orig;
 		g = g_orig;

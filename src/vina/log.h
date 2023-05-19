@@ -4,7 +4,7 @@
 
 #include "common.h"
 
-#define VINADEBUG 1
+#define VINADEBUG 0
 #if VINADEBUG
 extern void dump_vecv(const char *s, const vecv& vv, const char* file, int line);
 extern void dump_flv(const char *s, const flv& vv, const char *file, int line) ;

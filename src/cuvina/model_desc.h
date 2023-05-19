@@ -26,7 +26,7 @@ namespace dock {
         return f + idx;
     }
     ATTR Flt *model_movable_e(const SrcModel *sm, const ModelDesc *d, Flt *m, int idx = 0) {
-        return m + d->minus_forces + idx;
+        return m + d->movable_e + idx;
     }
     ATTR PairEvalResult *model_pair_res(const SrcModel *sm, const ModelDesc *d, Flt *m, int idx = 0) {
         PairEvalResult * res = (PairEvalResult *)(m + d->pair_res);

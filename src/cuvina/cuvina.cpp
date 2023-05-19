@@ -189,11 +189,20 @@ static inline void vec_set(vec &v, const Vec &src) {
 void copy_vec(Vec &dst, const vec &src) {
     make_vec(dst, src.data[0], src.data[1], src.data[2]);
 }
+void copy_vec(vec &dst, const Vec &src) {
+    dst.data[0] = src.x, dst.data[1] = src.y, dst.data[2] = src.z;
+}
 void copy_vecs(Vec *dst, const vecv &srcs) {
     for (auto &v : srcs) {
         VDUMP("copy vec", v);
         copy_vec(*dst, v);
         dst++;
+    }
+}
+void copy_vecs(vecv &dst, const Vec *srcs) {
+    for (auto &v : dst) {
+        copy_vec(v, *srcs);
+        srcs++;
     }
 }
 static inline void qt_set(qt &dst, const Qt &src) {
@@ -242,6 +251,17 @@ void seg_tree_nodes_copy(int parent, int idx, Segment *segs, struct tree<segment
     make_vec(seg.relative_origin, origin.data[0], origin.data[1], origin.data[2]);
     tree.seq = myidx;
     DBG("COPY HSubTree, my idx %d parent %d child %d begin %d end %d", myidx, parent, tree.nr_nodes, seg.begin, seg.end);
+}
+void segvar_tree_nodes_restore(int parent, int idx, const SegmentVars *segs, struct tree<segment> &tree) {
+    auto myidx = idx + tree.nr_nodes;
+    // fill child in reverse order first into segs
+    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
+        segvar_tree_nodes_restore(myidx, idx, segs, *it);
+        idx += it->nr_nodes + 1;
+    }
+    auto &seg = segs[myidx];
+    vec_set(tree.node.axis, seg.axis);
+    vec_set(tree.node.origin, seg.origin);
 }
 void segvar_tree_nodes_copy(int parent, int idx, SegmentVars *segs, const struct tree<segment> &tree) {
     auto myidx = idx + tree.nr_nodes;
@@ -294,6 +314,18 @@ void htree_var_nodes_copy(SegmentVars *segs, const struct heterotree<T> &tree) {
     DBG("copy root node %d", myidx);
     DBG("    axis %f %f %f", seg.axis.x, seg.axis.y, seg.axis.z);
     DBG("    origin %f %f %f", seg.origin.x, seg.origin.y, seg.origin.z);
+}
+template<typename T>
+void htree_var_nodes_restore(const SegmentVars *segs, struct heterotree<T> &tree) {
+    int idx = 0;
+    int myidx = tree.nr_nodes; // where this node is stored
+    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
+        segvar_tree_nodes_restore(myidx, idx, segs, *it);
+        idx += it->nr_nodes + 1;
+    }
+    auto &seg = segs[myidx];
+    vec_set(tree.node.axis, seg.axis);
+    vec_set(tree.node.origin, seg.origin);
 }
         // std::cout << __FILE__ << ":" << __LINE__ << " " << "alloc " #type " size " << sizeof(type) << std::endl;
     #define ALLOC(dst, type) do {\
@@ -468,34 +500,42 @@ std::shared_ptr<Memory> create_model_desc_memory(model *m, SrcModel *sm) {
     sz = (sz + 4096 -1) / 4096*4096;
     return makeMemory(sz);
 }
-ModelDesc *make_model_desc(Memory *mem, SrcModel *sm, model *m, const vec &v) {
-    ModelDesc *md;
-    int offset = 0;
-
-    ALLOC(md, ModelDesc);
+template <typename T>
+inline int set_desc_offset(int& offset, int n) {
+    assert(sizeof(T) % sizeof(Flt) == 0);
+    int cur = offset;
+    offset += sizeof(T) /sizeof(Flt) * n;
+    return cur;
+}
+bool make_model_desc(Memory *mem, SrcModel *sm, model *m, ModelDesc *md) {
     md->src = sm;
     md->ncoords = m->coords.size();
-    md->vs[0] = v.data[0], md->vs[1] = v.data[1], md->vs[2] = v.data[2];
+    int offset = 0;
 
-    md->coords = offset, offset += sizeof(Vec) * md->ncoords;
+    md->coords = set_desc_offset<Vec>(offset, md->ncoords);
+    // md->coords = offset, offset += sizeof(Vec) * md->ncoords;
     ALLOC_ARR(md->ligands, int, sm->nligand);
     ALLOC_ARR(md->flex, int, sm->nflex);
 
     for (int i = 0; i < sm->nligand; i++) {
         auto &ligand = sm->ligands[i];
-        md->ligands[i] = offset, offset += sizeof(SegmentVars) * ligand.nr_node;
+        // md->ligands[i] = offset, offset += sizeof(SegmentVars) * ligand.nr_node;
+        md->ligands[i] = set_desc_offset<SegmentVars>(offset, ligand.nr_node);
     }
     for (int i = 0; i < sm->nflex; i++) {
         auto &flex = sm->flex[i];
-        md->flex[i] = offset, offset += sizeof(SegmentVars) * flex.nr_node;
+        // md->flex[i] = offset, offset += sizeof(SegmentVars) * flex.nr_node;
+        md->flex[i] = set_desc_offset<SegmentVars>(offset, flex.nr_node);
     }
 
-    md->minus_forces = offset, offset += sizeof(Vec) * sm->movable_atoms;
-    md->movable_e = offset, offset += sizeof(Flt) * sm->movable_atoms;
-    md->pair_res = offset, offset += sm->npairs * sizeof(PairEvalResult);
+    // md->minus_forces = offset, offset += sizeof(Vec) * sm->movable_atoms;
+    md->minus_forces = set_desc_offset<Vec>(offset, sm->movable_atoms);
+    // md->movable_e = offset, offset += sizeof(Flt) * sm->movable_atoms;
+    md->movable_e = set_desc_offset<Flt>(offset, sm->movable_atoms);
+    // md->pair_res = offset, offset += sm->npairs * sizeof(PairEvalResult);
+    md->pair_res = set_desc_offset<PairEvalResult>(offset, sm->npairs);
 
-    assert (offset % sizeof(Flt) == 0);
-    md->szflt = offset /sizeof(Flt);
+    md->szflt = offset;
     ALLOC_ARR(md->data, Flt, md->szflt);
 
     for (int i = 0; i < sm->nligand; i++) {
@@ -510,15 +550,41 @@ ModelDesc *make_model_desc(Memory *mem, SrcModel *sm, model *m, const vec &v) {
     copy_vecs(model_coords(sm, md, md->data), m->coords);
 
 
+    return true;
+cleanup:
+    return false;
+}
+ModelDesc *make_model_desc(Memory *mem, SrcModel *sm, model *m, int nmc) {
+    ModelDesc *md;
+
+    ALLOC_ARR(md, ModelDesc, nmc);
+    for (auto i = 0; i < nmc; i++) {
+        if (!make_model_desc(mem, sm, m, md+i)) {
+            goto cleanup;
+        }
+    }
     return md;
 cleanup:
     return nullptr;
 }
-std::shared_ptr<void> makeModelDesc(model *m, const vec &v) {
+void restore_model_desc(ModelDesc *md, SrcModel *sm, model *m) {
+
+    for (int i = 0; i < sm->nligand; i++) {
+        auto ligandvar = model_ligand(sm, md, md->data, i, 0);
+        htree_var_nodes_restore(ligandvar, m->ligands[i]);
+    }
+    for (int i = 0; i < sm->nflex; i++) {
+        auto flexvar = model_flex(sm, md, md->data, i, 0);
+        htree_var_nodes_restore(flexvar, m->flex[i]);
+    }
+
+    copy_vecs(m->coords, model_coords(sm, md, md->data));
+}
+std::shared_ptr<void> makeModelDesc(model *m, int nmc) {
     auto sm = extract_object<SrcModel>(m->m_gpu);
     auto mem = create_model_desc_memory(m, sm);
     if (mem) {
-        auto md = make_model_desc(mem.get(), sm, m, v);
+        auto md = make_model_desc(mem.get(), sm, m, nmc);
         if (md) {
             auto gpusm = extract_cuda_object<SrcModel>(m->m_gpu);
             md->src = gpusm;
@@ -529,20 +595,20 @@ std::shared_ptr<void> makeModelDesc(model *m, const vec &v) {
     }
     return nullptr;
 }
-bool makeModelDesc(std::shared_ptr<void> &obj, model *m, const vec &v) {
+bool makeModelDesc(std::shared_ptr<void> &obj, model *m, int nmc) {
     if (obj) {
         auto mem = extract_memory(obj);
         if (mem) {
             mem->reset();
             auto sm = extract_object<SrcModel>(m->m_gpu);
-            auto ctx = make_model_desc(mem.get(), sm, m, v);
+            auto ctx = make_model_desc(mem.get(), sm, m, nmc);
             if (ctx) {
                 updateCuObject(obj, ctx);
                 return true;
             }
         }
     }  else {
-        obj = makeModelDesc(m, v);
+        obj = makeModelDesc(m, nmc);
         return bool(obj);
     }
     return false;
@@ -747,11 +813,13 @@ cleanup:
     return false;
 }
 // good
-BFGSCtx *make_bfgs(Memory *mem, const change &g, const conf &c, int evalcnt) {
+BFGSCtx *make_bfgs(Memory *mem, const model &m, const change &g, const conf &c, const vec &v, int evalcnt) {
     BFGSCtx *ctx;
     ALLOC(ctx, BFGSCtx);
     if (!make_change(mem, &ctx->g, g)) goto cleanup;
     if (!make_conf(mem, &ctx->c, c)) goto cleanup;
+    ALLOC_ARR(ctx->coords, Vec, m.coords.size());
+    ctx->vs[0] = v.data[0], ctx->vs[1] = v.data[1], ctx->vs[2] = v.data[2];
     ctx->eval_cnt = evalcnt;
     return ctx;
 cleanup:
@@ -759,10 +827,10 @@ cleanup:
 }
 
 // good
-bool makeNewBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c, int evalcnt) {
+static bool makeNewBFGSCtx(std::shared_ptr<void> &obj, const model &m, const change &g, const conf &c, const vec &v, int evalcnt) {
     auto mem = create_bfgs_memory(g, c);
     if (mem) {
-        auto ctx = make_bfgs(mem.get(), g, c, evalcnt);
+        auto ctx = make_bfgs(mem.get(), m, g, c, v, evalcnt);
         if (ctx) {
             obj = makeCuObject(mem, ctx);
             return true;
@@ -770,21 +838,258 @@ bool makeNewBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c, 
     }
     return true;
 }
-bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c, int evalcnt) {
+bool makeBFGSCtx(std::shared_ptr<void> &obj, const model &m, const change &g, const conf &c, const vec& v, int evalcnt) {
     if (obj) {
         auto mem = extract_memory(obj);
         if (mem) {
             mem->reset();
-            auto ctx = make_bfgs(mem.get(), g, c, evalcnt);
+            auto ctx = make_bfgs(mem.get(), m, g, c, v, evalcnt);
             if (ctx) {
                 updateCuObject(obj, ctx);
                 return true;
             }
         }
     }  else {
-        return makeNewBFGSCtx(obj, g, c, evalcnt);
+        return makeNewBFGSCtx(obj, m, g, c, v, evalcnt);
     }
     return false;
+}
+
+std::shared_ptr<Memory> create_mcctx_memory(SrcModel *sm, int nmc) {
+    Size sz = SIZEOF(MCCtx) + SIZEOFARR(int, nmc) + SIZEOFARR(Flt, nmc*(sm->nrflts_conf+1));
+    sz = (sz + 4096 -1) / 4096*4096;
+    return makeMemory(sz);
+}
+// init: used to create random conf for i-th MC instance
+MCCtx * make_mcctx(Memory *mem, SrcModel *sm, int nmc, MCCtx &src, std::function<void (int i, Flt *c)> &init) {
+    MCCtx *ctx;
+    const Flt max_fl = (std::numeric_limits<Flt>::max)();
+
+    ALLOC(ctx, MCCtx);
+    *ctx = src;
+    ALLOC_ARR(ctx->curr_evalcnt, int, nmc);
+    memset(ctx->curr_evalcnt, 0, sizeof(int) * nmc);
+    ALLOC_ARR(ctx->best_e_and_c, Flt, (sm->nrflts_conf + 1) * nmc);
+    for (int i = 0; i < nmc; i++) {
+        auto ec = ctx->best_e_and_c + i * (sm->nrflts_conf+1);
+        *ec = max_fl;
+        init(i, ec+1);
+    }
+    return ctx;
+cleanup:
+    return nullptr;
+}
+std::shared_ptr<void> makeMCCtx(const model &m, MCCtx &src, int nmc, std::function<void (int i, Flt *c)> &init) {
+    auto sm = extract_object<SrcModel>(m.m_gpu);
+    auto mem = create_mcctx_memory(sm, nmc);
+    if (mem) {
+        auto ctx = make_mcctx(mem.get(), sm, nmc, src, init);
+        if (ctx) {
+            return makeCuObject(mem, ctx);
+        }
+    }
+    return nullptr;
+}
+std::shared_ptr<Memory> create_mcin_memory(int nmc) {
+    Size sz = SIZEOFARR(MCInputs, nmc);
+    sz = (sz + 4096 -1) / 4096*4096;
+    return makeMemory(sz);
+}
+MCInputs * make_inputs(Memory *mem, const conf &c, int nmc, int num_mutable_entities, int steps, rng& generator) {
+    MCInputs *ins;
+    ALLOC_ARR(ins, MCInputs, nmc);
+    for(int i = 0; i < steps; i++) {
+        ins->steps = steps;
+        auto &in = ins->in[i];
+        auto v = random_inside_sphere(generator);
+        in.rsphere.x = v.data[0], in.rsphere.y = v.data[1], in.rsphere.z = v.data[2]; 
+        in.rpi = random_fl(-pi,pi, generator);
+        in.groups[0] = -1;
+
+        int which_int = random_int(0, num_mutable_entities, generator);
+        sz which = sz(which_int);
+        VINA_FOR_IN(i, c.ligands) {
+            if(which == 0) { in.groups[0] = 0, in.groups[1] = i; break; }
+            --which;
+            if(which == 0) { in.groups[0] = 1, in.groups[1] = i; break; }
+            --which;
+            if(which < c.ligands[i].torsions.size()) {in.groups[0] = 2, in.groups[1] = i, in.groups[2] = which; break;}
+            which -= c.ligands[i].torsions.size();
+        }
+        VINA_FOR_IN(i, c.flex) {
+            if(which < c.flex[i].torsions.size()) {in.groups[0] = 3, in.groups[1] = i, in.groups[2] = which; break;}
+            which -= c.flex[i].torsions.size();
+        }
+    }
+    return ins;
+cleanup:
+    return nullptr;
+}
+std::shared_ptr<void> makeMCInputs(const model &m, int nmc,int num_mutable_entities, int steps, rng &generator, conf &c) {
+    auto mem = create_mcin_memory(nmc);
+    if (mem) {
+        auto ctx = make_inputs(mem.get(), c, nmc, num_mutable_entities, steps, generator);
+        if (ctx) {
+            return makeCuObject(mem, ctx);
+        }
+    }
+    return nullptr;
+}
+bool makeMCInputs(std::shared_ptr<void> &obj, const model &m, int nmc,int num_mutable_entities, int steps, rng &generator, conf &c) {
+    if (obj) {
+        auto mem = extract_memory(obj);
+        if (mem) {
+            mem->reset();
+            auto ins = make_inputs(mem.get(), c, nmc, num_mutable_entities, steps, generator);
+            if (ins) {
+                updateCuObject(obj, ins);
+                return true;
+            }
+        }
+        return false;
+    } else {
+        obj = makeMCInputs(m, nmc, num_mutable_entities, steps, generator, c);
+        return bool(obj);
+    }
+}
+
+
+std::shared_ptr<Memory> create_mcout_memory(ModelDesc *md, SrcModel *sm, int nmc) {
+    Size sz = SIZEOFARR(MCOutputs, nmc);
+    for (auto i = 0; i < nmc; i++) {
+        sz += SIZEOFARR(Flt, sm->nrflts_conf+1);
+        sz += SIZEOFARR(Vec, md->ncoords);
+    }
+    sz = (sz + 4096 -1) / 4096*4096;
+    return makeMemory(sz);
+}
+MCOutputs * make_outputs(Memory *mem, SrcModel *sm, ModelDesc *md, int steps, int nmc) {
+    MCOutputs *outs;
+    ALLOC_ARR(outs, MCOutputs, nmc);
+    for(int i = 0; i < steps; i++) {
+        auto &out = outs->out[i];
+        ALLOC_ARR(out.e_and_c, Flt, sm->nrflts_conf+1);
+        ALLOC_ARR(out.coords, Vec, md->ncoords);
+    }
+    return outs;
+cleanup:
+    return nullptr;
+}
+std::shared_ptr<void> makeMCOutputs(const model &m, SrcModel *sm, ModelDesc *md, int nmc, int steps) {
+    auto mem = create_mcin_memory(nmc);
+    if (mem) {
+        auto ctx = make_outputs(mem.get(), sm, md, steps, nmc);
+        if (ctx) {
+            return makeCuObject(mem, ctx);
+        }
+    }
+    return nullptr;
+}
+
+bool makeMC(std::shared_ptr<void> &pmd, std::shared_ptr<void> &pctx, std::shared_ptr<void> &pin,
+            std::shared_ptr<void> &pout, model &m, int num_mutable_entities, int steps, int nmc,
+            rng &generator, conf &c, sz over, fl average_required_improvement, int local_steps,
+            int max_evalcnt, const vec &v1, const vec &v2, fl amplitude, fl temperature, 
+            std::function<void (int i, fl *c)> init) {
+
+    ModelDesc * md;
+    auto sm = extract_object<SrcModel>(m.m_gpu);
+    if (!pmd) {
+        // create once only
+        if(!makeModelDesc(pmd, &m, nmc))  {
+            goto cleanup;
+        }
+    }
+
+    md = extract_object<ModelDesc>(pmd);
+    if (!pctx) {
+        MCCtx src;
+        src.over = over;
+        src.average_required_improvement = average_required_improvement;
+        src.num_mutable_entities = num_mutable_entities;
+        src.max_evalcnt = max_evalcnt;
+        src.vs[0] = v1.data[0], src.vs[1] = v1.data[1], src.vs[2] = v1.data[2];
+        src.vs[3] = v2.data[0], src.vs[4] = v2.data[1], src.vs[5] = v2.data[2];
+        src.amplitude = amplitude;
+        src.rtemperature = 1.0/temperature;
+        pctx = makeMCCtx(m, src, nmc, init);
+        if (!pctx) {
+            goto cleanup;
+        }
+    }
+
+    if (!pout) {
+        pout = makeMCOutputs(m, sm, md, nmc, steps);
+        if (!pout) {
+            goto cleanup;
+        }
+    }
+    if(!makeMCInputs(pin, m, nmc, num_mutable_entities, steps, generator, c)) {
+        goto cleanup;
+    }
+
+    return true;
+cleanup:
+    return false;
+}
+void run_mc(SrcModel *srcm, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *ctx,
+            MCInputs *ins, MCOutputs *outs, int nmc, int steps, int local_steps, cudaStream_t stream);
+
+std::vector<std::vector<output_type>> run_cuda_mc(std::shared_ptr<void> &pmd, std::shared_ptr<void> &pctx,
+                 std::shared_ptr<void> &pin, std::shared_ptr<void> &pout, model *m,
+                 const precalculate_byatom &p, const igrid &ig, int nmc, int steps, int local_steps, conf_size &s) {
+    submit_vina_server([&](cudaStream_t stream) {
+        auto &che = (const cache &)ig;
+        // const
+        auto ch = extract_cuda_object<Cache>(che.m_gpu);
+        auto pa = extract_cuda_object<PrecalculateByAtom>(p.m_gpu);
+        auto md = extract_cuda_object<ModelDesc>(pmd);
+        auto cpum = extract_object<ModelDesc>(pmd);
+        auto ins = extract_cuda_object<MCInputs>(pin);
+        auto outs = extract_cuda_object<MCOutputs>(pout);
+        auto ctx = extract_cuda_object<MCCtx>(pctx);
+
+        run_mc(cpum->src, md, pa, ch, ctx, ins, outs, nmc, steps, local_steps, stream);
+
+        // copy output from cuda to host
+        auto cpumem = extract_memory(pout);
+        auto cudamem = extract_cuda_memory(pout);
+        cudaMemcpyAsync(cpumem->ptr(), cudamem->ptr(), cpumem->size(), cudaMemcpyDeviceToHost, stream);
+        auto err = cudaStreamSynchronize(stream);
+        if (err != cudaSuccess) {
+            std::cerr << "vina mc eval fail, err: " << cudaGetErrorString(err) << std::endl;
+        }
+    }) ;
+
+    auto cpumem = extract_memory(pout);
+    cpumem->restore();
+
+    auto outs = extract_object<MCOutputs>(pout);
+    std::vector<std::vector<output_type>> ret;
+    ret.resize(nmc);
+    for (int idx = 0; idx < nmc; idx++) {
+        auto &v = ret[idx];
+        auto &mouts = outs[idx];
+        for (int i = 0; i < mouts.n; i++) {
+            auto &out = outs->out[i];
+            conf c(s, out.e_and_c+1);
+            output_type ot(c, *out.e_and_c);
+            VINA_FOR(j, m->num_movable_atoms()) {
+                auto &pc = out.coords[j];
+                if (m->atoms[j].el != EL_TYPE_H) {
+                    ot.coords.emplace_back(pc.x, pc.y, pc.z);
+                }
+            }
+            v.push_back(ot);
+        }
+    }
+
+    // todo
+    // auto cpumd = extract_object<ModelDesc>(mobj);
+    // restore_model_desc(cpumd, cpumd->src, m);
+
+    // todo: update model
+    return ret;
 }
 #if 0
 bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) {
@@ -813,8 +1118,8 @@ bool makeBFGSCtx(std::shared_ptr<void> &obj, const change &g, const conf &c) {
 }
 #endif
 #if 1
-// bad
-std::shared_ptr<Memory> create_prec_byatom_memory(const precalculate_byatom &p) {
+    // bad
+    std::shared_ptr<Memory> create_prec_byatom_memory(const precalculate_byatom &p) {
     auto pesz = p.m_data.m_data.size();
     Size sz = sizeof(PrecalculateByAtom) + sizeof(PrecalculateElement) * pesz;
     for (auto i = 0u; i < pesz; i++) {
@@ -966,7 +1271,7 @@ fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig,
 extern void run_bfgs(ModelDesc *cpum, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx,
                      int max_steps, Flt average_required_improvement, Size over,
                      cudaStream_t stream);
-fl run_cuda_bfgs(const precalculate_byatom &p, const igrid &ig, change &g, conf &c,
+fl run_cuda_bfgs(model *m, const precalculate_byatom &p, const igrid &ig, change &g, conf &c,
                  const unsigned max_steps, const fl average_required_improvement, const sz over,
                  int &evalcount, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj) {
     submit_vina_server([&](cudaStream_t stream) {
@@ -977,11 +1282,16 @@ fl run_cuda_bfgs(const precalculate_byatom &p, const igrid &ig, change &g, conf 
         auto md = extract_cuda_object<ModelDesc>(mobj);
         auto cpum = extract_object<ModelDesc>(mobj);
         auto ctx = extract_cuda_object<BFGSCtx>(ctxobj);
+
         PRINT("RUN BFGS CUDA");
         run_bfgs(cpum, md, pa, ch, ctx, max_steps, average_required_improvement, over, stream);
 
+        // copy output from cuda to host
         auto cpumem = extract_memory(ctxobj);
         auto cudamem = extract_cuda_memory(ctxobj);
+        cudaMemcpyAsync(cpumem->ptr(), cudamem->ptr(), cpumem->size(), cudaMemcpyDeviceToHost, stream);
+        cpumem = extract_memory(mobj);
+        cudamem = extract_cuda_memory(mobj);
         cudaMemcpyAsync(cpumem->ptr(), cudamem->ptr(), cpumem->size(), cudaMemcpyDeviceToHost, stream);
         auto err = cudaStreamSynchronize(stream);
         if (err != cudaSuccess) {
@@ -990,7 +1300,10 @@ fl run_cuda_bfgs(const precalculate_byatom &p, const igrid &ig, change &g, conf 
     }) ;
 
     auto cpumem = extract_memory(ctxobj);
+    auto cpumdmem = extract_memory(mobj);
     cpumem->restore();
+    cpumdmem->restore();
+
     auto ctx = extract_object<BFGSCtx>(ctxobj);
     auto cf = &ctx->c;
     // output conf
@@ -1001,6 +1314,12 @@ fl run_cuda_bfgs(const precalculate_byatom &p, const igrid &ig, change &g, conf 
         output_flex_conf(c.flex[i], cf->flex[i]);
     }
     evalcount = ctx->eval_cnt;
+
+    // todo
+    // auto cpumd = extract_object<ModelDesc>(mobj);
+    // restore_model_desc(cpumd, cpumd->src, m);
+
+    // todo: update model
     return ctx->e;
 }
 

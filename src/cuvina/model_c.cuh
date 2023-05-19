@@ -20,7 +20,7 @@ COULD_INLINE void prec_ele_eval_deriv(const PrecalculateElement &pe, Flt r2, Flt
         *outdor = p1[1] + rem * (p2[1] - p1[1]);
 }
 FORCE_INLINE Size triangular_matrix_index(Size n, Size i, Size j) {
-	return i + j*(j+1)/2; 
+	return i + ((j*(j+1)) >> 1); 
 }
 FORCE_INLINE void prec_by_atom_eval_deriv(const PrecalculateByAtom *pa, Size i, Size j, Flt r2, Flt *oute, Flt *outdor) {
 	Size idx = triangular_matrix_index(pa->pe_dim, i, j);
@@ -160,12 +160,13 @@ FORCE_INLINE void set_derivative(const Vecp& force_torque, Flt *r) {
 // }
 
 // eval pairs der, stores in model pair_res, and model coords will be refreshed
-FORCE_INLINE  void c_model_eval_deriv_pairs(ModelDesc *m, const PrecalculateByAtom *p, Flt *md) {
+FORCE_INLINE  void c_model_eval_deriv_pairs(ModelDesc *m, const PrecalculateByAtom *p, Flt *md, const Flt *vs) {
 	SrcModel *src = m->src;
 	CU_FOR2(i, src->npairs) {
         auto coords = model_coords(src, m, md);
         auto pair_res = model_pair_res(src, m, md, i);
-		eval_interacting_pair_deriv(i, p, src->pairs[i], coords, *pair_res, m->vs);
+		eval_interacting_pair_deriv(i, p, src->pairs[i], coords, *pair_res, vs);
+        // printf("pair %d e %f\n force %f %f %f\n", i, pair_res->e, pair_res->force.x , pair_res->force.y, pair_res->force.z );
 	}
 }
 // collect e and setup forces
@@ -176,12 +177,17 @@ FORCE_INLINE void c_model_collect_deriv(ModelDesc *m, Flt *e, Flt *md) {
 	if (IS_2DMAIN()) {
 		*e = 0;
 		FOR(i, src->movable_atoms) {
-			*e += *model_movable_e(src, m, md, i);
+            auto me = model_movable_e(src, m, md, i);
+			*e += *me;
+            CUDBG("me %d %f %p total %f", i, *me, me, *e);
 		}
+        CUDBG("ce0 %f %p", *e, e);
 		FOR(i, src->npairs) {
 			auto res = model_pair_res(src, m, md, i);
 			*e += res->e;
+            // printf("pe %d %f\n", i, res->e);
 		}
+        CUDBG("ce1 %f %p", *e, e);
 	}
 	// accumulate minus_forces
 	if (IS_2DSUB()) {

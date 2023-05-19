@@ -13,13 +13,21 @@ namespace dock {
 #define FOR_RANGE(i, start, end) for(int i = start; i < end; i++)
 
 #define SQR(x) ((x) * (x))
+#define EVAL_IN_WARP 1
 #if USE_CUDA_VINA
     #define FORCE_INLINE __forceinline__ __device__
+    // #define FORCE_INLINE static __device__
     #define COULD_INLINE __forceinline__ __device__
+    // #define COULD_INLINE static __device__
     #define GLOBAL __global__ 
     #define CU_FOR(i, n) for (int i = threadIdx.x; i < n; i += blockDim.x)
     #define CU_FORY(i, n) for (int i = threadIdx.y; i < n; i += blockDim.y)
     #define SYNC() __syncthreads()
+#if EVAL_IN_WARP
+    #define WARPSYNC() 
+#else
+    #define WARPSYNC() SYNC()
+#endif
     #define IS_MAIN_THREAD() (threadIdx.x == 0)
     #define IS_SUB_THREAD() (threadIdx.x == 1)
     #define IS_2DMAIN() (threadIdx.x == 0 && threadIdx.y == 0)
@@ -252,10 +260,10 @@ FORCE_INLINE void curl(Flt& e, Flt v) {
 FORCE_INLINE void normalize_angle(Flt& x) { // subtract or add enough 2*pi's to make x be in [-pi, pi]
     while(true) {
         if (x > 3 * PI) {                   // very large
-            Flt n = (x - PI) / (2 * PI);    // how many 2*PI's do you want to subtract?
+            Flt n = (x - PI) * R2PI;    // how many 2*PI's do you want to subtract?
             x -= 2 * PI * CEIL(n);  // ceil can be very slow, but this should not be called often
         } else if (x < -3 * PI) {   // very small
-            Flt n = (-x - PI) / (2 * PI);  // how many 2*PI's do you want to add?
+            Flt n = (-x - PI) * R2PI;  // how many 2*PI's do you want to add?
             x += 2 * PI * CEIL(n);  // ceil can be very slow, but this should not be called often
         } else {
             if (x > PI) {                // in (   PI, 3*PI]
@@ -280,6 +288,22 @@ FORCE_INLINE void angle_to_quaternion(const Flt *axis, Flt angle, Flt *out) { //
 	Flt s = SIN(angle/2);
     out[0] = c, out[1] = s * axis[0], out[2] = s * axis[1], out[3] = s * axis[2];
 }
+// require 1 flt tmp
+FORCE_INLINE void angle_to_quaternion_x(const Flt *axis, Flt angle, Flt *out, Flt *tmp) { // axis is assumed to be a unit vector
+	//assert(eq(tvmet::norm2(axis), 1));
+	// assert(eq(axis.norm(), 1));
+    int dx = threadIdx.x;
+    if (dx == 0) {
+        normalize_angle(angle); // this is probably only necessary if angles can be very big
+        angle = angle * 0.5;
+        out[0] = COS(angle);
+        *tmp = SIN(angle);
+    }
+    WARPSYNC();
+    if (dx > 0 && dx < 4) {
+        out[dx] = *tmp * axis[dx-1];
+    }
+}
 FORCE_INLINE void angle_to_quaternion(const Flt *rotation, Flt *out) {
 	//fl angle = tvmet::norm2(rotation); 
 	Flt angle = norm3d(rotation[0], rotation[1], rotation[2]); 
@@ -292,6 +316,35 @@ FORCE_INLINE void angle_to_quaternion(const Flt *rotation, Flt *out) {
         angle_to_quaternion(axis, angle, out);
     } else {
         out[0] = 1., out[1] = 0, out[2] = 0, out[3] = 0;
+    }
+}
+// require tmp: 6 flts
+FORCE_INLINE void angle_to_quaternion_x(const Flt *rotation, Flt *out, Flt *tmp) {
+	//fl angle = tvmet::norm2(rotation); 
+    int offset = 0;
+    Flt *angle, *r, *axis, *atq;
+    angle = tmp + offset, offset ++;
+    r = tmp + offset, offset ++;
+    axis = tmp + offset, offset += 3;
+    atq = tmp + offset, offset++;
+
+    int dx = threadIdx.x;
+    if (dx == 0) {
+        *angle = norm3d(rotation[0], rotation[1], rotation[2]); 
+        *r = reciprocal(*angle);
+    }
+    WARPSYNC();
+    if (dx < 3) {
+        out[dx] = dx > 0 ? 0. : 1.;
+    }
+    WARPSYNC();
+	if(*angle > EPSILON) {
+		//vec axis; 
+		//axis = rotation / angle;	
+        if (dx < 3) {
+            axis[dx] = rotation[dx] * *r;
+        }
+        angle_to_quaternion_x(axis, *angle, out, atq);
     }
 }
 FORCE_INLINE void qt_multiple(Flt *dst, const Flt *left, const Flt *right) {

@@ -26,7 +26,7 @@
 #include <exception>
 #include <boost/program_options.hpp>
 #include "vina.h"
-#include "utils.h"
+#include "vina_utils.h"
 #include "scoring_function.h"
 
 struct usage_error : public std::runtime_error {

@@ -24,6 +24,7 @@
 #include "bfgs.h"
 #include "cache.h"
 #include "cuvina/cuvina.h"
+#include "utils.h"
 
 
 #define CUBFGS 1
@@ -57,7 +58,7 @@ struct quasi_newton_aux {
         // }
         if (use_gpu) {
             // printf("gpu %d start\n", cnt);
-            use_gpu = dock::makeBFGSCtx(m_bfgs_ctx, g, c);
+            use_gpu = dock::makeBFGSCtx(m_bfgs_ctx, *m, g, c, v);
             // printf("gpu %d end\n", cnt);
         }
         // Before evaluating conf, we have to update model
@@ -103,28 +104,36 @@ void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igri
     change g1(g);
     output_type out1(out);
 
+    dock::Clock clk;
+    clk.mark();
     cpu(m, p, ig, out, g, v, evalcount);
+    auto cdu = clk.mark();
     gpu(m1, p, ig, out1, g1, v, cnt);
-    printf("last eval cnt %d\n", evalcount);
-    out.c.print();
-    exit (0);
+    auto gdu = clk.mark();
+    auto diff = cdu > gdu ? cdu - gdu : gdu - cdu;
+    printf("cpu %lu gpu %lu diff %lu\n", cdu, gdu, diff);
+    if (0) {
+        printf("last eval cnt %d\n", evalcount);
+        out.c.print();
+    }
+    // exit (0);
 #else
     cpu(m, p, ig, out, g, v, evalcount);
 #endif
 }
 
 void quasi_newton::gpu(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int &evalcount) { // g must have correct size
-    fl res;
+    fl res = 0;
     if (!use_gpu) {
         std::cerr << "newton init not use gpu" << std::endl;
     }
     if (use_gpu) {
-        use_gpu = dock::makeModelDesc(m_gpu, &m, v);
+        use_gpu = dock::makeModelDesc(m_gpu, &m);
         if (!use_gpu) {
             std::cerr << "make model not use gpu" << std::endl;
         }
         if (use_gpu) {
-            use_gpu = dock::makeBFGSCtx(m_bfgs_ctx, g, out.c, evalcount);
+            use_gpu = dock::makeBFGSCtx(m_bfgs_ctx, m, g, out.c, v, evalcount);
             if (!use_gpu) {
                 std::cerr << "make bfgs ctx not use gpu" << std::endl;
             }
@@ -132,7 +141,10 @@ void quasi_newton::gpu(model& m, const precalculate_byatom& p, const igrid& ig, 
 
         if (use_gpu) {
             std::cerr << "use gpu" << std::endl;
-            dock::run_cuda_bfgs(p, ig, g, out.c, max_steps, average_required_improvement, 10, evalcount, m_gpu, m_bfgs_ctx);
+            res = dock::run_cuda_bfgs(&m, p, ig, g, out.c, max_steps, average_required_improvement, 10, evalcount, m_gpu, m_bfgs_ctx);
+            // todo:
+            printf("gpu done, e: %f cnt %d\n", res, evalcount);
+            return;
         }
     }
 

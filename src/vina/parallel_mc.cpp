@@ -36,12 +36,12 @@ typedef boost::ptr_vector<parallel_mc_task> parallel_mc_task_container;
 
 struct parallel_mc_aux {
 	const monte_carlo* mc;
-	const precalculate_byatom* p;
-	const igrid* ig;
+	precalculate_byatom* p;
+	igrid* ig;
 	const vec* corner1;
 	const vec* corner2;
 	parallel_progress* pg;
-	parallel_mc_aux(const monte_carlo* mc_, const precalculate_byatom* p_, const igrid* ig_, const vec* corner1_, const vec* corner2_, parallel_progress* pg_)
+	parallel_mc_aux(const monte_carlo* mc_, precalculate_byatom* p_, igrid* ig_, const vec* corner1_, const vec* corner2_, parallel_progress* pg_)
 		: mc(mc_), p(p_), ig(ig_), corner1(corner1_), corner2(corner2_), pg(pg_) {}
 	void operator()(parallel_mc_task& t) const {
 		(*mc)(t.m, t.out, *p, *ig, *corner1, *corner2, pg, t.generator);
@@ -65,7 +65,7 @@ void parallel_mc::enable_gpu(bool enable) {
 	mc.enable_gpu(enable);
 }
 
-void parallel_mc::operator()(const model& m, output_container& out, const precalculate_byatom& p, const igrid& ig, const vec& corner1, const vec& corner2, rng& generator, std::function<void(double)>* progress_callback) const {
+void parallel_mc::operator()(const model& m, output_container& out, precalculate_byatom& p, igrid& ig, const vec& corner1, const vec& corner2, rng& generator, std::function<void(double)>* progress_callback) const {
 	parallel_progress pp (progress_callback);
 	parallel_mc_aux parallel_mc_aux_instance(&mc, &p, &ig, &corner1, &corner2, (display_progress ? (&pp) : NULL));
 	parallel_mc_task_container task_container;
