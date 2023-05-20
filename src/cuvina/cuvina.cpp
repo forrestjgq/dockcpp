@@ -55,6 +55,7 @@ public:
         } else {
             std::cerr << "fail to alloc " << sz << " bytes, left " << left() << std::endl;
             *pptr = nullptr;
+            assert(false);
         }
     }
     void dump(uint8_t *base) {
@@ -418,6 +419,7 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
     for (auto i = 0u; i < sm->natoms; i++) {
         auto &c = m->atoms[i].coords;
         make_vec(sm->atoms[i].coords, c.data[0], c.data[1], c.data[2]);
+        sm->atoms[i].el = m->atoms[i].el;
     }
 
     sm->npairs = int(m->inter_pairs.size() + m->glue_pairs.size() + m->other_pairs.size());
@@ -478,7 +480,7 @@ bool makeSrcModel(model *m, precalculate_byatom &p) {
 }
 
 extern int bfgs_max_trials();
-std::shared_ptr<Memory> create_model_desc_memory(model *m, SrcModel *sm) {
+std::shared_ptr<Memory> create_model_desc_memory(model *m, SrcModel *sm, int nmc) {
     Size sz = SIZEOF(ModelDesc) + SIZEOFARR(int, sm->nligand)+ SIZEOFARR(int, sm->nflex);
     int offset = 0;
     /*md->coords = offset,*/ offset += sizeof(Vec) * m->coords.size();
@@ -497,6 +499,7 @@ std::shared_ptr<Memory> create_model_desc_memory(model *m, SrcModel *sm) {
     /*md->pair_res = offset,*/ offset += sm->npairs * sizeof(PairEvalResult);
 
     sz += Size(offset * bfgs_max_trials());
+    sz *= nmc;
     sz = (sz + 4096 -1) / 4096*4096;
     return makeMemory(sz);
 }
@@ -582,14 +585,18 @@ void restore_model_desc(ModelDesc *md, SrcModel *sm, model *m) {
 }
 std::shared_ptr<void> makeModelDesc(model *m, int nmc) {
     auto sm = extract_object<SrcModel>(m->m_gpu);
-    auto mem = create_model_desc_memory(m, sm);
+    auto mem = create_model_desc_memory(m, sm, nmc);
     if (mem) {
+        auto gpusm = extract_cuda_object<SrcModel>(m->m_gpu);
         auto md = make_model_desc(mem.get(), sm, m, nmc);
         if (md) {
-            auto gpusm = extract_cuda_object<SrcModel>(m->m_gpu);
-            md->src = gpusm;
+            for (auto i = 0; i < nmc; i++) {
+                md[i].src = gpusm;
+            }
             auto ret = makeCuObject(mem, md);
-            md->src = sm;
+            for (auto i = 0; i < nmc; i++) {
+                md[i].src = sm;
+            }
             return ret;
         }
     }
@@ -970,29 +977,35 @@ bool makeMCInputs(std::shared_ptr<void> &obj, const model &m, int nmc,int num_mu
 }
 
 
-std::shared_ptr<Memory> create_mcout_memory(ModelDesc *md, SrcModel *sm, int nmc) {
+std::shared_ptr<Memory> create_mcout_memory(ModelDesc *md, SrcModel *sm, int steps, int nmc) {
     Size sz = SIZEOFARR(MCOutputs, nmc);
     for (auto i = 0; i < nmc; i++) {
-        sz += SIZEOFARR(Flt, sm->nrflts_conf+1);
-        sz += SIZEOFARR(Vec, md->ncoords);
+        Size szsteps = 0;
+        szsteps += SIZEOFARR(Flt, sm->nrflts_conf+1);
+        szsteps += SIZEOFARR(Vec, md->ncoords);
+        sz += szsteps * steps;
     }
     sz = (sz + 4096 -1) / 4096*4096;
     return makeMemory(sz);
 }
 MCOutputs * make_outputs(Memory *mem, SrcModel *sm, ModelDesc *md, int steps, int nmc) {
-    MCOutputs *outs;
-    ALLOC_ARR(outs, MCOutputs, nmc);
-    for(int i = 0; i < steps; i++) {
-        auto &out = outs->out[i];
-        ALLOC_ARR(out.e_and_c, Flt, sm->nrflts_conf+1);
-        ALLOC_ARR(out.coords, Vec, md->ncoords);
+    MCOutputs *ret;
+    ALLOC_ARR(ret, MCOutputs, nmc);
+    for (int idx = 0; idx< nmc; idx++) {
+        auto outs = ret + idx;
+        for(int i = 0; i < steps; i++) {
+            auto &out = outs->out[i];
+            ALLOC_ARR(out.e_and_c, Flt, sm->nrflts_conf+1);
+            ALLOC_ARR(out.coords, Vec, md->ncoords);
+        }
+
     }
-    return outs;
+    return ret;
 cleanup:
     return nullptr;
 }
 std::shared_ptr<void> makeMCOutputs(const model &m, SrcModel *sm, ModelDesc *md, int nmc, int steps) {
-    auto mem = create_mcin_memory(nmc);
+    auto mem = create_mcout_memory(md, sm, steps, nmc);
     if (mem) {
         auto ctx = make_outputs(mem.get(), sm, md, steps, nmc);
         if (ctx) {

@@ -25,6 +25,7 @@
 #include "mutate.h"
 #include "quasi_newton.h"
 #include "cuvina/cuvina.h"
+#include "utils.h"
 namespace dock {
 // void run_bfgs(Model *cpum, Model *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over , cudaStream_t stream);
 };
@@ -87,9 +88,12 @@ struct gpu_monte_carlo {
 			return false;
 		}
         int step = 0;
+		dock::Clock clk;
+		clk.mark();
         while (step < int(host->global_steps)) {
             int batch = step == 0 ? host->num_saved_mins : gpu_steps;
             increment_me->increase(batch);
+			step += batch;
             auto suc = dock::makeMCInputs(m_gpu_mc_inputs, m, nr_mc, nr_mutable_entities, batch,
                                           generators, ctemplate);
             if (!suc) {
@@ -113,6 +117,8 @@ struct gpu_monte_carlo {
 					add_to_output_container(containers[i], tmp, host->min_rmsd, host->num_saved_mins);
 				}
 			}
+			auto us = clk.mark();
+			printf("run step %d: %lu us\n", step, us);
         }
         for (auto i = 0; i < nr_mc; i++) {
             for (auto& tmp : containers) {
@@ -197,12 +203,12 @@ void monte_carlo::operator()(model& m, output_container& out, precalculate_byato
 	if (gpu_nmc > 0) {
 		gpu_monte_carlo gmc;
 		gmc.host = this;
-		if (gmc(m, out, p, ig, corner1, corner2, increment_me, generator, gpu_nmc)) {
+		if (!gmc(m, out, p, ig, corner1, corner2, increment_me, generator, gpu_nmc)) {
 			run_cpu = false;
 		}
 	}
 
 	if (run_cpu) {
-		this->operator()(m, out, p, ig, corner1, corner2, increment_me, generator); // call the version that produces the whole container
+		this->cpu(m, out, p, ig, corner1, corner2, increment_me, generator); // call the version that produces the whole container
 	}
 }

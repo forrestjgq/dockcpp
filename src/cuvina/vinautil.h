@@ -15,10 +15,10 @@ namespace dock {
 #define SQR(x) ((x) * (x))
 #define EVAL_IN_WARP 1
 #if USE_CUDA_VINA
-    #define FORCE_INLINE __forceinline__ __device__
-    // #define FORCE_INLINE static __device__
-    #define COULD_INLINE __forceinline__ __device__
-    // #define COULD_INLINE static __device__
+    // #define FORCE_INLINE __forceinline__ __device__
+    #define FORCE_INLINE static __device__
+    // #define COULD_INLINE __forceinline__ __device__
+    #define COULD_INLINE static __device__
     #define GLOBAL __global__ 
     #define CU_FOR(i, n) for (int i = threadIdx.x; i < n; i += blockDim.x)
     #define CU_FORY(i, n) for (int i = threadIdx.y; i < n; i += blockDim.y)

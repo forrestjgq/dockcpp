@@ -847,6 +847,9 @@ FORCE_INLINE void gyration_radius(const ModelDesc *m, Flt *md, int idx, Flt *out
         if(m->src->atoms[idxligand].el != 0 /*EL_TYPE_H*/ && dx < 3) {
             auto *coord = model_coords(m->src, m, md, idxligand);
             auto *seg = model_ligand(m->src, m, md, idxligand, lig.nr_node-1); // root is last seg
+            if (dx == 0 && dy == 0 && blockIdx.x == 5) {
+                printf("idx %d idxligand %d md %p m %p nrnode %d origin %f %f %f origin %p\n", idx, idxligand, md, m, lig.nr_node, seg->origin.x, seg->origin.y, seg->origin.z, &(seg->origin));
+            }
             Flt sub = vec_get(*coord, dx) - vec_get(seg->origin, dx);
             acc[dy * 3 + dx] = sub * sub;
             if (dx == 0) {
@@ -939,6 +942,7 @@ __device__ void mc_xyz(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *c
     tids.tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x *blockDim.y;
     tids.blksz = blockDim.x * blockDim.y * blockDim.z;
 
+    printf("block %d md data %p\n", blockIdx.x, m->data);
 
     SrcModel *srcm = m->src;
     int ng = srcm->nrflts_change;
@@ -973,6 +977,9 @@ __device__ void mc_xyz(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *c
     
     int commited = 0;
     for (int dz = 0; dz < steps; dz++) {
+        if (blockIdx.x == 0 && INMAIN()) {
+            printf("cu step %d\n", dz);
+        }
         if (ctx->max_evalcnt > 0 && *evalcnt > ctx->max_evalcnt) {
             break;
         }
@@ -1055,7 +1062,10 @@ GLOBAL void mc_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *ct
     int nc = srcm->nrflts_conf;
     int mcidx = blockIdx.x;
     auto c = ctx->best_e_and_c + (nc+1) * mcidx;
-    if (*(ctx->curr_evalcnt + mcidx) < ctx->max_evalcnt) {
+        if (blockIdx.x == 0 && INMAIN()) {
+            printf("cu runs curr eval cnt %d max %d\n", *(ctx->curr_evalcnt + mcidx), ctx->max_evalcnt);
+        }
+    if (ctx->max_evalcnt <= 0 || *(ctx->curr_evalcnt + mcidx) < ctx->max_evalcnt) {
         mc_xyz<false>(m+mcidx, pa, ch, ctx, ins+mcidx, outs+mcidx, c, mem, ctx->curr_evalcnt+mcidx, steps);
     }
 
@@ -1083,7 +1093,7 @@ void run_mc(SrcModel *srcm, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCC
     int sm = MCSIZE(srcm->natoms, ng, nc, local_steps) * sizeof(Flt);
 
     // sm requirement:
-    printf("ng %d nc %d sm size %d\n", ng, nc, sm);
+    // printf("ng %d nc %d sm size %d\n", ng, nc, sm);
     mc_kernel<<<grid, block, sm, stream>>>(m, pa, ch, ctx, ins, outs, steps);
 }
 };

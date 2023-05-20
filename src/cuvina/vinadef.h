@@ -5,11 +5,14 @@
 #include <stdint.h>
 
 namespace dock {
+    typedef double Flt;
     struct Qt {
         double x, y, z, w;
     };
+    // struct Vec {
+    //     Flt d[3];
+    // };
 
-    typedef double Flt;
     typedef double3 Vec;
     // typedef double4 Qt; // cuda require 16 alignment, do not use it
     typedef uint64_t Size;
@@ -132,7 +135,6 @@ namespace dock {
 
     typedef  struct {
         Vec coords;
-        // todo: 
         Size el;
     }Atom;
 
