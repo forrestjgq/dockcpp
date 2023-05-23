@@ -25,7 +25,7 @@ bool makeBFGSCtx(std::shared_ptr<void> &obj, const model &m, const change &g, co
 
 using rngs = std::vector<std::shared_ptr<rng>>;
 bool makeMCInputs(std::shared_ptr<void> &obj, const model &m, int nmc, int num_mutable_entities,
-                  int steps, rngs &generators, conf &c);
+                  int mc_steps, rngs &generators, conf &c);
 bool makeMC(std::shared_ptr<void> &pmd, std::shared_ptr<void> &pctx, std::shared_ptr<void> &pin,
             std::shared_ptr<void> &pout, model &m, int num_mutable_entities, int steps, int nmc,
             rngs &generators, conf &c, sz Over, fl average_required_improvement, int local_steps,

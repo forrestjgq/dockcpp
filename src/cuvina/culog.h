@@ -2,13 +2,27 @@
 #define CULOG_H
 #include <cstring>
 #include <cstdio>
+__forceinline__ __device__ unsigned lane_id()
+{
+    unsigned ret; 
+    asm volatile ("mov.u32 %0, %laneid;" : "=r"(ret));
+    return ret;
+}
 
+__forceinline__ __device__ unsigned warp_id()
+{
+    // this is not equal to threadIdx.x / 32
+    unsigned ret; 
+    asm volatile ("mov.u32 %0, %warpid;" : "=r"(ret));
+    return ret;
+}
 #define MCUDBG(fmt, ...) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
-#define MCUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
+// #define MCUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
+#define MCUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.d[0], v.d[1], v.d[2])
 // #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
 #define MCUVECPDUMP(hdr, vp) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
     __LINE__,blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  \
-    vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z); }while(0)
+    vp.first.d[0], vp.first.d[1], vp.first.d[2], vp.second.d[0], vp.second.d[1], vp.second.d[2]); }while(0)
 #define CUDEBUG 0
 #if CUDEBUG
 #if USE_CUDA_VINA
@@ -17,11 +31,15 @@
 // extern void dump_vecpv(const char *s, const std::vector<vecp>& vv, const char *file, int line) ;
 
 #define CUDBG(fmt, ...) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
-#define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
+// #define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
+#define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.d[0], v.d[1], v.d[2])
 // #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
+// #define CUVECPDUMP(hdr, vp) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
+//     __LINE__,blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  \
+//     vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z); }while(0)
 #define CUVECPDUMP(hdr, vp) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
     __LINE__,blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  \
-    vp.first.x, vp.first.y, vp.first.z, vp.second.x, vp.second.y, vp.second.z); }while(0)
+    vp.first.d[0], vp.first.d[1], vp.first.d[2], vp.second.d[0], vp.second.d[1], vp.second.d[2]); }while(0)
 // #define FLVDUMP(hdr, vv) dump_flv(hdr, vv, fileOf(__FILE__), __LINE__)
 #else
 static inline const char *fileOf(const char *path) {

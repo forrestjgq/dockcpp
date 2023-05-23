@@ -29,7 +29,8 @@ struct parallel_mc_task {
 	model m;
 	output_container out;
 	rng generator;
-	parallel_mc_task(const model& m_, int seed) : m(m_), generator(static_cast<rng::result_type>(seed)) {}
+	int gpu_nmc;
+	parallel_mc_task(const model& m_, int seed, int nmc) : m(m_), generator(static_cast<rng::result_type>(seed)), gpu_nmc(nmc) {}
 };
 
 typedef boost::ptr_vector<parallel_mc_task> parallel_mc_task_container;
@@ -41,11 +42,10 @@ struct parallel_mc_aux {
 	const vec* corner1;
 	const vec* corner2;
 	parallel_progress* pg;
-	int gpu_nmc;
 	parallel_mc_aux(monte_carlo* mc_, precalculate_byatom* p_, igrid* ig_, const vec* corner1_, const vec* corner2_, parallel_progress* pg_, int gpu_nmc_)
-		: mc(mc_), p(p_), ig(ig_), corner1(corner1_), corner2(corner2_), pg(pg_), gpu_nmc(gpu_nmc_) {}
+		: mc(mc_), p(p_), ig(ig_), corner1(corner1_), corner2(corner2_), pg(pg_) {}
 	void operator()(parallel_mc_task& t) const {
-		(*mc)(t.m, t.out, *p, *ig, *corner1, *corner2, pg, t.generator, gpu_nmc);
+		(*mc)(t.m, t.out, *p, *ig, *corner1, *corner2, pg, t.generator, t.gpu_nmc);
 	}
 };
 
@@ -76,8 +76,14 @@ void parallel_mc::operator()(const model& m, output_container& out, precalculate
 	if (gpu_nmc > 0) {
 		nr_threads = (num_tasks + gpu_nmc -1) / gpu_nmc;
 	}
-	VINA_FOR(i, nr_threads)
-		task_container.push_back(new parallel_mc_task(m, random_int(0, 1000000, generator)));
+	VINA_FOR(i, nr_threads) {
+		int nmc = gpu_nmc;
+		if ((i+1) * sz(gpu_nmc) > num_tasks) {
+			nmc = num_tasks % gpu_nmc;
+		}
+		printf("thread %lu nmc %d\n", i, nmc);
+		task_container.push_back(new parallel_mc_task(m, random_int(0, 1000000, generator), nmc));
+	}
 	if(display_progress) 
 		pp.init(nr_threads * mc.global_steps);
 	parallel_iter<parallel_mc_aux, parallel_mc_task_container, parallel_mc_task, true> parallel_iter_instance(&parallel_mc_aux_instance, num_threads);

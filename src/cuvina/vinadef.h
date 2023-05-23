@@ -9,11 +9,11 @@ namespace dock {
     struct Qt {
         double x, y, z, w;
     };
-    // struct Vec {
-    //     Flt d[3];
-    // };
+    struct Vec {
+        Flt d[3];
+    };
 
-    typedef double3 Vec;
+    // typedef double3 Vec;
     // typedef double4 Qt; // cuda require 16 alignment, do not use it
     typedef uint64_t Size;
 
@@ -194,6 +194,7 @@ namespace dock {
         SrcModel *src;
         int szflt; // how many flts ModelVars takes
         int ncoords;
+        int active = 0; // data contains some model description data, this indicates the active one
 
         // offset of each fields in Flt unit
         int coords; // will be updated after model der
@@ -203,7 +204,6 @@ namespace dock {
         int minus_forces; // used only inside model der
         int movable_e; // used only inside model der
         int pair_res; // used only inside model der
-        int active = 0; // data contains some model description data, this indicates the active one
 
         Flt *data;
     } ModelDesc;
@@ -250,7 +250,7 @@ namespace dock {
         // Flt *fs; // size: max_step + 1
     } BFGSCtx;
 
-    #define MC_MAX_STEP_BATCH 100
+    #define MC_MAX_STEP_BATCH 200
     typedef struct {
         Vec rsphere; // same size as which, random_inside_sphere(generator); 
         Flt rpi; // same size as which, random_fl(-pi, pi, generator)
@@ -263,7 +263,7 @@ namespace dock {
         int groups[3]; 
     } MCStepInput;
     typedef struct {
-        int steps;// how many steps at most should be executed, also the size of [in]
+        int mc_steps;// how many mc steps at most should be executed
         MCStepInput in[MC_MAX_STEP_BATCH];
     } MCInputs;
 

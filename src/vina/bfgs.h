@@ -127,12 +127,13 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 	Conf x_new(x);
 	fl f0 = f(x, g);
 	evalcount++;
+#if 0
 	printf("f0 %f\n", f0);
 	printf("c:\n");
 	x.print();
 	printf("g:\n");
 	g.print();
-
+#endif
 	fl f_orig = f0;
 	Change g_orig(g);
 	Conf x_orig(x);
@@ -146,15 +147,13 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 		minus_mat_vec_product(h, g, p);
 		fl f1 = 0;
 		const fl alpha = line_search(f, n, x, g, f0, p, x_new, g_new, f1, evalcount);
-		printf("step %d alpha %f f1 %f\n", step, alpha, f1);
+		// printf("step %d alpha %f f1 %f\n", step, alpha, f1);
 #if 0
 		printf("step %d alpha %f f1 %f\n", step, alpha, f1);
 		printf("c:\n");
 		x_new.print();
 		printf("g:\n");
 		g_new.print();
-#endif
-#if 0
 		MCDBG("g_new in step %d", step);
 		g_new.print();
 		MCDBG("g in step %d", step);

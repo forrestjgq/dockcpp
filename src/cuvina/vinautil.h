@@ -32,6 +32,8 @@ namespace dock {
     #define IS_SUB_THREAD() (threadIdx.x == 1)
     #define IS_2DMAIN() (threadIdx.x == 0 && threadIdx.y == 0)
     #define IS_2DSUB() (threadIdx.x == 1 && threadIdx.y == 0)
+    #define ZIS(n) (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == n)
+    #define XY0() (threadIdx.x == 0 && threadIdx.y == 0)
     #define CU_FOR2(i, n) for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < n; i += blockDim.x * blockDim.y)
     #define IS_GRID(n) (blockIdx.x == n)
     #define CEIL(x) ceil(x)
@@ -64,61 +66,94 @@ namespace dock {
 #endif
 
     FORCE_INLINE void make_vec(Vec &v, Flt a, Flt b, Flt c) {
-        v = make_double3(a, b, c);
+        // v = make_double3(a, b, c);
+        v.d[0] = a, v.d[1] = b, v.d[2] = c;
     }
     FORCE_INLINE Flt vec_get(const Vec &v, int i) {
-        Flt *f = (Flt *)&v;
-        return *(f+i);
+        // Flt *f = (Flt *)&v;
+        // return *(f+i);
+        return v.d[i];
     }
     FORCE_INLINE void vec_set(Vec &v, int i, Flt val) {
-        Flt *f = (Flt *)&v;
-        *(f+i) = val;
+        // Flt *f = (Flt *)&v;
+        // *(f+i) = val;
+        v.d[i] = val;
     }
     FORCE_INLINE void vec_set(Vec &dst, const Vec &src) {
         dst = src;
     }
     FORCE_INLINE void vec_copy_to(const Vec &src, Flt *dst) {
-        dst[0] = src.x, dst[1] = src.y, dst[2] = src.z;
+        // dst[0] = src.x, dst[1] = src.y, dst[2] = src.z;
+        dst[0] = src.d[0], dst[1] = src.d[1], dst[2] = src.d[2];
     }
 
     FORCE_INLINE void vec_add(const Vec &v1, const Vec &v2, Vec &out) {
-        make_vec(out, vec_get(v1, 0) + vec_get(v2, 0), vec_get(v1, 1) + vec_get(v2, 1),vec_get(v1, 2) + vec_get(v2, 2));
+        // make_vec(out, vec_get(v1, 0) + vec_get(v2, 0), vec_get(v1, 1) + vec_get(v2, 1),vec_get(v1, 2) + vec_get(v2, 2));
+        out.d[0] = v1.d[0] + v2.d[0];
+        out.d[1] = v1.d[1] + v2.d[1];
+        out.d[2] = v1.d[2] + v2.d[2];
     }
     // v1 += v2
     FORCE_INLINE void vec_add(Vec &v1, const Vec &v2) {
-        make_vec(v1, vec_get(v1, 0) + vec_get(v2, 0), vec_get(v1, 1) + vec_get(v2, 1),vec_get(v1, 2) + vec_get(v2, 2));
+        // make_vec(v1, vec_get(v1, 0) + vec_get(v2, 0), vec_get(v1, 1) + vec_get(v2, 1),vec_get(v1, 2) + vec_get(v2, 2));
+        v1.d[0] += v2.d[0];
+        v1.d[1] += v2.d[1];
+        v1.d[2] += v2.d[2];
     }
     FORCE_INLINE void vec_add(const Vec &v1, Flt f, Vec &out) {
-        make_vec(out, vec_get(v1, 0) + f, vec_get(v1, 1) + f,vec_get(v1, 2) - f);
+        // make_vec(out, vec_get(v1, 0) + f, vec_get(v1, 1) + f,vec_get(v1, 2) - f);
+        out.d[0] = v1.d[0] + f;
+        out.d[1] = v1.d[1] + f;
+        out.d[2] = v1.d[2] + f;
     }
     FORCE_INLINE Flt vec_sum(const Vec &v) {
-        return v.x + v.y + v.z;
+        return v.d[0] + v.d[1] + v.d[2];
     }
     FORCE_INLINE Flt vec_sqr_sum(const Vec &v) {
-        return v.x * v.x + v.y *v.y + v.z * v.z;
+        // return v.x * v.x + v.y *v.y + v.z * v.z;
+        return v.d[0]*v.d[0] + v.d[1]*v.d[1] + v.d[2]*v.d[2];
     }
     FORCE_INLINE void vec_sub(const Vec &v1, const Vec &v2, Vec &out) {
-        make_vec(out, vec_get(v1, 0) - vec_get(v2, 0), vec_get(v1, 1) - vec_get(v2, 1),vec_get(v1, 2) - vec_get(v2, 2));
+        // make_vec(out, vec_get(v1, 0) - vec_get(v2, 0), vec_get(v1, 1) - vec_get(v2, 1),vec_get(v1, 2) - vec_get(v2, 2));
+        out.d[0] = v1.d[0] - v2.d[0];
+        out.d[1] = v1.d[1] - v2.d[1];
+        out.d[2] = v1.d[2] - v2.d[2];
     }
     FORCE_INLINE void vec_sub(Vec &v1, const Vec &v2) {
-        make_vec(v1, vec_get(v1, 0) - vec_get(v2, 0), vec_get(v1, 1) - vec_get(v2, 1),vec_get(v1, 2) - vec_get(v2, 2));
+        // make_vec(v1, vec_get(v1, 0) - vec_get(v2, 0), vec_get(v1, 1) - vec_get(v2, 1),vec_get(v1, 2) - vec_get(v2, 2));
+        v1.d[0] -= v2.d[0];
+        v1.d[1] -= v2.d[1];
+        v1.d[2] -= v2.d[2];
     }
     FORCE_INLINE void vec_sub(const Vec &v1, Flt f, Vec &out) {
-        make_vec(out, vec_get(v1, 0) - f, vec_get(v1, 1) - f,vec_get(v1, 2) - f);
+        // make_vec(out, vec_get(v1, 0) - f, vec_get(v1, 1) - f,vec_get(v1, 2) - f);
+        out.d[0] = v1.d[0] - f;
+        out.d[1] = v1.d[1] - f;
+        out.d[2] = v1.d[2] - f;
     }
     FORCE_INLINE void vec_product(const Vec &v1, const Vec &v2, Vec &out) {
-        make_vec(out, vec_get(v1, 0) * vec_get(v2, 0), vec_get(v1, 1) * vec_get(v2, 1),vec_get(v1, 2) * vec_get(v2, 2));
+        // make_vec(out, vec_get(v1, 0) * vec_get(v2, 0), vec_get(v1, 1) * vec_get(v2, 1),vec_get(v1, 2) * vec_get(v2, 2));
+        out.d[0] = v1.d[0] * v2.d[0];
+        out.d[1] = v1.d[1] * v2.d[1];
+        out.d[2] = v1.d[2] * v2.d[2];
     }
     FORCE_INLINE void vec_product(const Vec &v1, Flt f, Vec &out) {
-        make_vec(out, vec_get(v1, 0) * f, vec_get(v1, 1) * f,vec_get(v1, 2) * f);
+        // make_vec(out, vec_get(v1, 0) * f, vec_get(v1, 1) * f,vec_get(v1, 2) * f);
+        out.d[0] = v1.d[0] * f;
+        out.d[1] = v1.d[1] * f;
+        out.d[2] = v1.d[2] * f;
     }
     FORCE_INLINE Flt vec_product_sum(const Vec &v1, const Vec &v2) {
-        return vec_get(v1, 0) * vec_get(v2, 0)+ vec_get(v1, 1) * vec_get(v2, 1)+vec_get(v1, 2) * vec_get(v2, 2);
+        // return vec_get(v1, 0) * vec_get(v2, 0)+ vec_get(v1, 1) * vec_get(v2, 1)+vec_get(v1, 2) * vec_get(v2, 2);
+        return v1.d[0] * v2.d[0]+ v1.d[1] * v2.d[1]+ v1.d[2] * v2.d[2];
     }
     FORCE_INLINE void cross_product(const Vec &a, const Vec &b, Vec &out) {
-        return make_vec(out, vec_get(a, 1) * vec_get(b, 2) - vec_get(a, 2) * vec_get(b, 1),
-                        vec_get(a, 2) * vec_get(b, 0) - vec_get(a, 0) * vec_get(b, 2),
-                        vec_get(a, 0) * vec_get(b, 1) - vec_get(a, 1) * vec_get(b, 0));
+        // return make_vec(out, vec_get(a, 1) * vec_get(b, 2) - vec_get(a, 2) * vec_get(b, 1),
+        //                 vec_get(a, 2) * vec_get(b, 0) - vec_get(a, 0) * vec_get(b, 2),
+        //                 vec_get(a, 0) * vec_get(b, 1) - vec_get(a, 1) * vec_get(b, 0));
+        out.d[0] = a.d[1] * b.d[2] - a.d[2] * b.d[1];
+        out.d[1] = a.d[2] * b.d[0] - a.d[0] * b.d[2];
+        out.d[2] = a.d[0] * b.d[1] - a.d[1] * b.d[0];
     }
     FORCE_INLINE void vecp_clear(Vecp &p) {
         make_vec(p.first, 0, 0, 0);
@@ -153,10 +188,13 @@ namespace dock {
                x * zr - y * wr + z * xr + w * yr, x * wr + y * zr - z * yr + w * xr);
     }
     FORCE_INLINE void mat_multiple(const Flt *mat, const Vec &v, Vec &out) {
-		make_vec(out,
-                   mat[0]*v.x + mat[3]*v.y + mat[6]*v.z, 
-			       mat[1]*v.x + mat[4]*v.y + mat[7]*v.z,
-				   mat[2]*v.x + mat[5]*v.y + mat[8]*v.z);
+		// make_vec(out,
+        //            mat[0]*v.x + mat[3]*v.y + mat[6]*v.z, 
+		// 	       mat[1]*v.x + mat[4]*v.y + mat[7]*v.z,
+		// 		   mat[2]*v.x + mat[5]*v.y + mat[8]*v.z);
+        out.d[0] = mat[0] * v.d[0] + mat[3] * v.d[1] + mat[6] * v.d[2];
+        out.d[1] = mat[1] * v.d[0] + mat[4] * v.d[1] + mat[7] * v.d[2];
+        out.d[2] = mat[2] * v.d[0] + mat[5] * v.d[1] + mat[8] * v.d[2];
     }
 
     FORCE_INLINE void mat_set(Flt *mat, int i, int j, Flt v) {

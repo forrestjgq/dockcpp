@@ -133,7 +133,6 @@ FORCE_INLINE Flt grid_eval(const Grid *g, const Vec &location, Flt slope, Flt v,
 	}
 
 }
-
 // oute must has model movable_atoms size
 // depends on model coords
 __device__ void c_cache_eval_deriv(const Cache *c, const ModelDesc *m, Flt *md, const Flt *vs) {
@@ -158,5 +157,6 @@ __device__ void c_cache_eval_deriv(const Cache *c, const ModelDesc *m, Flt *md, 
 		CUVDUMP("force deriv", deriv);
 		
 	}
+	__syncwarp();
 }
 };  // namespace dock

@@ -98,7 +98,7 @@ struct quasi_newton_aux {
 };
 
 void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount) { // g must have correct size
-#if 1
+#if 0
     int cnt = evalcount;
     model m1(m);
     change g1(g);
@@ -118,7 +118,8 @@ void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igri
     }
     // exit (0);
 #else
-    cpu(m, p, ig, out, g, v, evalcount);
+    // cpu(m, p, ig, out, g, v, evalcount);
+    gpu(m, p, ig, out, g, v, evalcount);
 #endif
 }
 
@@ -140,10 +141,10 @@ void quasi_newton::gpu(model& m, const precalculate_byatom& p, const igrid& ig, 
         }
 
         if (use_gpu) {
-            std::cerr << "use gpu" << std::endl;
+            // std::cerr << "use gpu" << std::endl;
             res = dock::run_cuda_bfgs(&m, p, ig, g, out.c, max_steps, average_required_improvement, 10, evalcount, m_gpu, m_bfgs_ctx);
             // todo:
-            printf("gpu done, e: %f cnt %d\n", res, evalcount);
+            // printf("gpu done, e: %f cnt %d\n", res, evalcount);
             return;
         }
     }
@@ -155,9 +156,12 @@ void quasi_newton::gpu(model& m, const precalculate_byatom& p, const igrid& ig, 
     }
     // printf("=========================\n");
 
-    // Update model a last time after optimization
+#if 0
     printf("gpu done, e: %f cnt %d\n", res, evalcount);
     out.c.print();
+#endif
+
+    // Update model a last time after optimization
     m.set(out.c);
     out.e = res;
 }
@@ -168,8 +172,10 @@ void quasi_newton::cpu(model& m, const precalculate_byatom& p, const igrid& ig, 
     // printf("=========================\n");
 
     // Update model a last time after optimization
+#if 0
     printf("cpu done, e: %f cnt %d\n", res, evalcount);
     out.c.print();
+#endif
     m.set(out.c);
     out.e = res;
     // exit (0);

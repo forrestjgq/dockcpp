@@ -179,19 +179,21 @@ inline void updateCuObject(std::shared_ptr<void> stub, void *obj) {
 }
 
 static inline void make_vec(Vec &v, Flt a, Flt b, Flt c) {
-    v.x = a, v.y = b, v.z = c;
+    // v.x = a, v.y = b, v.z = c;
+    v.d[0] = a, v.d[1] = b, v.d[2] = c;
 }
 static inline void vec_set(Vec &v, const vec &src) {
-    v.x = src.data[0], v.y = src.data[1], v.z = src.data[2];
+    // v.x = src.data[0], v.y = src.data[1], v.z = src.data[2];
+    v.d[0] = src.data[0], v.d[1] = src.data[1], v.d[2] = src.data[2];
 }
 static inline void vec_set(vec &v, const Vec &src) {
-    v.data[0] = src.x, v.data[1] = src.y, v.data[2] = src.z; 
+    v.data[0] = src.d[0], v.data[1] = src.d[1], v.data[2] = src.d[2]; 
 }
 void copy_vec(Vec &dst, const vec &src) {
     make_vec(dst, src.data[0], src.data[1], src.data[2]);
 }
 void copy_vec(vec &dst, const Vec &src) {
-    dst.data[0] = src.x, dst.data[1] = src.y, dst.data[2] = src.z;
+    dst.data[0] = src.d[0], dst.data[1] = src.d[1], dst.data[2] = src.d[2];
 }
 void copy_vecs(Vec *dst, const vecv &srcs) {
     for (auto &v : srcs) {
@@ -275,8 +277,8 @@ void segvar_tree_nodes_copy(int parent, int idx, SegmentVars *segs, const struct
     vec_set(seg.axis, tree.node.axis);
     vec_set(seg.origin, tree.node.get_origin());
     DBG("copy child node %d", myidx);
-    DBG("    axis %f %f %f", seg.axis.x, seg.axis.y, seg.axis.z);
-    DBG("    origin %f %f %f", seg.origin.x, seg.origin.y, seg.origin.z);
+    DBG("    axis %f %f %f", seg.axis.d[0], seg.axis.d[1], seg.axis.d[2]);
+    DBG("    origin %f %f %f", seg.origin.d[0], seg.origin.d[1], seg.origin.d[2]);
 }
 // ok
 template<typename T>
@@ -313,8 +315,8 @@ void htree_var_nodes_copy(SegmentVars *segs, const struct heterotree<T> &tree) {
     vec_set(seg.axis, tree.node.axis);
     vec_set(seg.origin, tree.node.get_origin());
     DBG("copy root node %d", myidx);
-    DBG("    axis %f %f %f", seg.axis.x, seg.axis.y, seg.axis.z);
-    DBG("    origin %f %f %f", seg.origin.x, seg.origin.y, seg.origin.z);
+    DBG("    axis %f %f %f", seg.axis.d[0], seg.axis.d[1], seg.axis.d[2]);
+    DBG("    origin %f %f %f", seg.origin.d[0], seg.origin.d[1], seg.origin.d[2]);
 }
 template<typename T>
 void htree_var_nodes_restore(const SegmentVars *segs, struct heterotree<T> &tree) {
@@ -539,6 +541,7 @@ bool make_model_desc(Memory *mem, SrcModel *sm, model *m, ModelDesc *md) {
     md->pair_res = set_desc_offset<PairEvalResult>(offset, sm->npairs);
 
     md->szflt = offset;
+    md->active = 0;
     ALLOC_ARR(md->data, Flt, md->szflt);
 
     for (int i = 0; i < sm->nligand; i++) {
@@ -608,9 +611,16 @@ bool makeModelDesc(std::shared_ptr<void> &obj, model *m, int nmc) {
         if (mem) {
             mem->reset();
             auto sm = extract_object<SrcModel>(m->m_gpu);
-            auto ctx = make_model_desc(mem.get(), sm, m, nmc);
-            if (ctx) {
-                updateCuObject(obj, ctx);
+            auto gpusm = extract_cuda_object<SrcModel>(m->m_gpu);
+            auto md = make_model_desc(mem.get(), sm, m, nmc);
+            if (md) {
+                for (auto i = 0; i < nmc; i++) {
+                    md[i].src = gpusm;
+                }
+                updateCuObject(obj, md);
+                for (auto i = 0; i < nmc; i++) {
+                    md[i].src = sm;
+                }
                 return true;
             }
         }
@@ -902,17 +912,18 @@ std::shared_ptr<Memory> create_mcin_memory(int nmc) {
     sz = (sz + 4096 -1) / 4096*4096;
     return makeMemory(sz);
 }
-MCInputs * make_inputs(Memory *mem, const conf &c, int nmc, int num_mutable_entities, int steps, std::vector<std::shared_ptr<rng>> & generators) {
+MCInputs * make_inputs(Memory *mem, const conf &c, int nmc, int num_mutable_entities, int mc_steps, std::vector<std::shared_ptr<rng>> & generators) {
     MCInputs *ret;
+    assert (mc_steps <= MC_MAX_STEP_BATCH);
     ALLOC_ARR(ret, MCInputs, nmc);
     for (auto idx = 0; idx < nmc; idx++) {
         auto &generator = *(generators[idx]);
         auto ins = ret + idx;
-        for (int i = 0; i < steps; i++) {
-            ins->steps   = steps;
+        for (int i = 0; i < mc_steps; i++) {
+            ins->mc_steps   = mc_steps;
             auto &in     = ins->in[i];
             auto v       = random_inside_sphere(generator);
-            in.rsphere.x = v.data[0], in.rsphere.y = v.data[1], in.rsphere.z = v.data[2];
+            in.rsphere.d[0] = v.data[0], in.rsphere.d[1] = v.data[1], in.rsphere.d[2] = v.data[2];
             in.rpi       = random_fl(-pi, pi, generator);
             in.groups[0] = -1;
 
@@ -948,22 +959,22 @@ MCInputs * make_inputs(Memory *mem, const conf &c, int nmc, int num_mutable_enti
 cleanup:
     return nullptr;
 }
-std::shared_ptr<void> makeMCInputs(const model &m, int nmc,int num_mutable_entities, int steps, rngs &generators, conf &c) {
+std::shared_ptr<void> makeMCInputs(const model &m, int nmc,int num_mutable_entities, int mc_steps, rngs &generators, conf &c) {
     auto mem = create_mcin_memory(nmc);
     if (mem) {
-        auto ctx = make_inputs(mem.get(), c, nmc, num_mutable_entities, steps, generators);
+        auto ctx = make_inputs(mem.get(), c, nmc, num_mutable_entities, mc_steps, generators);
         if (ctx) {
             return makeCuObject(mem, ctx);
         }
     }
     return nullptr;
 }
-bool makeMCInputs(std::shared_ptr<void> &obj, const model &m, int nmc,int num_mutable_entities, int steps, rngs &generators, conf &c) {
+bool makeMCInputs(std::shared_ptr<void> &obj, const model &m, int nmc,int num_mutable_entities, int mc_steps, rngs &generators, conf &c) {
     if (obj) {
         auto mem = extract_memory(obj);
         if (mem) {
             mem->reset();
-            auto ins = make_inputs(mem.get(), c, nmc, num_mutable_entities, steps, generators);
+            auto ins = make_inputs(mem.get(), c, nmc, num_mutable_entities, mc_steps, generators);
             if (ins) {
                 updateCuObject(obj, ins);
                 return true;
@@ -971,7 +982,7 @@ bool makeMCInputs(std::shared_ptr<void> &obj, const model &m, int nmc,int num_mu
         }
         return false;
     } else {
-        obj = makeMCInputs(m, nmc, num_mutable_entities, steps, generators, c);
+        obj = makeMCInputs(m, nmc, num_mutable_entities, mc_steps, generators, c);
         return bool(obj);
     }
 }
@@ -1037,6 +1048,7 @@ bool makeMC(std::shared_ptr<void> &pmd, std::shared_ptr<void> &pctx, std::shared
         src.average_required_improvement = average_required_improvement;
         src.num_mutable_entities = num_mutable_entities;
         src.max_evalcnt = max_evalcnt;
+        src.local_steps = local_steps;
         src.vs[0] = v1.data[0], src.vs[1] = v1.data[1], src.vs[2] = v1.data[2];
         src.vs[3] = v2.data[0], src.vs[4] = v2.data[1], src.vs[5] = v2.data[2];
         src.amplitude = amplitude;
@@ -1106,7 +1118,7 @@ std::vector<std::vector<output_type>> run_cuda_mc(std::shared_ptr<void> &pmd, st
             VINA_FOR(j, m->num_movable_atoms()) {
                 auto &pc = out.coords[j];
                 if (m->atoms[j].el != EL_TYPE_H) {
-                    ot.coords.emplace_back(pc.x, pc.y, pc.z);
+                    ot.coords.emplace_back(pc.d[0], pc.d[1], pc.d[2]);
                 }
             }
             v.push_back(ot);

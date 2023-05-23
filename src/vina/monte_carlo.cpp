@@ -41,7 +41,7 @@ struct gpu_monte_carlo {
 
     std::vector<output_container> containers;
     std::vector<std::shared_ptr<rng>> generators;
-    int gpu_steps = 100;
+    int gpu_steps = 200;
     conf_size cs;
     conf ctemplate;
     int nr_mc = 0;
@@ -66,6 +66,7 @@ struct gpu_monte_carlo {
         auto f = [&](int idx, fl* c) {
             output_type ot(cs, 0);
             ot.c.randomize(corner1, corner2, *generators[idx]);
+			ot.c.dump_to(c);
         };
 
 #define OVER                    10
@@ -92,6 +93,7 @@ struct gpu_monte_carlo {
 		clk.mark();
         while (step < int(host->global_steps)) {
             int batch = step == 0 ? host->num_saved_mins : gpu_steps;
+			printf("run cuda mc batch %d bfgs steps %d\n", batch, host->local_steps);
             increment_me->increase(batch);
 			step += batch;
             auto suc = dock::makeMCInputs(m_gpu_mc_inputs, m, nr_mc, nr_mutable_entities, batch,
@@ -156,13 +158,25 @@ void monte_carlo::cpu(model& m, output_container& out, precalculate_byatom& p,
 	change g(s);
 	output_type tmp(s, 0);
 	tmp.c.randomize(corner1, corner2, generator);
+
+	printf("random conf:\n");
+	tmp.c.print();
+
 	fl best_e = max_fl;
 	quasi_newton quasi_newton_par;
-	quasi_newton_par.use_gpu = false;
+	quasi_newton_par.use_gpu = true;
     quasi_newton_par.max_steps = local_steps;
 	int bfgscnt = 0;
 	// printf("mc global steps %u max_evals %u\n", global_steps, max_evals);
+	sz last = 0;
+	dock::Clock clk;
+	clk.mark();
 	VINA_U_FOR(step, global_steps) {
+		if (step - last == 200) {
+			last = step;
+			auto us = clk.mark();
+			printf("batch 200 cost %lu us\n", us);
+		}
 		if(increment_me)
 			++(*increment_me);
 		if((max_evals > 0) & ((unsigned)evalcount > max_evals)) {
@@ -199,7 +213,9 @@ void monte_carlo::cpu(model& m, output_container& out, precalculate_byatom& p,
 void monte_carlo::operator()(model& m, output_container& out, precalculate_byatom& p,
                              const igrid& ig, const vec& corner1, const vec& corner2,
                              incrementable* increment_me, rng& generator, int gpu_nmc) const {
+	printf("mc num-min %lu steps %u local steps %u\n", num_saved_mins, global_steps, local_steps);
 	bool run_cpu = true;
+#if 0
 	if (gpu_nmc > 0) {
 		gpu_monte_carlo gmc;
 		gmc.host = this;
@@ -207,6 +223,7 @@ void monte_carlo::operator()(model& m, output_container& out, precalculate_byato
 			run_cpu = false;
 		}
 	}
+#endif
 
 	if (run_cpu) {
 		this->cpu(m, out, p, ig, corner1, corner2, increment_me, generator); // call the version that produces the whole container

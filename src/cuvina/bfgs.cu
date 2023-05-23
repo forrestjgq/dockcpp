@@ -32,6 +32,21 @@ struct threadids {
 #define copy_change(dst, src) copy_array<Flt>(dst, src, ng, tids)
 #define copy_conf(dst, src) copy_array<Flt>(dst, src, nc, tids)
 
+#if 0
+#define MCPRT(fmt, ...) do{ if(XY0()) printf("%d %d:%d:%d@%d\t" fmt "\n", \
+ __LINE__,  threadIdx.x, threadIdx.y, threadIdx.z, blockIdx.z,  __VA_ARGS__);}while(0)
+#define MARK() do { if (XY0()) printf("%d %d:%d:%d@%d:%d:%d mark\n", __LINE__, threadIdx.x, threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id()); } while(0)
+#define MARKSTEP(step) do { if (XY0()) printf("%d %d:%d:%d@%d:%d:%d mark step %d\n", __LINE__, threadIdx.x, threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), step); } while(0)
+#define MARKXY() do { if (XY0()) printf("%d %d:%d:%d@%d:%d:%d mark %d %d\n", __LINE__, threadIdx.x, threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy); } while(0)
+#define MARKXYSTEP() do { if (XY0()) printf("%d %d:%d:%d@%d:%d:%d mark %d %d step %d\n", __LINE__, threadIdx.x, threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step); } while(0)
+#else
+#define MARK() 
+#define MARKSTEP(step) 
+#define MARKXY() 
+#define MARKXYSTEP() 
+#define MCPRT(fmt, ...)
+#endif
+
 __device__ void printc(SrcModel *sm, const Flt *c) {
     for (int i = 0; i < sm->nligand; i++) {
         printf("(%f %f %f) (%f %f %f %f)[", c[0], c[1], c[2], c[3], c[4], c[5], c[6]);
@@ -151,9 +166,9 @@ FORCE_INLINE void read_conf(SrcModel *sm, const Conf * dst, Flt *src) {
             auto p = get_ligand_conf(sm, src, idx);
             CU_FOR (i, sm->ligands[idx].nr_node-1) {
                 if(i == 0) {
-                    p[0] = ligand->rigid.position.x;
-                    p[1] = ligand->rigid.position.y;
-                    p[2] = ligand->rigid.position.z;
+                    p[0] = ligand->rigid.position.d[0];
+                    p[1] = ligand->rigid.position.d[1];
+                    p[2] = ligand->rigid.position.d[2];
                     p[3] = ligand->rigid.orientation.x;
                     p[4] = ligand->rigid.orientation.y;
                     p[5] = ligand->rigid.orientation.z;
@@ -215,6 +230,18 @@ FORCE_INLINE void init_triangle_mat(Flt *v, int ng) {
             for (int x = threadIdx.x; x < w; x += blockDim.x) {
                 v[offset + x] = x == y ? 1.0 : 0.;
             }
+        }
+    }
+}
+FORCE_INLINE void init_triangle_mat_xyz(Flt *v, int ng) {
+    // x for index in line
+    // y index of line
+    int blk = blockDim.y *blockDim.z;
+    for (int y = threadIdx.y + threadIdx.z * blockDim.y; y < ng; y += blk) {
+        int w = y + 1;  // w elements in line y
+        int offset = (y * (y + 1)) >> 1; // where this line starts
+        for (int x = threadIdx.x; x < w; x += blockDim.x) {
+            v[offset + x] = x == y ? 1.0 : 0.;
         }
     }
 }
@@ -335,6 +362,20 @@ FORCE_INLINE void sqrt_product_array(Flt *v, int n, const threadids &tids) {
             sum += v[i];
         }
         v[0] = sqrt(sum);
+    }
+}
+FORCE_INLINE void sqrt_product_array(const Flt *v, int n, Flt *tmp, const threadids &tids) {
+    FOR_TID(idx, n) {
+        Flt item = v[idx];
+        tmp[idx] = item * item;
+    }
+    SYNC();
+    if (INMAIN()) {
+        Flt sum = 0;
+        for (int i = 0; i < n; i++) {
+            sum += tmp[i];
+        }
+        tmp[0] = sqrt(sum);
     }
 }
 // calc sum(v[x]^2) and set to out, tmp should has same siz of v, which is n
@@ -583,6 +624,7 @@ __device__ Flt multipliers[]
 // evalcnt will be added to steps count used
 __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt f0, Flt &f1,
                 const Flt *c, const Flt *g, const Flt *p, Flt *tmp, Flt *outc, Flt *outg, int ng, int nc, int &evalcnt, Flt &out_alpha, const threadids &tids, Flt *md, const Flt *vs) {
+    MARK();
     const Flt c0 = 0.0001;
     Flt *pg = tmp;
     tmp++;
@@ -593,11 +635,13 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
     if(INMAIN()) {
         CUDBG("pg: %f", *pg);
     }
+    MARK();
 
     Flt *es = tmp;
     tmp += MAX_TRIALS;
-    for (int dz = threadIdx.z; dz < MAX_TRIALS; dz += blockDim.z) 
-    {
+    int dz = threadIdx.z;
+    // for (int dz = threadIdx.z; dz < MAX_TRIALS; dz += blockDim.z) 
+    // {
         Flt *tc = tmp + (nc+ng) * dz; // c_new
         Flt *tg = tc + nc; // g_new
         Flt *e = &es[dz];
@@ -620,9 +664,10 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
         WARPSYNC();
         model_eval_deriv(m, pa, ch, tc, tg, e, mdz, vs);
         WARPSYNC();
-        if(threadIdx.x == 0 && threadIdx.y == 0) printf("line search end %d der e %f\n", dz, *e);
-    }
+        // if(threadIdx.x == 0 && threadIdx.y == 0) printf("line search end %d der e %f\n", dz, *e);
+    // }
     SYNC();
+    MARK();
 
     if (INMAIN()) {
         m->active = -1;
@@ -630,7 +675,7 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
         for (int dy = 0; dy < MAX_TRIALS; dy++) {
             Flt alpha = multipliers[dy];
             Flt threshold = c0 * alpha * (*pg);
-            printf("gpu lsm %d alpha %f f1 %f f0 %f threashold %f\n", dy, alpha, es[dy], f0, threshold);
+            // printf("gpu lsm %d alpha %f f1 %f f0 %f threashold %f\n", dy, alpha, es[dy], f0, threshold);
 #if 1
             // find first satisfied f1
             if (es[dy] - f0 < threshold) {
@@ -658,11 +703,12 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
 
         }
         evalcnt += m->active+1;
-        printf("gpu line search tries %d times, alpha %f f1 %f\n", m->active+1, out_alpha, f1);
+        // printf("gpu line search tries %d times, alpha %f f1 %f\n", m->active+1, out_alpha, f1);
     }
     SYNC();
-    Flt *tc = tmp + (nc+ng) * m->active; // c_new
-    Flt *tg = tc + nc; // g_new
+    MARK();
+    tc = tmp + (nc+ng) * m->active; // c_new
+    tg = tc + nc; // g_new
     copy_change(outg, tg);
     copy_conf(outc, tc);
     // debug
@@ -679,64 +725,89 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
 
     }
 #endif
+    MARK();
 
 }
 #define BFGSIDX threadIdx.z
 // mem requirement
-#define SMSIZE(ng, nc, max_steps) (32 + ((ng * (ng+1)) >> 1) + 5 *ng + 2 *nc + (max_steps + 1) + std::max(ng * ng + 4, MAX_TRIALS * (nc+ng+1)+2))
+#define SMSIZE(ng, nc, max_steps) (32 + ((ng * (ng+1)) >> 1) + 6 *ng + 2 *nc + (max_steps + 1) + std::max(ng * ng + 4, MAX_TRIALS * (nc+ng+1)+2))
 // Model data will be updated to m->data, conf will be write to c
-__device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_steps, Flt average_required_improvement, Size over, Flt *c, Flt *f0, int &evalcnt, Flt *vs, Flt *mem) {
-    int offset = 0; // mem alloc offset
+__device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_steps,
+                     Flt average_required_improvement, Size over, Flt *c, Flt *f0, int &evalcnt,
+                     Flt *vs, Flt *mem, int sx=0, int sy=0) {
+    MCPRT("bfgs in %d %d", sx, sy);
+    int offset = 0;  // mem alloc offset
     DECL_TIDS;
-    tids.tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x *blockDim.y;
-    tids.blksz = blockDim.x * blockDim.y * blockDim.z;
+    tids.tid       = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
+    tids.blksz     = blockDim.x * blockDim.y * blockDim.z;
     SrcModel *srcm = m->src;
-    int ng = srcm->nrflts_change;
-    int nc = srcm->nrflts_conf;
+    int ng         = srcm->nrflts_change;
+    int nc         = srcm->nrflts_conf;
 
     Flt *md = m->data;
     Flt *h, *g, *g_new, *c_new, *g_orig, *c_orig, *p, *y, *fs, *tmp;
-    Flt * f_orig, *f1, *alpha, *yy, *yp, *beta;
+    Flt *f_orig, *f1, *alpha, *yy, *yp, *beta;
+    Flt *gg;
+    int *flag;
 
-    f1 = mem + offset, offset += 1;
+    flag     = (int *)mem + offset, offset += 1;
+    f1     = mem + offset, offset += 1;
     f_orig = mem + offset, offset += 1;
-    alpha = mem + offset, offset += 1;
-    beta = mem + offset, offset += 1;
-    yy = mem + offset, offset += 1;
-    yp = mem + offset, offset += 1;
+    alpha  = mem + offset, offset += 1;
+    beta   = mem + offset, offset += 1;
+    yy     = mem + offset, offset += 1;
+    yp     = mem + offset, offset += 1;
 
-    h = mem + offset, offset += ((ng * (ng+1)) >> 1);
-    g = mem + offset, offset += ng;
-    g_new = mem + offset, offset += ng;
-    c_new = mem + offset, offset += nc;
+    h      = mem + offset, offset += ((ng * (ng + 1)) >> 1);
+    g      = mem + offset, offset += ng;
+    gg      = mem + offset, offset += ng;
+    g_new  = mem + offset, offset += ng;
+    c_new  = mem + offset, offset += nc;
     g_orig = mem + offset, offset += ng;
     c_orig = mem + offset, offset += nc;
-    p = mem + offset, offset += ng;
-    y = mem + offset, offset += ng;
-    fs = mem + offset, offset += max_steps + 1;
-    tmp = mem + offset; offset += max(ng * ng + ng + 4, MAX_TRIALS * (nc+ng+1) + 2) ;
+    p      = mem + offset, offset += ng;
+    y      = mem + offset, offset += ng;
+    fs     = mem + offset, offset += max_steps + 1;
+    tmp    = mem + offset;
+    offset += max(ng * ng + ng + 4, MAX_TRIALS * (nc + ng + 1) + 2);
 
     // enable this line if sm is used for model data
     // copy input data into shared memory
     // copy_array<Flt>(md, m->data, m->szflt, TIDS);
-
+#if CUDEBUG
+    if(XY0())
+        printf("%d %d:%d:%d@%d:%d:%d mark flag0 %d %d f0 %f\n", __LINE__, threadIdx.x,
+                threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy,  *flag);
+        *flag = 0;
+    if(XY0())
+        printf("%d %d:%d:%d@%d:%d:%d mark flag1 %d %d f0 %f\n", __LINE__, threadIdx.x,
+                threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy,  *flag);
+#endif
     init_triangle_mat(h, ng);
-    // in cpu version, here is a declare and copy, but there is no need because it will be used in linesearch for
-    // output only.
-    // copy_change(g_new, g);
-    // copy_conf(c_new, c);
-    // SYNC();
+    // in cpu version, here is a declare and copy, but there is no need because it will be used in
+    // linesearch for output only. copy_change(g_new, g); copy_conf(c_new, c); SYNC();
 
-    if (BFGSIDX == 0) {
+    if (Z0) {
         // initial evaluation, get f0, initial conf and change
-        model_eval_deriv(m, pa, ch, c, g, f0, md + m->active*m->szflt, vs);
-        if(INMAIN()) {
+        model_eval_deriv(m, pa, ch, c, g, f0, md + m->active * m->szflt, vs);
+        if (INMAIN()) {
             evalcnt++;
+            // *flag = 1;
+            // printf("mark der done, f0 %f\n", *f0);
         }
     }
     SYNC();
-#if 1
-    if(INMAIN()) {
+
+#if CUDEBUG
+    if(XY0())
+        printf("%d %d:%d:%d@%d:%d:%d mark flag2 %d %d f0 %f\n", __LINE__, threadIdx.x,
+                threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy,  *flag);
+    while(*flag != 1);
+    if(XY0())
+        printf("%d %d:%d:%d@%d:%d:%d mark flag3 %d %d f0 %f\n", __LINE__, threadIdx.x,
+                threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy,  *flag);
+    MARKXY();
+    if (INMAIN()) {
         // printf("f0 eval synced\n");
         printf("gpu f0 %f\n", *f0);
         printf("c:\n");
@@ -752,24 +823,31 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
 
     if (INMAIN()) {
         *f_orig = *f0;
-        fs[0] = *f0;
+        fs[0]   = *f0;
     }
 
-    SYNC();
     // require max(ng * ng, MAX_TRIALS * (nc+ng+1) + 2, ng * ng + 4)
-    for(int step = 0; step < max_steps; step++) {
-        minus_mat_vec_product(h, g, p, tmp, ng); // require ng * ng
+    for (int step = 0; step < max_steps; step++) {
+        SYNC();
+        #if 0
+        if (INMAIN()) {
+            printf("%d %d:%d:%d@%d bfgs step %d/%d\n" , __LINE__, threadIdx.x,
+                threadIdx.y, threadIdx.z, blockIdx.x, step, max_steps);
+        }
+        #endif
+        minus_mat_vec_product(h, g, p, tmp, ng);  // require ng * ng
         SYNC();
         // requires MAX_TRIALS * (nc+ng+1) + 2
-        line_search(m, pa, ch, *f0, *f1, c, g, p, tmp, c_new, g_new, ng, nc, evalcnt, *alpha, TIDS, md, vs);
+        line_search(m, pa, ch, *f0, *f1, c, g, p, tmp, c_new, g_new, ng, nc, evalcnt, *alpha, TIDS,
+                    md, vs);
         SYNC();
         // y = g_new - g
         sub_array<Flt>(y, g_new, g, ng, TIDS);
         if (INMAIN()) {
-            fs[step+1] = *f1; 
-            *f0 = *f1;
+            fs[step + 1] = *f1;
+            *f0          = *f1;
+#if CUDEBUG
             printf("step %d alpha %f f1 %f\n", step, *alpha, *f1);
-#if 0
             CUDBG("g new in step %d", step);
             printg(srcm, g_new);
             CUDBG("g in step %d", step);
@@ -777,28 +855,44 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
 #endif
         }
         copy_conf(c, c_new);
-        sqrt_product_array(g, ng , TIDS);
+        sqrt_product_array(g, ng, gg, TIDS);
         SYNC();
-#if 0
+#if CUDEBUG
         if (INMAIN()) {
             MCUDBG("step %d sqrt g %f", g[0]);
             MCUDBG("y in step %d", step);
             printg(srcm, y);
         }
+        if(XY0())
+            printf("%d %d:%d:%d@%d:%d:%d mark1 %d %d step %d g0 %f %p\n", __LINE__, threadIdx.x,
+                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
+        SYNC();
+        if(XY0())
+            printf("%d %d:%d:%d@%d:%d:%d mark2 %d %d step %d g0 %f %p\n", __LINE__, threadIdx.x,
+                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
+        SYNC();
+        if(XY0())
+            printf("%d %d:%d:%d@%d:%d:%d mark3 %d %d step %d g0 %f %p\n", __LINE__, threadIdx.x,
+                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
+        SYNC();
 #endif
-        if (!(g[0] >= 1e-5)) {
+        if (!(gg[0] >= 1e-5)) {
             // done
+            MARKXYSTEP();
+            printf("%d %d:%d:%d@%d:%d:%d %d:%d >>>>> BREAKS <<<<<\n", __LINE__, threadIdx.x,
+                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy);
             break;
         }
-        
+
         if (step == 0) {
-            scalar_product_array(y, tmp, yy, ng, TIDS); // require ng
+            scalar_product_array(y, tmp, yy, ng, TIDS);  // require ng
             SYNC();
+            MARKXYSTEP();
             if (INMAIN()) {
                 CUDBG("yy %f", *yy);
             }
             if (abs(*yy) > EPSILON) {
-                scalar_product_array(y, p, yp, tmp, ng , TIDS);// require ng
+                scalar_product_array(y, p, yp, tmp, ng, TIDS);  // require ng
                 if (INMAIN()) {
                     *beta = (*alpha) * (*yp) / (*yy);
                     CUDBG("step %d set diag %f", step, *beta);
@@ -807,28 +901,206 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
                 set_diagonal(h, *beta, ng, TIDS);
                 SYNC();
             }
+            MARKXYSTEP();
+        }
+
+        copy_change(g, g_new);
+        // require ng * ng + ng + 4
+        bfgs_update(h, p, y, tmp, *alpha, ng, TIDS);
+    }
+    SYNC();
+    MARKXY();
+
+    if (!(*f0 <= *f_orig)) {
+        copy_conf(c, c_orig);
+        // todo, no output change?
+        // copy_change(g, g_orig);
+    }
+    if (INMAIN()) {
+        if (!(*f0 <= *f_orig)) {
+            *f0 = *f_orig;
+        }
+    }
+    MCPRT("bfgs out %d %d", sx, sy);
+}
+__device__ void bfgs_sync(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_steps,
+                     Flt average_required_improvement, Size over, Flt *c, Flt *f0, int &evalcnt,
+                     Flt *vs, Flt *mem, int sx=0, int sy=0) {
+    int offset = 0;  // mem alloc offset
+    DECL_TIDS;
+    tids.tid       = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
+    tids.blksz     = blockDim.x * blockDim.y * blockDim.z;
+    SrcModel *srcm = m->src;
+    int ng         = srcm->nrflts_change;
+    int nc         = srcm->nrflts_conf;
+
+    Flt *md = m->data;
+    Flt *h, *g, *g_new, *c_new, *g_orig, *c_orig, *p, *y, *fs, *tmp;
+    Flt *f_orig, *f1, *alpha, *yy, *yp, *beta;
+    Flt *gg;
+
+    f1     = mem + offset, offset += 1;
+    f_orig = mem + offset, offset += 1;
+    alpha  = mem + offset, offset += 1;
+    beta   = mem + offset, offset += 1;
+    yy     = mem + offset, offset += 1;
+    yp     = mem + offset, offset += 1;
+
+    h      = mem + offset, offset += ((ng * (ng + 1)) >> 1);
+    g      = mem + offset, offset += ng;
+    gg      = mem + offset, offset += ng;
+    g_new  = mem + offset, offset += ng;
+    c_new  = mem + offset, offset += nc;
+    g_orig = mem + offset, offset += ng;
+    c_orig = mem + offset, offset += nc;
+    p      = mem + offset, offset += ng;
+    y      = mem + offset, offset += ng;
+    fs     = mem + offset, offset += max_steps + 1;
+    tmp    = mem + offset;
+    offset += max(ng * ng + ng + 4, MAX_TRIALS * (nc + ng + 1) + 2);
+
+    // enable this line if sm is used for model data
+    // copy input data into shared memory
+    // copy_array<Flt>(md, m->data, m->szflt, TIDS);
+
+    init_triangle_mat_xyz(h, ng);
+    // in cpu version, here is a declare and copy, but there is no need because it will be used in
+    // linesearch for output only. copy_change(g_new, g); copy_conf(c_new, c); SYNC();
+
+    if (Z0) {
+        // initial evaluation, get f0, initial conf and change
+        model_eval_deriv(m, pa, ch, c, g, f0, md + m->active * m->szflt, vs);
+        if (INMAIN()) {
+            evalcnt++;
+        }
+    }
+    SYNC();
+    MARKXY();
+#if 1
+    if (INMAIN()) {
+        // printf("f0 eval synced\n");
+        printf("gpu f0 %f\n", *f0);
+        printf("c:\n");
+        printc(srcm, c);
+        printf("g:\n");
+        printg(srcm, g);
+    }
+#endif
+
+    copy_change(g_orig, g);
+    copy_conf(c_orig, c);
+    copy_change(p, g);
+
+    if (INMAIN()) {
+        *f_orig = *f0;
+        fs[0]   = *f0;
+    }
+
+    if(XY0())
+        printf("%d %d:%d:%d@%d:%d:%d markf0 %d %d f0 %f %p\n", __LINE__, threadIdx.x,
+                threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy,  fs[0], fs);
+    
+    // require max(ng * ng, MAX_TRIALS * (nc+ng+1) + 2, ng * ng + 4)
+    for (int step = 0; step < max_steps; step++) {
+        SYNC();
+        if (INMAIN()) {
+            printf("bfgs step %d/%d\n", step, max_steps);
+        }
+        minus_mat_vec_product(h, g, p, tmp, ng);  // require ng * ng
+        SYNC();
+        // requires MAX_TRIALS * (nc+ng+1) + 2
+        line_search(m, pa, ch, *f0, *f1, c, g, p, tmp, c_new, g_new, ng, nc, evalcnt, *alpha, TIDS,
+                    md, vs);
+        SYNC();
+        // y = g_new - g
+        sub_array<Flt>(y, g_new, g, ng, TIDS);
+        if (INMAIN()) {
+            fs[step + 1] = *f1;
+            *f0          = *f1;
+            printf("step %d alpha %f f1 %f\n", step, *alpha, *f1);
+#if CUDEBUG
+            CUDBG("g new in step %d", step);
+            printg(srcm, g_new);
+            CUDBG("g in step %d", step);
+            printg(srcm, g);
+#endif
+        }
+        copy_conf(c, c_new);
+        sqrt_product_array(g, ng, gg, TIDS);
+        SYNC();
+        __threadfence();
+#if CUDEBUG
+        if (INMAIN()) {
+            MCUDBG("step %d sqrt g %f", g[0]);
+            MCUDBG("y in step %d", step);
+            printg(srcm, y);
+        }
+#endif
+        if(XY0())
+            printf("%d %d:%d:%d@%d:%d:%d mark1 %d %d step %d g0 %f %p\n", __LINE__, threadIdx.x,
+                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
+        SYNC();
+        if(XY0())
+            printf("%d %d:%d:%d@%d:%d:%d mark2 %d %d step %d g0 %f %p\n", __LINE__, threadIdx.x,
+                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
+        SYNC();
+        if(XY0())
+            printf("%d %d:%d:%d@%d:%d:%d mark3 %d %d step %d g0 %f %p\n", __LINE__, threadIdx.x,
+                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
+        SYNC();
+        if (!(gg[0] >= 1e-5)) {
+            // done
+            MARKXYSTEP();
+            break;
+        }
+
+        if (step == 0) {
+            scalar_product_array(y, tmp, yy, ng, TIDS);  // require ng
+            SYNC();
+            MARKXYSTEP();
+            if (INMAIN()) {
+                CUDBG("yy %f", *yy);
+            }
+            if (abs(*yy) > EPSILON) {
+                scalar_product_array(y, p, yp, tmp, ng, TIDS);  // require ng
+                if (INMAIN()) {
+                    *beta = (*alpha) * (*yp) / (*yy);
+                    CUDBG("step %d set diag %f", step, *beta);
+                }
+                SYNC();
+                set_diagonal(h, *beta, ng, TIDS);
+                SYNC();
+            }
+            MARKXYSTEP();
         }
 
         copy_change(g, g_new);
         // require ng * ng + ng + 4
         bfgs_update(h, p, y, tmp, *alpha, ng, TIDS);
         SYNC();
+        MARKXYSTEP();
         if (INMAIN()) {
-            printf("bfgscu searches %d times\n", step+1);
+            printf("bfgscu searches %d times\n", step + 1);
         }
     }
+    SYNC();
+    MARKXY();
 
     if (!(*f0 <= *f_orig)) {
-        *f0 = *f_orig;
         copy_conf(c, c_orig);
         // todo, no output change?
         // copy_change(g, g_orig);
+    }
+    if (INMAIN()) {
+        if (!(*f0 <= *f_orig)) {
+            *f0 = *f_orig;
+        }
     }
 }
 // flags at least has atom size, acc has 3 Flts for each atom
 // tmp require src->natoms * 4
 // rout = 1/out
-FORCE_INLINE void gyration_radius(const ModelDesc *m, Flt *md, int idx, Flt *out, Flt *rout, Flt *tmp) {
+FORCE_INLINE void gyration_radius(/*const*/ ModelDesc *m, Flt *md, int idx, Flt *out, Flt *rout, Flt *tmp) {
 
     Flt *acc = tmp;
     tmp += m->src->natoms * 3;
@@ -842,14 +1114,10 @@ FORCE_INLINE void gyration_radius(const ModelDesc *m, Flt *md, int idx, Flt *out
     }
     WARPSYNC();
     int dx = threadIdx.x;
-    CU_FORY(dy, root.end - root.begin) {
-        auto idxligand = dy + root.begin;
-        if(m->src->atoms[idxligand].el != 0 /*EL_TYPE_H*/ && dx < 3) {
-            auto *coord = model_coords(m->src, m, md, idxligand);
-            auto *seg = model_ligand(m->src, m, md, idxligand, lig.nr_node-1); // root is last seg
-            if (dx == 0 && dy == 0 && blockIdx.x == 5) {
-                printf("idx %d idxligand %d md %p m %p nrnode %d origin %f %f %f origin %p\n", idx, idxligand, md, m, lig.nr_node, seg->origin.x, seg->origin.y, seg->origin.z, &(seg->origin));
-            }
+    auto *seg = model_ligand(m->src, m, md, idx, lig.nr_node-1); // root is last seg
+    for (int dy = threadIdx.y + root.begin; dy < root.end; dy += blockDim.y){
+        if(m->src->atoms[dy].el != 0 /*EL_TYPE_H*/ && dx < 3) {
+            auto *coord = model_coords(m->src, m, md, dy);
             Flt sub = vec_get(*coord, dx) - vec_get(seg->origin, dx);
             acc[dy * 3 + dx] = sub * sub;
             if (dx == 0) {
@@ -879,7 +1147,7 @@ FORCE_INLINE void gyration_radius(const ModelDesc *m, Flt *md, int idx, Flt *out
 }
 // conf will be updated
 // tmp require SrcModel.natoms * 4 + 2
-__device__ void mutate_conf_xy(const ModelDesc *m, const MCCtx *ctx, const MCStepInput *in, Flt *c, Flt *md, Flt *tmp) {
+__device__ void mutate_conf_xy(/*const*/ ModelDesc *m, const MCCtx *ctx, const MCStepInput *in, Flt *c, Flt *md, Flt *tmp) {
     if (ctx->num_mutable_entities > 0 && threadIdx.z == 0) {
         auto g = in->groups;
         if (g[0] == 0) {
@@ -901,8 +1169,7 @@ __device__ void mutate_conf_xy(const ModelDesc *m, const MCCtx *ctx, const MCSte
             if (*gy > EPSILON && threadIdx.x == 0 && threadIdx.y == 0) {
                 Flt rot[3];
                 *rgy *= ctx->amplitude;
-                rot[0] = (*rgy) * in->rsphere.x, rot[1] = (*rgy) * in->rsphere.y,
-                rot[2] = (*rgy) * in->rsphere.z;
+                rot[0] = (*rgy) * in->rsphere.d[0], rot[1] = (*rgy) * in->rsphere.d[1], rot[2] = (*rgy) * in->rsphere.d[2];
                 Flt *f = get_ligand_conf(m->src, c, g[1]);
                 Flt q[4];
                 q[0] = f[0], q[1] = f[1], q[2] = f[2], q[3] = f[3];
@@ -933,84 +1200,140 @@ __device__ bool metropolis_accept(Flt old_f, Flt new_f, Flt rtemperature, Flt th
         return threshold < acc;
     }
 }
-#define MCSIZE(natoms, ng, nc, local_steps) (3+2*nc+std::max((int)(4 * (natoms) + 2), SMSIZE(ng, nc, local_steps)))
+
+#if CUDEBUG
+__device__ void dump_md(ModelDesc *m) {
+    auto data = m->data + m->active * m->szflt;
+    printf("szflt %d ncoords %d active %d data %p end of data %p\n", m->szflt, m->ncoords, m->active, data, data+m->szflt);
+    auto src = m->src;
+    printf("Coords:\n");
+    for (auto i = 0; i < m->ncoords; i++) {
+        auto c = model_coords(src, m, data, i);
+        printf("\t%d: %f %f %f\n", i, c->d[0], c->d[1], c->d[2]);
+    }
+    for (auto i = 0; i < src->nligand; i++) {
+    for (auto j = 0; j < src->ligands[i].nr_node; j++) {
+        printf("ligand %d node %d\n", i, j);
+        auto seg = model_ligand(src, m, data, i, j);
+        printf("\taxis: %f %f %f\n", seg->axis.d[0], seg->axis.d[1], seg->axis.d[2]);
+        printf("\torigin: %f %f %f\n", seg->origin.d[0], seg->origin.d[1], seg->origin.d[2]);
+        printf("\torq: %f %f %f %f\n", seg->orq.x, seg->orq.y, seg->orq.z, seg->orq.w);
+        auto a = seg->orm;
+        printf("\torm: %f %f %f %f %f %f %f %f %f\n", a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8]);
+    }
+    }
+}
+#endif
+#define MCSIZE(natoms, ng, nc, local_steps) \
+    (3 + 2 * nc + std::max((int)(4 * (natoms) + 2), SMSIZE(ng, nc, local_steps)))
 template <bool forceadd>
 __device__ void mc_xyz(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *ctx, MCInputs *ins,
                        MCOutputs *outs, Flt *e_and_c, Flt *mem, int *evalcnt, int steps) {
     int offset = 0;
     DECL_TIDS;
-    tids.tid = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x *blockDim.y;
+    tids.tid   = threadIdx.x + threadIdx.y * blockDim.x + threadIdx.z * blockDim.x * blockDim.y;
     tids.blksz = blockDim.x * blockDim.y * blockDim.z;
 
-    printf("block %d md data %p\n", blockIdx.x, m->data);
-
     SrcModel *srcm = m->src;
-    int ng = srcm->nrflts_change;
-    int nc = srcm->nrflts_conf;
-    Flt *md = m->data + m->szflt * m->active;
-    Flt *src_conf = e_and_c+1;
-    Flt *g_best_e = e_and_c;
+    int ng         = srcm->nrflts_change;
+    int nc         = srcm->nrflts_conf;
+    Flt *md        = m->data + m->szflt * m->active;
+    Flt *src_conf  = e_and_c + 1;
+    Flt *g_best_e  = e_and_c;
 
-    Flt *ctemp, *candidate,  *tmp, *beste;
+    Flt *ctemp, *candidate, *tmp, *beste;
     // ctemp and candidate includes Flt e + nc Flt conf
-    ctemp = mem + offset, offset += nc+1;
-    candidate = mem + offset, offset += nc+1;
-    beste = mem + offset, offset++;
+    ctemp     = mem + offset, offset += nc + 1;
+    candidate = mem + offset, offset += nc + 1;
+    beste     = mem + offset, offset++;
 
-    tmp = mem + offset, offset += max((int)(4 * srcm->natoms + 2), SMSIZE(ng, nc, ctx->local_steps));
+    tmp = mem + offset,
+    offset += max((int)(4 * srcm->natoms + 2), SMSIZE(ng, nc, ctx->local_steps));
 
-#define CANDIDATE (candidate+1)
-#define TEMP (ctemp+1)
-#define FCANDIDATE (*candidate)
-#define FTEMP (*ctemp)
+#define CANDIDATE   (candidate + 1)
+#define TEMP        (ctemp + 1)
+#define FCANDIDATE  (*candidate)
+#define FTEMP       (*ctemp)
 #define PFCANDIDATE candidate
-#define PFTEMP ctemp
+#define PFTEMP      ctemp
 
-#define SWAP() do {Flt *p = ctemp; ctemp = candidate; candidate = p;} while(0)
+#define SWAP() \
+    do { \
+        Flt *p    = ctemp; \
+        ctemp     = candidate; \
+        candidate = p; \
+    } while (0)
 
     if (INMAIN()) {
-        FTEMP = 0;
+        FTEMP  = 0;
         *beste = *g_best_e;
     }
     copy_conf(TEMP, src_conf);
     SYNC();
-    
+    MARK();
+
     int commited = 0;
     for (int dz = 0; dz < steps; dz++) {
-        if (blockIdx.x == 0 && INMAIN()) {
-            printf("cu step %d\n", dz);
-        }
+        // if(INMAIN()) {
+            // printf("%d:%d:%d@%d mc step %d/%d before sync\n", threadIdx.x, threadIdx.y, threadIdx.z, blockIdx.x, dz, steps);
+            MCPRT("mc step %d/%d before sync", dz, steps);
+        // }
+        SYNC();
+            // printf("%d:%d:%d@%d mc step %d/%d after sync\n", threadIdx.x, threadIdx.y, threadIdx.z, blockIdx.x, dz, steps);
+            MCPRT("mc step %d/%d after sync", dz, steps);
+        MARKSTEP(dz);
         if (ctx->max_evalcnt > 0 && *evalcnt > ctx->max_evalcnt) {
             break;
         }
+        MARKSTEP(dz);
         auto in = ins->in + dz;
         copy_conf(CANDIDATE, TEMP);
         SYNC();
 
-        mutate_conf_xy(m, ctx, in, CANDIDATE, md, tmp); // update c, requires 4 * srcm->natoms + 2
+        mutate_conf_xy(m, ctx, in, CANDIDATE, md, tmp);  // update c, requires 4 * srcm->natoms + 2
         SYNC();
+        MARKSTEP(dz);
+#if CUDEBUG
+        if (INMAIN()) {
+            printf("candidate c:\n");
+            printc(srcm, CANDIDATE);
+        }
+#endif
 
-        bfgs(m, pa, ch, ctx->local_steps, ctx->average_required_improvement, ctx->over, CANDIDATE, PFCANDIDATE,
-             *evalcnt, ctx->vs, tmp);  // requires SMSIZE()
+        bfgs(m, pa, ch, ctx->local_steps, ctx->average_required_improvement, ctx->over, CANDIDATE,
+            PFCANDIDATE, *evalcnt, ctx->vs, tmp, dz, 0);  // requires SMSIZE()
+
         SYNC();
-
-        if (dz == 0 || metropolis_accept(FCANDIDATE, FTEMP, ctx->rtemperature, in->raccept)) {
-            if (INMAIN()) {
-                // discard temp, use candidate
-                SWAP(); // candidate <-> temp, in next for loop new conf will be used as conf
-            }
+        #if 0
+        if (INMAIN()) {
+            printf("candidate e : %f\n", *(PFCANDIDATE));
+        }
+        #endif
+#if 1
+        bool satisfied = dz == 0 || metropolis_accept(FCANDIDATE, FTEMP, ctx->rtemperature, in->raccept);
+        MCPRT("satisfied %d candidate %f %p temp %f %p", satisfied, FCANDIDATE, candidate, FTEMP, ctemp);
+        SYNC();
+        if (satisfied) {
+            // discard temp, use candidate
+            SWAP();  // candidate <-> temp, in next for loop new conf will be used as conf
+            SYNC();
             // check if this conf should be commited, if so, fine tune with new vs
             // the bfgs should be performed on TEMP because we swapped before
+            MCPRT("accepted %d beste %f ftemp %f", dz, *beste, FTEMP);
             if (forceadd || FTEMP < *beste) {
-                bfgs(m, pa, ch, ctx->local_steps, ctx->average_required_improvement, ctx->over, TEMP,
-                     PFTEMP, *evalcnt, ctx->vs+3, tmp);  // requires SMSIZE()
+                MCPRT("fine bfgs beste %f ftemp %f", *beste, FTEMP);
+                MARKSTEP(dz);
+                bfgs(m, pa, ch, ctx->local_steps, ctx->average_required_improvement, ctx->over,
+                     TEMP, PFTEMP, *evalcnt, ctx->vs + 3, tmp, dz, 1);  // requires SMSIZE()
+                MARKSTEP(dz);
                 SYNC();
+                MARKSTEP(dz);
                 // now add temp as new output
                 auto &out = outs->out[outs->n];
                 // copy e and conf
-                copy_array<Flt>(out.e_and_c, ctemp, nc+1, TIDS);
+                copy_array<Flt>(out.e_and_c, ctemp, nc + 1, TIDS);
                 FOR_TID(i, m->ncoords) {
-                    vec_set(*(out.coords+i), *model_coords(srcm, m, m->data + m->szflt*m->active, i));
+                    vec_set(*(out.coords + i), *model_coords(srcm, m, m->data + m->szflt * m->active, i));
                 }
                 commited++;
                 if (INMAIN()) {
@@ -1018,13 +1341,18 @@ __device__ void mc_xyz(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *c
                         *beste = FTEMP;
                     }
                 }
+                MCPRT("fine bfgs done, commited %d", commited);
             }
+            MARKSTEP(dz);
         }
+        MCPRT("satisfied out %d", dz);
+#endif
     }
+    SYNC();
     copy_conf(src_conf, TEMP);
     if (INMAIN()) {
         *g_best_e = *beste;
-        outs->n = commited;
+        outs->n   = commited;
     }
 #undef CANDIDATE
 #undef SWAP
@@ -1055,19 +1383,22 @@ GLOBAL void bfgs_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx
     model_set_conf_ligand_c(m, c, active);
     model_set_conf_flex_c(m, c, active);
 }
+#define MDDBG(fmt, ...) do{ printf("\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
+#define MDPV(hdr, pv, ...) MDDBG(hdr ": %f %f %f", __VA_ARGS__, (pv)->d[0], (pv)->d[1], (pv)->d[2])
+#define MDV(hdr, v, ...) MDDBG(hdr ": %f %f %f", __VA_ARGS__, (v).d[0], (v).d[1], (v).d[2])
 GLOBAL void mc_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *ctx, MCInputs *ins, MCOutputs *outs, int steps) {
-    extern __shared__ Flt sm[];
-    Flt *mem = sm;
+    extern __shared__ Flt smmc[];
+    Flt *mem = smmc;
     SrcModel *srcm = m->src;
     int nc = srcm->nrflts_conf;
     int mcidx = blockIdx.x;
     auto c = ctx->best_e_and_c + (nc+1) * mcidx;
-        if (blockIdx.x == 0 && INMAIN()) {
-            printf("cu runs curr eval cnt %d max %d\n", *(ctx->curr_evalcnt + mcidx), ctx->max_evalcnt);
-        }
-    if (ctx->max_evalcnt <= 0 || *(ctx->curr_evalcnt + mcidx) < ctx->max_evalcnt) {
-        mc_xyz<false>(m+mcidx, pa, ch, ctx, ins+mcidx, outs+mcidx, c, mem, ctx->curr_evalcnt+mcidx, steps);
+#if CUDEBUG
+    if (blockIdx.x == 0 && INMAIN()) {
+        printf("cu runs curr eval cnt %d max %d\n", *(ctx->curr_evalcnt + mcidx), ctx->max_evalcnt);
     }
+#endif
+    mc_xyz<false>(m+mcidx, pa, ch, ctx, ins+mcidx, outs+mcidx, c, mem, ctx->curr_evalcnt+mcidx, steps);
 
 }
 void run_bfgs(ModelDesc *cpum, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx, int max_steps, Flt average_required_improvement, Size over , cudaStream_t stream) {
@@ -1077,10 +1408,12 @@ void run_bfgs(ModelDesc *cpum, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, 
 
     int ng = srcm->nrflts_change;
     int nc = srcm->nrflts_conf;
-    int sm = SMSIZE(ng, nc, max_steps) * sizeof(Flt);
-
     // sm requirement:
+    int sm = (nc + 1 + SMSIZE(ng, nc, max_steps)) * sizeof(Flt);
+
+#if CUDEBUG
     printf("ng %d nc %d sm size %d\n", ng, nc, sm);
+#endif
     bfgs_kernel<<<grid, block, sm, stream>>>(m, pa, ch, ctx, max_steps, average_required_improvement, over);
 }
 void run_mc(SrcModel *srcm, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *ctx,
@@ -1090,10 +1423,12 @@ void run_mc(SrcModel *srcm, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCC
 
     int ng = srcm->nrflts_change;
     int nc = srcm->nrflts_conf;
-    int sm = MCSIZE(srcm->natoms, ng, nc, local_steps) * sizeof(Flt);
-
     // sm requirement:
-    // printf("ng %d nc %d sm size %d\n", ng, nc, sm);
+    int sm = MCSIZE(srcm->natoms, ng, nc, local_steps) * sizeof(Flt) *2;
+
+#if CUDEBUG
+    printf("nmc %d ng %d nc %d sm size %d\n", nmc, ng, nc, sm);
+#endif
     mc_kernel<<<grid, block, sm, stream>>>(m, pa, ch, ctx, ins, outs, steps);
 }
 };
