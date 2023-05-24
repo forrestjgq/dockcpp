@@ -15,8 +15,10 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -std=c++14 -DUSE_CUDA -DDLIB_NO_GU
 # nvci does not support openmp, so we set nvcc flags in advance
 set(NVCC_FLAGS_RELEASE -std=c++14 -DUSE_CUDA -DDLIB_NO_GUI_SUPPORT -DNDEBUG -O3 -w)
 # set(NVCC_FLAGS_RELEASE -g -G -std=c++14 -DUSE_CUDA -DDLIB_NO_GUI_SUPPORT -DNDEBUG -O0 -w)
-set(CUDA_NVCC_FLAGS ${NVCC_FLAGS_RELEASE} ${CUDA_NVCC_FLAGS} -arch=sm_75 -gencode arch=compute_52,code=sm_52 -gencode arch=compute_60,code=sm_60 
-    -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=compute_75 -gencode arch=compute_72,code=sm_72 -gencode arch=compute_86,code=sm_86; 
+#set(CUDA_NVCC_FLAGS ${NVCC_FLAGS_RELEASE} ${CUDA_NVCC_FLAGS} -arch=sm_75 -gencode arch=compute_52,code=sm_52 -gencode arch=compute_60,code=sm_60 
+#    -gencode arch=compute_61,code=sm_61 -gencode arch=compute_75,code=compute_75 -gencode arch=compute_72,code=sm_72 -gencode arch=compute_86,code=sm_86; 
+#    --use_fast_math)
+set(CUDA_NVCC_FLAGS ${NVCC_FLAGS_RELEASE} ${CUDA_NVCC_FLAGS} -arch=sm_75 -gencode arch=compute_75,code=compute_75 -gencode arch=compute_86,code=sm_86; 
     --use_fast_math)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -fno-strict-aliasing -Wno-deprecated-declarations -Wno-unused-local-typedefs -Wno-parentheses -Wno-catch-value")

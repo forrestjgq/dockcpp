@@ -21,6 +21,7 @@
 */
 
 #include "quaternion.h"
+#include "log.h"
 
 bool quaternion_is_normalized(const qt& q) { // not in the interface, used in assertions
 	return eq(quaternion_norm_sqr(q), 1) && eq(boost::math::abs(q), 1);

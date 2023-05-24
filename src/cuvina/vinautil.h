@@ -3,6 +3,7 @@
 #define VINA_UTIL_H
 
 #include "cuvina/vinadef.h"
+#include "cuvina/culog.h"
 #if USE_CUDA_VINA == 0
 #include <cmath>
 #endif
@@ -35,6 +36,7 @@ namespace dock {
     #define ZIS(n) (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == n)
     #define XY0() (threadIdx.x == 0 && threadIdx.y == 0)
     #define CU_FOR2(i, n) for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < n; i += blockDim.x * blockDim.y)
+    #define CU_FORZ(i, n) for (int i = threadIdx.z; i < n; i += blockDim.z)
     #define IS_GRID(n) (blockIdx.x == n)
     #define CEIL(x) ceil(x)
     #define SIN(x) sin(x)
@@ -99,6 +101,10 @@ namespace dock {
         v1.d[0] += v2.d[0];
         v1.d[1] += v2.d[1];
         v1.d[2] += v2.d[2];
+    }
+    FORCE_INLINE void vec_add_c(int idx, Vec &v1, const Vec &v2) {
+        // make_vec(v1, vec_get(v1, 0) + vec_get(v2, 0), vec_get(v1, 1) + vec_get(v2, 1),vec_get(v1, 2) + vec_get(v2, 2));
+        if (idx < 3) v1.d[idx] += v2.d[idx];
     }
     FORCE_INLINE void vec_add(const Vec &v1, Flt f, Vec &out) {
         // make_vec(out, vec_get(v1, 0) + f, vec_get(v1, 1) + f,vec_get(v1, 2) - f);
@@ -169,6 +175,10 @@ namespace dock {
     FORCE_INLINE void qt_set(Qt &dst, Flt x, Flt y, Flt z, Flt w) {
         dst.x = x, dst.y = y, dst.z = z, dst.w = w;
     }
+    FORCE_INLINE void qt_set(Qt &dst, int idx, Flt x) {
+        Flt * f = (Flt *)&dst;
+        *(f+idx) = x;
+    }
     FORCE_INLINE void qt_multiple(Qt &dst, Flt x) {
         dst.x *= x;
         dst.y *= x;
@@ -196,9 +206,50 @@ namespace dock {
         out.d[1] = mat[1] * v.d[0] + mat[4] * v.d[1] + mat[7] * v.d[2];
         out.d[2] = mat[2] * v.d[0] + mat[5] * v.d[1] + mat[8] * v.d[2];
     }
+    FORCE_INLINE void mat_multiple_c(int idx, const Flt *mat, const Vec &v, Vec &out) {
+        if (idx < 3) {
+            out.d[idx] = mat[idx] * v.d[0] + mat[idx+3] * v.d[1] + mat[idx+6] * v.d[2];
+        }
+    }
 
     FORCE_INLINE void mat_set(Flt *mat, int i, int j, Flt v) {
         mat[i + 3 *j] = v;
+    }
+    __device__ int qt_to_mat_map_048[] = {
+        1, -1, -1,
+        -1, 1, -1,
+        -1, -1, 1
+    }
+    FORCE_INLINE void qt_to_mat_c(int idx, const Flt *qt, Flt *mat) {
+        const Flt a = qt[0];
+        const Flt b = qt[1];
+        const Flt c = qt[2];
+        const Flt d = qt[3];
+
+        const Flt aa = a * a;
+        const Flt ab = a * b;
+        const Flt ac = a * c;
+        const Flt ad = a * d;
+        const Flt bb = b * b;
+        const Flt bc = b * c;
+        const Flt bd = b * d;
+        const Flt cc = c * c;
+        const Flt cd = c * d;
+        const Flt dd = d * d;
+
+        mat_set(mat, 0, 0, (aa + bb - cc - dd));
+        mat_set(mat, 0, 1, 2 * (-ad + bc));
+        mat_set(mat, 0, 2, 2 * (ac + bd));
+        mat_set(mat, 1, 0, 2 * (ad + bc));
+        mat_set(mat, 1, 1, (aa - bb + cc - dd));
+        mat_set(mat, 1, 2, 2 * (-ab + cd));
+        mat_set(mat, 2, 0, 2 * (-ac + bd));
+        mat_set(mat, 2, 1, 2 * (ab + cd));
+        mat_set(mat, 2, 2, (aa - bb - cc + dd));
+
+        if ((idx >> 2) == 0) {
+            // 0, 4, 8
+        }
     }
     FORCE_INLINE void qt_to_mat(const Flt *qt, Flt *mat) {
         const Flt a = qt[0];
@@ -297,17 +348,25 @@ FORCE_INLINE void curl(Flt& e, Flt v) {
 }
 FORCE_INLINE void normalize_angle(Flt& x) { // subtract or add enough 2*pi's to make x be in [-pi, pi]
     while(true) {
+        // if(threadIdx.z == 2) MCUDBG("normangle %f", x);
         if (x > 3 * PI) {                   // very large
             Flt n = (x - PI) * R2PI;    // how many 2*PI's do you want to subtract?
-            x -= 2 * PI * CEIL(n);  // ceil can be very slow, but this should not be called often
+            auto cn = CEIL(n);
+            // if(threadIdx.z == 2) MCUDBG("3pi ceil(%f) = %f", n, cn);
+            x -= 2 * PI * cn;  // ceil can be very slow, but this should not be called often
+
         } else if (x < -3 * PI) {   // very small
             Flt n = (-x - PI) * R2PI;  // how many 2*PI's do you want to add?
-            x += 2 * PI * CEIL(n);  // ceil can be very slow, but this should not be called often
+            auto cn = CEIL(n);
+            // if(threadIdx.z == 2) MCUDBG("-3pi ceil(%f) = %f", n, cn);
+            x += 2 * PI * cn;  // ceil can be very slow, but this should not be called often
         } else {
             if (x > PI) {                // in (   PI, 3*PI]
                 x -= 2 * PI;
+                // if(threadIdx.z == 2) MCUDBG("pi %f", x);
             } else if (x < -PI) {        // in [-3*PI,  -PI)
                 x += 2 * PI;
+                // if(threadIdx.z == 2) MCUDBG("-pi %f", x);
             }
             // in [-pi, pi]
             break;
@@ -324,6 +383,7 @@ FORCE_INLINE void angle_to_quaternion(const Flt *axis, Flt angle, Flt *out) { //
 	normalize_angle(angle); // this is probably only necessary if angles can be very big
 	Flt c = COS(angle/2);
 	Flt s = SIN(angle/2);
+	// if(threadIdx.z == 2) MCUDBG("normalized angle %f cos %f sin %f", angle, c, s);
     out[0] = c, out[1] = s * axis[0], out[2] = s * axis[1], out[3] = s * axis[2];
 }
 // require 1 flt tmp
@@ -345,12 +405,14 @@ FORCE_INLINE void angle_to_quaternion_x(const Flt *axis, Flt angle, Flt *out, Fl
 FORCE_INLINE void angle_to_quaternion(const Flt *rotation, Flt *out) {
 	//fl angle = tvmet::norm2(rotation); 
 	Flt angle = norm3d(rotation[0], rotation[1], rotation[2]); 
+	// if(threadIdx.z == 2) MCUDBG("angle %f epsilon %f", angle, EPSILON);
 	if(angle > EPSILON) {
 		//vec axis; 
 		//axis = rotation / angle;	
         Flt r = reciprocal(angle);
         Flt axis[3];
         axis[0] = rotation[0] * r, axis[1] = rotation[1] * r, axis[2] = rotation[2] * r;
+		// if(threadIdx.z == 2) MCUDBG("axis %f %f %f", axis[0], axis[1], axis[2]);
         angle_to_quaternion(axis, angle, out);
     } else {
         out[0] = 1., out[1] = 0, out[2] = 0, out[3] = 0;
@@ -391,6 +453,47 @@ FORCE_INLINE void qt_multiple(Flt *dst, const Flt *left, const Flt *right) {
     dst[0] = x * xr - y * yr - z * zr - w * wr, dst[1] = x * yr + y * xr + z * wr - w * zr,
     dst[2] = x * zr - y * wr + z * xr + w * yr, dst[3] = x * wr + y * zr - z * yr + w * xr;
 }
+// left *= right
+// d: dx, or dy, or dz
+// tmp: 4 Flts temp
+// this must be run inside one single warp
+__device__ int qtm_seq[] = {
+    0, 3, 2,
+    3, 0, 1,
+    2, 1, 0
+};
+FORCE_INLINE void qt_multiple_c(int idx,Flt *left, const Flt *right) {
+    if (idx < 4) {
+        Flt d[4];
+        int ridx[4] = {idx, 1, 2, 3};
+        if (idx > 0) {
+            int offset = 3 * (idx-1);
+            ridx[1] = qtm_seq[offset], ridx[2] = qtm_seq[offset+1], ridx[3] = qtm_seq[offset+2]; 
+        }
+        d[0] = left[0], d[1] = left[1], d[2] = left[2], d[3] = left[3];
+
+        if (idx == 0 || idx == 2) {
+            d[1] = -d[1];
+        }
+        if (idx == 0 || idx == 3) {
+            d[2] = -d[2];
+        }
+        if (idx < 2) {
+            d[3] = -d[3];
+        }
+        // right:
+        //        0  1  2  3
+        //        ----------
+        // idx 0: 0, 1, 2, 3
+        // idx 1: 1, 0, 3, 2
+        // idx 2: 2, 3, 0, 1
+        // idx 3: 3, 2, 1, 0
+        // because this routine runs inside one single warp, we do not worry the write before read problem
+        // if (threadIdx.z == 0) printf("%d %d %d: d %f %f %f %f\n", threadIdx.x, threadIdx.y, threadIdx.z, d[0], d[1], d[2], d[3]);
+        left[idx] = d[0] * right[ridx[0]] + d[1] * right[ridx[1]] + d[2] * right[ridx[2]] + d[3] * right[ridx[3]];
+
+    }
+}
 FORCE_INLINE void qt_multiple(Flt *dst, const Flt *src) {
     Flt xr = src[0], yr = src[1], zr = src[2], wr = src[3];
     Flt x = dst[0], y = dst[1], z = dst[2], w = dst[3];
@@ -400,9 +503,32 @@ FORCE_INLINE void qt_multiple(Flt *dst, const Flt *src) {
 FORCE_INLINE void angle_to_quaternion(const Vec& axis, Flt angle, Qt &out) { // axis is assumed to be a unit vector
 	//assert(eq(tvmet::norm2(axis), 1));
 	normalize_angle(angle); // this is probably only necessary if angles can be very big
-	Flt c = COS(angle/2);
-	Flt s = SIN(angle/2);
+    angle = angle * 0.5;
+	Flt c = COS(angle);
+	Flt s = SIN(angle);
 	return qt_set(out, c, s*vec_get(axis, 0), s*vec_get(axis, 1), s*vec_get(axis, 2));
+}
+FORCE_INLINE void angle_to_quaternion_c(int idx, const Vec& axis, Flt angle, Qt &out) { // axis is assumed to be a unit vector
+	//assert(eq(tvmet::norm2(axis), 1));
+	normalize_angle(angle); // this is probably only necessary if angles can be very big
+    angle = angle * 0.5;
+    if (idx == 0) {
+        qt_set(out, 0, COS(angle));
+    }
+    if (idx < 4) {
+        qt_set(out, idx, SIN(angle) * vec_get(axis, idx-1));
+    }
+}
+FORCE_INLINE void angle_to_quaternion_c(int idx, const Vec& axis, Flt angle, Flt *out) { // axis is assumed to be a unit vector
+	//assert(eq(tvmet::norm2(axis), 1));
+	normalize_angle(angle); // this is probably only necessary if angles can be very big
+    angle = angle * 0.5;
+    if (idx == 0) {
+        out[0] = COS(angle);
+    }
+    else if (idx < 4) {
+        out[idx] = SIN(angle) * vec_get(axis, idx-1);
+    }
 }
 FORCE_INLINE Flt quaternion_norm_sqr(const Qt& q) { // equivalent to sqr(boost::math::abs(const qt&))
 	return SQR(q.x) + SQR(q.y) + SQR(q.z) + SQR(q.w);
@@ -419,6 +545,7 @@ FORCE_INLINE void quaternion_normalize_approx(Qt& q, const Flt tolerance = 1e-6)
 FORCE_INLINE Flt quaternion_norm_sqr(const Flt * q) { // equivalent to sqr(boost::math::abs(const qt&))
 	return SQR(q[0]) + SQR(q[1]) + SQR(q[2]) + SQR(q[3]);
 }
+// todo
 FORCE_INLINE void quaternion_normalize_approx(Flt * q, const Flt tolerance = 1e-6) {
 	const Flt s = quaternion_norm_sqr(q);
 	if(ABS(s - 1) < tolerance)

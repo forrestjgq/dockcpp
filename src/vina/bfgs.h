@@ -70,8 +70,12 @@ inline bool bfgs_update(flmat& h, const Change& p, const Change& y, const fl alp
 	return true;
 }
 
+#define MONITOR_TRIAL 0
+#define REQUIRED() (trial == MONITOR_TRIAL)
+// #define REQUIRED() false
+#define MUSTED() (trial == MONITOR_TRIAL)
 template<typename F, typename Conf, typename Change>
-fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Change& p, Conf& x_new, Change& g_new, fl& f1, int& evalcount) { // returns alpha
+fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Change& p, Conf& x_new, Change& g_new, fl& f1, int& evalcount, int step) { // returns alpha
 	const fl c0 = 0.0001;
 	const unsigned max_trials = 8; // todo
 	// const unsigned max_trials = 10;
@@ -79,24 +83,35 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 	fl alpha = 1;
 
 	const fl pg = scalar_product(p, g, n);
+	printf("step %d pg: %f\n", step, pg);
 
 	int t = 0;
 	VINA_U_FOR(trial, max_trials) {
-#if 0
-        printf("cpu before conf inc at %d\n", trial);
-		x.print();
-        printf("cpu before change inc at %d\n", trial);
-		p.print();
+#if 1
+		if (REQUIRED()) {
+			printf("step %d trial %d p:\n", step, trial);
+			p.print();
+			printf("before conf:\n");
+			x.print();
+		}
 #endif
 		x_new = x; x_new.increment(p, alpha);
-#if 0
-        printf("cpu after conf inc at %d\n", trial);
-		x_new.print();
+#if 1
+		if (REQUIRED()) {
+			printf("after conf:\n");
+			x_new.print();
+		}
 #endif
 		f1 = f(x_new, g_new);
 		evalcount++;
 		t++;
 		DBG("cpu lsm %d alpha %f f1 %f f0 %f", trial, alpha, f1, f0);
+		if (MUSTED()) {
+			printf("cpu line search step %d trial %d der %f\n", step, trial, f1);
+		}
+		if(REQUIRED()) {
+			printf("\n\n\n");
+		}
 		if(f1 - f0 < c0 * alpha * pg) // FIXME check - div by norm(p) ? no?
 			break;
 		alpha *= multiplier;
@@ -127,8 +142,8 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 	Conf x_new(x);
 	fl f0 = f(x, g);
 	evalcount++;
+	printf("eval %d f0 %f\n", evalcount, f0);
 #if 0
-	printf("f0 %f\n", f0);
 	printf("c:\n");
 	x.print();
 	printf("g:\n");
@@ -146,18 +161,27 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 	VINA_U_FOR(step, max_steps) {
 		minus_mat_vec_product(h, g, p);
 		fl f1 = 0;
-		const fl alpha = line_search(f, n, x, g, f0, p, x_new, g_new, f1, evalcount);
+#if 0
+		printf("CPU step %d\n", step);
+		printf("cpu g:\n");
+		g.print();
+		printf("cpu p:\n");
+		p.print();
+		printf("cpu c:\n");
+		x.print();
+#endif
+		const fl alpha = line_search(f, n, x, g, f0, p, x_new, g_new, f1, evalcount, step);
+
 		// printf("step %d alpha %f f1 %f\n", step, alpha, f1);
 #if 0
-		printf("step %d alpha %f f1 %f\n", step, alpha, f1);
-		printf("c:\n");
+		printf("alpha %f f1 %f\n", alpha, f1);
+		printf("c_new:\n");
 		x_new.print();
 		printf("g:\n");
-		g_new.print();
-		MCDBG("g_new in step %d", step);
-		g_new.print();
-		MCDBG("g in step %d", step);
 		g.print();
+		printf("g_new:\n");
+		g_new.print();
+		printf("\n\n\n\n");
 #endif
 		Change y(g_new); subtract_change(y, g, n);
 #if 0

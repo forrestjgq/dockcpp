@@ -177,6 +177,7 @@ void monte_carlo::cpu(model& m, output_container& out, precalculate_byatom& p,
 			auto us = clk.mark();
 			printf("batch 200 cost %lu us\n", us);
 		}
+		if(step == 20) exit(0);
 		if(increment_me)
 			++(*increment_me);
 		if((max_evals > 0) & ((unsigned)evalcount > max_evals)) {

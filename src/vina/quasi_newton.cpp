@@ -98,7 +98,7 @@ struct quasi_newton_aux {
 };
 
 void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount) { // g must have correct size
-#if 0
+#if 1
     int cnt = evalcount;
     model m1(m);
     change g1(g);
@@ -110,8 +110,11 @@ void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igri
     auto cdu = clk.mark();
     gpu(m1, p, ig, out1, g1, v, cnt);
     auto gdu = clk.mark();
-    auto diff = cdu > gdu ? cdu - gdu : gdu - cdu;
-    printf("cpu %lu gpu %lu diff %lu\n", cdu, gdu, diff);
+    auto diff = int(cdu > gdu ? cdu - gdu : gdu - cdu) /1000;
+    if (cdu < gdu) {
+        diff = -diff;
+    }
+    printf("cpu %lu gpu %lu diff %d\n\n", cdu, gdu, diff);
     if (0) {
         printf("last eval cnt %d\n", evalcount);
         out.c.print();

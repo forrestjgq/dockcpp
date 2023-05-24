@@ -12,6 +12,11 @@ FORCE_INLINE void frame_set_orientation(SegmentVars *segvar, const Flt *q) {
     qt_set(segvar->orq, q[0], q[1], q[2], q[3]);
     qt_to_mat(q, segvar->orm);
 }
+FORCE_INLINE void frame_set_orientation_c(int idx, SegmentVars *segvar, const Flt *q) {
+    CUDBG("set orientation: %f %f %f %f", q[0], q[1], q[2], q[3]);
+    qt_set(segvar->orq, idx, q[idx]);
+    qt_to_mat(q, segvar->orm);
+}
 FORCE_INLINE void frame_set_orientation(SegmentVars *segvar, const Qt &q) {
     CUDBG("set orientation: %f %f %f %f", q.x, q.y, q.z, q.w);
     qt_set(segvar->orq, q);
@@ -28,8 +33,16 @@ FORCE_INLINE void frame_local_to_lab(SegmentVars *segvar, const Vec &local_coord
     vec_add(out, segvar->origin);
     CUVDUMP("    coord", out);
 }
+FORCE_INLINE void frame_local_to_lab_c(int idx, SegmentVars *segvar, const Vec &local_coords, Vec &out) {
+    auto m = segvar->orm;
+    mat_multiple_c(idx, segvar->orm, local_coords, out);
+    vec_add_c(idx, out, segvar->origin);
+}
 FORCE_INLINE void frame_local_to_lab_direction(SegmentVars *segvar, const Vec &local_direction, Vec &out) {
     mat_multiple(segvar->orm, local_direction, out);
+}
+FORCE_INLINE void frame_local_to_lab_direction_c(int idx, SegmentVars *segvar, const Vec &local_direction, Vec &out) {
+    mat_multiple_c(idx, segvar->orm, local_direction, out);
 }
 FORCE_INLINE void atom_frame_set_coords(Atom *atoms, Segment *seg, SegmentVars *segvar, Vec *coords) {
     CUDBG("begin %d end %d", seg->begin, seg->end);
@@ -63,6 +76,20 @@ FORCE_INLINE void segment_set_conf(SegmentVars *parent, SegmentVars *segvar, Seg
     CUDBG("tmp %f %f %f %f", tmp.x, tmp.y, tmp.z, tmp.w);
     quaternion_normalize_approx(tmp);  // normalization added in 1.1.2
     CUDBG("approx tmp %f %f %f %f", tmp.x, tmp.y, tmp.z, tmp.w);
+    // quaternion_normalize(tmp); // normalization added in 1.1.2
+    frame_set_orientation(segvar, tmp);
+    atom_frame_set_coords(atoms, seg, segvar, coords);
+}
+FORCE_INLINE void segment_set_conf_c(int idx, SegmentVars *parent, SegmentVars *segvar, Segment *seg, Atom *atoms,
+                      Vec *coords, Flt torsion) {
+    frame_local_to_lab_c(idx, parent, seg->relative_origin, segvar->origin);
+    frame_local_to_lab_direction_c(idx, parent, seg->relative_axis, segvar->axis);
+    auto tmp = segvar->orm; // use orm for temperary variable
+    angle_to_quaternion_c(idx, segvar->axis, torsion, tmp);
+    qt_multiple_c(idx, tmp, (Flt *)&(parent->orq));
+    if (IS_2DMAIN()) {
+        quaternion_normalize_approx(tmp);  // normalization added in 1.1.2
+    }
     // quaternion_normalize(tmp); // normalization added in 1.1.2
     frame_set_orientation(segvar, tmp);
     atom_frame_set_coords(atoms, seg, segvar, coords);

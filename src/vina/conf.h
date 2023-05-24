@@ -98,13 +98,8 @@ struct rigid_conf {
 	}
 	void increment(const rigid_change& c, fl factor) {
 		position += factor * c.position;
-        DBG("position g %f %f %f, c %f %f %f", c.position.data[0], c.position.data[1],
-             c.position.data[2], position.data[0], position.data[1], position.data[2]);
 		vec rotation; rotation = factor * c.orientation;
-        DBG("rotation g: %f %f %f, r %f %f %f", c.orientation.data[0], c.orientation.data[1], c.orientation.data[2],
-		 rotation.data[0], rotation.data[1], rotation.data[2]);
 		quaternion_increment(orientation, rotation); // orientation does not get normalized; tests show rounding errors growing very slowly
-        DBG("orientation c: %f %f %f %f", orientation.R_component_1(), orientation.R_component_2(), orientation.R_component_3(), orientation.R_component_4());
 	}
 	void randomize(const vec& corner1, const vec& corner2, rng& generator) {
 		position = random_in_box(corner1, corner2, generator);
