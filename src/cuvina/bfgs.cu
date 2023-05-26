@@ -555,19 +555,25 @@ FORCE_INLINE void quaternion_increment(Flt *out, const Flt * q, const Flt * rota
 	// assert(quaternion_is_normalized(q));
     Flt qt[4];
     angle_to_quaternion(rotation, qt);
+#if PERFDEBUG
     if (threadIdx.z == 0) {
         MCUDBG("qin %f %f %f %f", q[0], q[1], q[2], q[3]);
         MCUDBG("qt %f %f %f %f", qt[0], qt[1], qt[2], qt[3]);
     }
+#endif
     qt_multiple(out, qt, q);
+#if PERFDEBUG
     if (threadIdx.z == 0) {
         MCUDBG("qt out %f %f %f %f", out[0], out[1], out[2], out[3]);
     }
+#endif
 	quaternion_normalize_approx(out); // normalization added in 1.1.2
 	// quaternion_normalize(q); // normalization added in 1.1.2
+#if PERFDEBUG
     if (threadIdx.z == 0) {
         MCUDBG("qt final %f %f %f %f", out[0], out[1], out[2], out[3]);
     }
+#endif
 }
 FORCE_INLINE void quaternion_increment_y(Flt *out, const Flt * q, const Flt * rotation) {
 	// assert(quaternion_is_normalized(q));
@@ -575,20 +581,26 @@ FORCE_INLINE void quaternion_increment_y(Flt *out, const Flt * q, const Flt * ro
         angle_to_quaternion(rotation, out);
     }
 
+#if PERFDEBUG
     if (INMAIN()) {
         MCUDBG("qin %f %f %f %f", q[0], q[1], q[2], q[3]);
         MCUDBG("qt %f %f %f %f", out[0], out[1], out[2], out[3]);
     }
+#endif
     qt_multiple_c(threadIdx.y, out, q);
+#if PERFDEBUG
     if (threadIdx.z == 0) {
         MCUDBG("qt out %f %f %f %f", out[0], out[1], out[2], out[3]);
     }
+#endif
     if (threadIdx.y == 0) {
         quaternion_normalize_approx(out); // normalization added in 1.1.2
     }
+#if PERFDEBUG
     if (INMAIN()) {
         MCUDBG("qt final %f %f %f %f", out[0], out[1], out[2], out[3]);
     }
+#endif
 }
 // use threadIdx.x only
 // g ligand change, c: ligand conf, out: output ligand conf
@@ -726,9 +738,10 @@ __device__ Flt multipliers[]
 // output: outc, outg, out_alpha,
 // evalcnt will be added to steps count used
 
-#define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
-// #define REQUIRED() false
-#define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
+// #define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
+#define REQUIRED() false
+// #define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
+#define MUSTED() false
 __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt f0, Flt &f1,
                             const Flt *c, const Flt *g, const Flt *p, Flt *tmp, Flt *outc,
                             Flt *outg, int ng, int nc, int &evalcnt, Flt &out_alpha,
@@ -940,7 +953,7 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
     if (INMAIN()) {
         *f_orig = *f0;
         fs[0]   = *f0;
-        printf("gpu f0 %f\n", *f0);
+        // printf("gpu f0 %f\n", *f0);
     }
 
     // require max(ng * ng, MAX_TRIALS * (nc+ng+1) + 2, ng * ng + 4)
@@ -1321,6 +1334,32 @@ GLOBAL void bfgs_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx
     extern __shared__ Flt sm[];
     int nc = m->src->nrflts_conf;
     int offset = 0;
+
+        #if 0
+    if (ZIS(0)) {
+        auto src = m->src;
+        for (int i = 0; i < src->movable_atoms + src->npairs; i++) {
+            printf("gpu map add %d: %d\n", i, src->force_pair_map_add[i]);
+        }
+        for(int i = 0; i < src->movable_atoms; i++) {
+            int d = src->idx_add[i];
+            printf("index add %d: %d\n", i, d);
+            if (d >= 0) {
+                int n = src->force_pair_map_add[d];
+                for (int j = 0, start = d+1; j < n; j++, start++) {
+                    auto k = src->force_pair_map_add[start];
+                    printf("\tpair %d\n", k);
+                }
+
+            }
+        }
+        for(int i = 0; i < src->movable_atoms; i++) {
+            printf("index sub %d: %d\n", i, src->idx_sub[i]);
+        }
+    }
+        #endif
+
+
     Flt *c, *f0, *mem;
     c = sm + offset, offset += nc; // bfgs output conf
     f0 = sm + offset,  offset += 1;

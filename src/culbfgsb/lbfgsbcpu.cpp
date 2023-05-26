@@ -606,8 +606,8 @@ void lbfgsbcauchy(
   real zibp;
   real dibp2;
   real bkmin;
-  real tu;
-  real tl;
+  real tu = 0;
+  real tl = 0;
   real wmc;
   real wmp;
   real wmw;
@@ -1429,7 +1429,7 @@ void lbfgsbsubsm(const int& n, const int& m, const int& nsub,
   int pointr;
   // int m2;
   int col2;
-  int ibd;
+  int ibd = 0;
   int jy;
   int js;
   int i;

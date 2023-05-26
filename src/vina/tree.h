@@ -258,7 +258,7 @@ template<typename Node> // Node == first_segment || rigid_body
 struct heterotree {
 	Node node;
 	branches children;
-	int nr_nodes; // record how many T in children
+	int nr_nodes = 0; // record how many T in children
 	heterotree(const Node& node_) : node(node_) {}
 	void set_conf(const atomv& atoms, vecv& coords, const ligand_conf& c) {
 		node.set_conf(atoms, coords, c.rigid);

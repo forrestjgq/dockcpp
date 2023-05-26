@@ -16,6 +16,8 @@ __forceinline__ __device__ unsigned warp_id()
     asm volatile ("mov.u32 %0, %warpid;" : "=r"(ret));
     return ret;
 }
+#define PERFDEBUG 0
+#if PERFDEBUG
 #define MCUDBG(fmt, ...) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
 // #define MCUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
 #define MCUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.d[0], v.d[1], v.d[2])
@@ -23,6 +25,13 @@ __forceinline__ __device__ unsigned warp_id()
 #define MCUVECPDUMP(hdr, vp) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
     __LINE__,blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  \
     vp.first.d[0], vp.first.d[1], vp.first.d[2], vp.second.d[0], vp.second.d[1], vp.second.d[2]); }while(0)
+#else
+#define MCUDBG(fmt, ...) 
+// #define MCUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
+#define MCUVDUMP(hdr, v) 
+// #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
+#define MCUVECPDUMP(hdr, vp) 
+#endif
 #define CUDEBUG 0
 #if CUDEBUG
 #if USE_CUDA_VINA

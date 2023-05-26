@@ -786,6 +786,7 @@ fl eval_interacting_pairs_deriv(int &seq, const precalculate_byatom& p, fl v, co
 
 	VINA_FOR_IN(i, pairs) {
 		const interacting_pair& ip = pairs[i];
+		// printf("\tpair %lu a %lu b %lu\n", i, ip.a, ip.b);
 		vec r = coords[ip.b] - coords[ip.a]; // a -> b
 		fl r2 = sqr(r);
 		DBG("    seq %d, a %lu b %lu r2 %f", seq, ip.a, ip.b, r2);
@@ -835,6 +836,7 @@ fl model::eval_deriv(const precalculate_byatom& p, const igrid& ig, const vec& v
 
 	// INTRA ligand_i - ligand_i
 	VINA_FOR_IN(i, ligands) {
+		// printf("ligand %lu\n", i);
 		auto e1 = eval_interacting_pairs_deriv(seq, p, v[0], ligands[i].pairs, coords, minus_forces); // adds to minus_forces
 		DBG("ligands %lu e %f", i, e1);
 		e += e1;
@@ -842,15 +844,20 @@ fl model::eval_deriv(const precalculate_byatom& p, const igrid& ig, const vec& v
 
 	// INTER ligand_i - ligand_j and ligand_i - flex_i
 	if (!inter_pairs.empty())  {
+		// printf("inter pairs\n");
 		auto e1 = eval_interacting_pairs_deriv(seq, p, v[2], inter_pairs, coords, minus_forces); // adds to minus_forces
 		e += e1;
 	}
 	// INTRA flex_i - flex_i and flex_i - flex_j
-	if (!other_pairs.empty())
+	if (!other_pairs.empty()) {
+		// printf("other pairs\n");
 		e += eval_interacting_pairs_deriv(seq, p, v[2], other_pairs, coords, minus_forces); // adds to minus_forces
+	}
 	// glue_i - glue_i and glue_i - glue_j
-	if (!glue_pairs.empty())
+	if (!glue_pairs.empty()) {
+		// printf("glue pairs\n");
 		e += eval_interacting_pairs_deriv(seq, p, v[2], glue_pairs, coords, minus_forces, true); // adds to minus_forces
+	}
 
 	// calculate derivatives
 	ligands.derivative(coords, minus_forces, g.ligands);
@@ -931,6 +938,7 @@ fl model::rmsd_upper_bound(const model& m) const {
 		const atom& b = m.atoms[i];
 		assert(a.ad == b.ad);
 		assert(a.xs == b.xs);
+		(void)b;
 		if(a.el != EL_TYPE_H) {
 			sum += vec_distance_sqr(coords[i], m.coords[i]);
 			++counter;
@@ -953,6 +961,7 @@ fl model::rmsd_ligands_upper_bound(const model& m) const {
 			const atom& b = m.atoms[i];
 			assert(a.ad == b.ad);
 			assert(a.xs == b.xs);
+			(void)b;
 			if(a.el != EL_TYPE_H) {
 				sum += vec_distance_sqr(coords[i], m.coords[i]);
 				++counter;

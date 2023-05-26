@@ -174,10 +174,10 @@ void lbfgsbminimize(const int& n, const LBFGSB_CUDA_STATE<real>& state,
   memAlloc(int, &temp_ind3, n);
   memAlloc(int, &temp_ind4, n);
 
-  real* sbgnrm_h;
-  real* sbgnrm_d;
+  real* sbgnrm_h = nullptr;
+  real* sbgnrm_d = nullptr;
 
-  real* dsave13;
+  real* dsave13 = nullptr;
   memAllocHost(state.m_host_mem, , &sbgnrm_h, &sbgnrm_d, sizeof(real));
   memAllocHost(state.m_host_mem, real, &dsave13, NULL, 16 * sizeof(real));
 

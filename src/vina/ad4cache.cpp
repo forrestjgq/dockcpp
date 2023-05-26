@@ -248,7 +248,7 @@ void read_ad4_map(path& filename, std::vector<grid_dims>& gds, grid& g) {
 	sz z = 0;
 	grid_dims gd;
 	std::string line;
-	fl spacing, center, halfspan;
+	fl spacing = 0, center, halfspan;
 
 	ifile in(filename);
 

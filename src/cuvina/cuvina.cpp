@@ -52,6 +52,8 @@ public:
                 m_[(size_t)pptr - (size_t)ptr_] = offset_;
             }
             offset_ += sz;
+
+            // printf("alloc sz %lu: %p end %p\n", sz, p, ptr_+offset_);
         } else {
             std::cerr << "fail to alloc " << sz << " bytes, left " << left() << std::endl;
             *pptr = nullptr;
@@ -222,6 +224,13 @@ void copy_pairs(InteractingPair * &dst, interacting_pairs &src,Flt cutoff_sqr, i
         dst++;
     }
 }
+void eval_pairs(int &idx, std::map<int, std::vector<int>> &adds,std::map<int, std::vector<int>> &subs, interacting_pairs &src) {
+    for (auto &p : src)  {
+        subs[p.a].push_back(idx);
+        adds[p.b].push_back(idx);
+        idx++;
+    }
+}
 void copy_qt(Qt &dst, const qt &src) {
     dst.x = src.R_component_1();
     dst.y = src.R_component_2();
@@ -338,14 +347,14 @@ void htree_var_nodes_restore(const SegmentVars *segs, struct heterotree<T> &tree
 
         // std::cout << __FILE__ << ":" << __LINE__ << " " << "alloc arr " #type " size " << sizeof(type) << " cout " << n << " total " << sizeof(type) * n << std::endl;
     #define ALLOC_ARR(dst, type, n) do {\
-        mem->crop((void **)&(dst), sizeof(type) * n, sizeof(double));\
+        mem->crop((void **)&(dst), sizeof(type) * (n), sizeof(double));\
         if (dst == nullptr) goto cleanup;\
     } while(0)
 
 #define ALIGNMENT sizeof(double)
 #define ALIGN(x, a) (((x) + (a) - 1) / (a) * (a))
 #define SIZEOF(t) ALIGN(sizeof(t), ALIGNMENT)
-#define SIZEOFARR(t, sz) ALIGN(sizeof(t)*sz, ALIGNMENT)
+#define SIZEOFARR(t, sz) ALIGN(sizeof(t)*(sz), ALIGNMENT)
 // ok
 std::shared_ptr<Memory> create_src_model_memory(model *m) {
 
@@ -358,6 +367,20 @@ std::shared_ptr<Memory> create_src_model_memory(model *m) {
     SIZEOFARR(InteractingPair, npairs) +
     SIZEOFARR(Ligand, m->ligands.size()) +
     SIZEOFARR(Residue, m->flex.size());
+
+
+    // allocated memory space for idx_sub/add, force_pair_map_sub/add
+    // note that idx_sub/add has fixed space requirement as movable_atoms ints
+    sz += 2 * SIZEOFARR(int, m->num_movable_atoms());
+    // and because the pair number is fixed to npairs, and each of them takes one
+    // int in force_pair_map_sub/add, plus the prefix count(each minus-force has one count),
+    // the total space will be:
+    sz += 2 * SIZEOFARR(int, m->num_movable_atoms() + npairs);
+
+
+    // for force_pair_map_sub and force_pair_map_add
+    sz += SIZEOFARR(int, m->num_movable_atoms() * (npairs + 1));
+
     for (auto i = 0u; i < m->ligands.size(); i++) {
         auto nr_node = htree_nodes_size(m->ligands[i]);
         sz += SIZEOFARR(Segment, nr_node);
@@ -369,11 +392,26 @@ std::shared_ptr<Memory> create_src_model_memory(model *m) {
     sz = (sz + 4096 -1) / 4096*4096;
     return makeMemory(sz);
 }
+void checksm(SrcModel *sm, int mark, const char *f, int line) {
+
+    for (auto i = 0; i < sm->movable_atoms + sm->npairs; i++) {
+        auto k = sm->force_pair_map_add[i];
+        if (k < 0) {
+            printf("check false at %s %d mark %d\n", f, line, mark);
+            fflush(stdout);
+            assert(false);
+        }
+    }
+}
+#define CHECKSM(i) checksm(sm , i, __FILE__, __LINE__)
 SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
 
     SrcModel *sm;
     InteractingPair *pair;
     Flt sqr, max_sqr;
+    int offset_sub = 0, offset_add = 0;
+    std::map<int, std::vector<int>> adds, subs;
+
     ALLOC(sm, SrcModel);
     sm->movable_atoms = m->num_movable_atoms();
     sm->xs_nat = num_atom_types(atom_type::XS);
@@ -439,6 +477,53 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
     copy_pairs(pair, m->other_pairs, sqr, 2);
     copy_pairs(pair, m->glue_pairs, max_sqr, 2);
 
+    // prepare force-pair mapping
+    // key: index of min-force, v: indices of pairs
+    for (int i = 0; i < sm->movable_atoms; i++) {
+        adds[i] = {};
+        subs[i] = {};
+    }
+    for (int i = 0; i < sm->npairs; i++) {
+        auto &ip = sm->pairs[i];
+        subs[ip.a].push_back(i);
+        adds[ip.b].push_back(i);
+    }
+    ALLOC_ARR(sm->idx_sub, int, sm->movable_atoms);
+    ALLOC_ARR(sm->idx_add, int, sm->movable_atoms);
+    ALLOC_ARR(sm->force_pair_map_add, int, sm->movable_atoms + sm->npairs);
+    // printf("ints %d, add %p -> %p\n", sm->movable_atoms + sm->npairs, sm->force_pair_map_add, sm->force_pair_map_add + sm->movable_atoms + sm->npairs);
+    ALLOC_ARR(sm->force_pair_map_sub, int, sm->movable_atoms + sm->npairs);
+
+    for (int i = 0; i < sm->movable_atoms; i++) {
+        auto &add = adds[i];
+        if (add.empty()) {
+            sm->idx_add[i] = -1;
+            // printf("minus-force %d, -1\n", i);
+        } else {
+            sm->idx_add[i] = offset_add;
+            // printf("minus-force %d: offset %d size %d\n", i, offset_add, (int)(add.size()));
+            auto *p = sm->force_pair_map_add + offset_add;
+            *p++ = (int)(add.size());
+            offset_add += (int)(add.size())+1;
+            for (auto k : add) {
+                *p++ = k;
+                // printf("\tpair %d\n", k);
+            }
+        }
+        auto &sub = subs[i];
+        if (sub.empty()) {
+            sm->idx_sub[i] = -1;
+        } else {
+            sm->idx_sub[i] = offset_sub;
+            auto *p = sm->force_pair_map_sub + offset_sub;
+            *p++ = (int)(sub.size());
+            offset_sub += (int)(sub.size())+1;
+            for (auto k : sub) {
+                *p++ = k;
+            }
+        }
+    }
+
     // prepare ligands and flex, in the reverse order to store tree
     sm->nligand = m->ligands.size();
     sm->nflex = m->flex.size();
@@ -453,6 +538,7 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
         sm->nrfligands += 6 + ligand.nr_node - 1;
         ALLOC_ARR(ligand.tree, Segment, ligand.nr_node);
         htree_nodes_copy(ligand.tree, m->ligands[i]);
+        // CHECKSM(i);
     }
     for (int i = 0; i < sm->nflex; i++) {
         auto &flex = sm->flex[i];
@@ -465,6 +551,9 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
     // conf has qt orientation and change has vec orientation, so each ligand in conf
     // has an extra floats
     sm->nrflts_conf = sm->nrflts_change + sm->nligand;
+    // for (auto i = 0; i < sm->movable_atoms + sm->npairs; i++) {
+    //         printf("cpu map add %d: %d\n", i, sm->force_pair_map_add[i]);
+    // }
     return sm;
 cleanup:
     return nullptr;

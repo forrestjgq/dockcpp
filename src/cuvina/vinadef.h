@@ -82,6 +82,7 @@ namespace dock {
         Vec origin;
         Qt orq; // see frame::orientation_q
         Flt orm[9]; // see frame::orientation_m
+        Flt tmp[32];
 
         // outputs
         Vecp ft; // force and torque
@@ -158,6 +159,16 @@ namespace dock {
 
         int npairs; // include: ligands pairs, inter, other, glue pairs
         InteractingPair *pairs;
+        // idx_sub/add contains movable_atoms indices, each for one minus-forces
+        // it indicates that offset of a group of ints in force_pair_map_xxx shows the pair and
+        // minus-force relationship, this group of ints are defined as:
+        // [n][pair-1][pair-2]...[pair-n]
+        // assume the offset value is k, this means for minus-forces[k], it should add/sub
+        // the force in pair result of pair-1 ~ pair-n, where n indicates how many related
+        // pairs to minus-force[k]
+        int *idx_sub, *idx_add;
+        int *force_pair_map_sub;
+        int *force_pair_map_add;
 
         int nligand, nflex; // how many ligand and flex in model
         int nrflts_change, nrflts_conf; // how many Flt in a change and conf

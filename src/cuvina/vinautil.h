@@ -215,40 +215,38 @@ namespace dock {
     FORCE_INLINE void mat_set(Flt *mat, int i, int j, Flt v) {
         mat[i + 3 *j] = v;
     }
-    __device__ int qt_to_mat_map_048[] = {
-        1, -1, -1,
-        -1, 1, -1,
-        -1, -1, 1
-    }
-    FORCE_INLINE void qt_to_mat_c(int idx, const Flt *qt, Flt *mat) {
-        const Flt a = qt[0];
-        const Flt b = qt[1];
-        const Flt c = qt[2];
-        const Flt d = qt[3];
-
-        const Flt aa = a * a;
-        const Flt ab = a * b;
-        const Flt ac = a * c;
-        const Flt ad = a * d;
-        const Flt bb = b * b;
-        const Flt bc = b * c;
-        const Flt bd = b * d;
-        const Flt cc = c * c;
-        const Flt cd = c * d;
-        const Flt dd = d * d;
-
-        mat_set(mat, 0, 0, (aa + bb - cc - dd));
-        mat_set(mat, 0, 1, 2 * (-ad + bc));
-        mat_set(mat, 0, 2, 2 * (ac + bd));
-        mat_set(mat, 1, 0, 2 * (ad + bc));
-        mat_set(mat, 1, 1, (aa - bb + cc - dd));
-        mat_set(mat, 1, 2, 2 * (-ab + cd));
-        mat_set(mat, 2, 0, 2 * (-ac + bd));
-        mat_set(mat, 2, 1, 2 * (ab + cd));
-        mat_set(mat, 2, 2, (aa - bb - cc + dd));
-
-        if ((idx >> 2) == 0) {
-            // 0, 4, 8
+    __device__ int qt_to_mat_map[] = {
+        // (aa + bb - cc - dd)
+        1, 0, 0, 1, 1, 1, 1, 2, 2, -1, 3, 3, -1, // 0
+        // 2 * (ad + bc)
+        2, 0, 3, 1, 1, 2, 1,  0, 0, 0, 0, 0, 0, // 1
+        // 2 * (-ac + bd)
+        2, 0, 2, -1, 1, 3, 1,  0, 0, 0, 0, 0, 0, // 2
+        // 2 * (-ad + bc)
+        2, 0, 3, -1, 1, 2, 1, 0, 0, 0, 0, 0, 0, // 3
+        // (aa - bb + cc - dd)
+        1, 0, 0, 1, 1, 1, -1, 2, 2, 1, 3, 3, -1, // 4
+        // 2 * (ab + cd)
+        2, 0, 1, 1, 2, 3, 1,  0, 0, 0, 0, 0, 0, // 5
+        //2 * (ac + bd));
+        2, 0, 2, 1, 1, 3, 1,  0, 0, 0, 0, 0, 0, // 6
+        // (-ab + cd)
+        2, 0, 1, -1, 2, 3, 1,  0, 0, 0, 0, 0, 0, // 7
+        // (aa - bb - cc + dd)
+        1, 0, 0, 1, 1, 1, -1, 2, 2, -1, 3, 3, 1, // 8
+    };
+    FORCE_INLINE void qt_to_mat_c(int idx, int blk, const Flt *qt, Flt *mat) {
+        while(idx < 9) {
+            auto m = qt_to_mat_map + 13 * idx;
+            Flt mul = m[0];
+            m++;
+            Flt sum = 0;
+            FOR(i, 4) {
+                if (m[2] != 0) sum += qt[m[0]] * qt[m[1]] * ((Flt)m[2]);
+                m += 3;
+            }
+            mat[idx] = mul * sum;
+            idx += blk;
         }
     }
     FORCE_INLINE void qt_to_mat(const Flt *qt, Flt *mat) {
@@ -268,11 +266,11 @@ namespace dock {
         const Flt cd = c * d;
         const Flt dd = d * d;
 
-        mat_set(mat, 0, 0, (aa + bb - cc - dd));
-        mat_set(mat, 0, 1, 2 * (-ad + bc));
-        mat_set(mat, 0, 2, 2 * (ac + bd));
-        mat_set(mat, 1, 0, 2 * (ad + bc));
-        mat_set(mat, 1, 1, (aa - bb + cc - dd));
+        mat_set(mat, 0, 0, (aa + bb - cc - dd)); // 0
+        mat_set(mat, 0, 1, 2 * (-ad + bc)); // 3
+        mat_set(mat, 0, 2, 2 * (ac + bd)); // 6
+        mat_set(mat, 1, 0, 2 * (ad + bc)); // 1
+        mat_set(mat, 1, 1, (aa - bb + cc - dd)); // 4
         mat_set(mat, 1, 2, 2 * (-ab + cd));
         mat_set(mat, 2, 0, 2 * (-ac + bd));
         mat_set(mat, 2, 1, 2 * (ab + cd));

@@ -169,8 +169,106 @@ FORCE_INLINE  void c_model_eval_deriv_pairs(ModelDesc *m, const PrecalculateByAt
         // printf("pair %d e %f\n force %f %f %f\n", i, pair_res->e, pair_res->force.x , pair_res->force.y, pair_res->force.z );
 	}
 }
+template <size_t WARP_SIZE>
+void __global__ warp_asum_kernel(
+	const size_t n,
+	const unsigned *src_d,
+	unsigned *tmp_d)
+{
+	const size_t
+		global_id = threadIdx.x + blockDim.x * blockIdx.x,
+		lane_id = global_id % WARP_SIZE;
+	unsigned
+		val = global_id < n ? src_d[global_id] : 0;
+	for (size_t offset = WARP_SIZE >> 1; offset > 0; offset >>= 1)
+		val += __shfl_xor_sync(0xffffffff, val, offset, WARP_SIZE);
+	if (lane_id == 0)
+		tmp_d[global_id / WARP_SIZE] = val;
+}
 // collect e and setup forces
-FORCE_INLINE void c_model_collect_deriv(ModelDesc *m, Flt *e, Flt *md) {
+// make sure x*y = 32
+COULD_INLINE void c_model_collect_deriv(ModelDesc *m, Flt *e, Flt *md) {
+	SrcModel *src = m->src;
+
+    // reduce e in movable atoms and pairs
+    Flt val = 0;
+    const int n = src->movable_atoms;
+    CU_FOR2(i, src->movable_atoms) {
+        val += (*model_movable_e(src, m, md, i));
+    }
+    CU_FOR2(i, src->npairs) {
+        val += model_pair_res(src, m, md, i)->e;
+    }
+	for (size_t offset = 32 >> 1; offset > 0; offset >>= 1)
+		val += __shfl_xor_sync(0xffffffff, val, offset, 32);
+	if (IS_2DMAIN()) *e = val;
+#if 0
+    if (ZIS(0)) {
+        for (int i = 0; i < src->movable_atoms + src->npairs; i++) {
+            printf("gpu map add %d: %d\n", i, src->force_pair_map_add[i]);
+        }
+        #if 0
+        for(int i = 0; i < src->movable_atoms; i++) {
+            int d = src->idx_add[i];
+            printf("index add %d: %d\n", i, d);
+            if (d >= 0) {
+                int n = src->force_pair_map_add[d];
+                for (int j = 0, start = d+1; j < n; j++, start++) {
+                    auto k = src->force_pair_map_add[start];
+                    printf("\tpair %d\n", k);
+                }
+
+            }
+        }
+        for(int i = 0; i < src->movable_atoms; i++) {
+            printf("index sub %d: %d\n", i, src->idx_sub[i]);
+        }
+        #endif
+    }
+#endif
+#if 1
+    CU_FOR2(i, src->movable_atoms) {
+        int offset = src->idx_add[i];
+        // printf("add minus forces %d offset %d\n", i, offset);
+        if (offset >= 0) {
+            int n = src->force_pair_map_add[offset];
+            auto force = model_minus_forces(src, m, md, i);
+            for (auto j = 0; j < n; j++) {
+                auto pairidx = src->force_pair_map_add[offset + j + 1];
+                auto res = model_pair_res(src, m, md, pairidx); 
+                // printf("add %d to %d\n", pairidx, i);
+                vec_add(*force, res->force);
+            }
+        }
+    }
+    CU_FOR2(i, src->movable_atoms) {
+        int offset = src->idx_sub[i];
+        if (offset >= 0) {
+            int n = src->force_pair_map_sub[offset];
+            auto force = model_minus_forces(src, m, md, i);
+            for (auto j = 0; j < n; j++) {
+                auto pairidx = src->force_pair_map_sub[offset + j + 1];
+                auto res = model_pair_res(src, m, md, pairidx); 
+                vec_sub(*force, res->force);
+            }
+        }
+    }
+#else
+	// accumulate minus_forces
+	if (IS_2DMAIN()) {
+		FOR(i, src->npairs) {
+			InteractingPair &pair = src->pairs[i];
+            if (threadIdx.z == 0)printf("force %d pair %p a %d b %d\n", i, &pair, pair.a, pair.b);
+			auto res = model_pair_res(src, m, md, i);
+            auto paira = model_minus_forces(src, m, md, pair.a);
+            auto pairb = model_minus_forces(src, m, md, pair.b);
+			vec_sub(*paira, res->force);
+			vec_add(*pairb, res->force);
+		}
+	}
+#endif
+}
+FORCE_INLINE void c_model_collect_deriv_1(ModelDesc *m, Flt *e, Flt *md) {
 	SrcModel *src = m->src;
 
 	// accumulate e as deriviative result
