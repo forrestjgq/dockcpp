@@ -465,25 +465,31 @@ FORCE_INLINE void set_diagonal(Flt *h, Flt v, int ng) {
 // m: model description, used for parsing md
 // md: model variable data, will be updated
 FORCE_INLINE void model_eval_deriv(ModelDesc *m, const PrecalculateByAtom *p, const Cache *c, const Flt *cf, Flt *cg, Flt *e, Flt *md, const Flt *vs) {
+    // 970
     // sed model::set, update conf
     model_set_conf_ligand_c(m, cf, md);
     model_set_conf_flex_c(m, cf, md);
     WARPSYNC();
 
+    // 2800
     c_cache_eval_deriv(c, m, md, vs);
     WARPSYNC();
 
+    // 3200
     // depends on c_cache_eval_deriv
     c_model_eval_deriv_pairs(m, p, md, vs);
     WARPSYNC();
 
+    //3980
     c_model_collect_deriv(m, e, md);
     WARPSYNC();
 
+    // 5000
     c_model_eval_deriv_ligand_sum_ft(m, md);
     c_model_eval_deriv_flex_sum_ft(m, md);
     WARPSYNC();
 
+    // 5400
     c_model_eval_deriv_ligand(m, cg, md);
     c_model_eval_deriv_flex(m, cg, md);
 }
@@ -740,13 +746,12 @@ __device__ Flt multipliers[]
 
 // #define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
 #define REQUIRED() false
-// #define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
-#define MUSTED() false
+#define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
+// #define MUSTED() false
 __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt f0, Flt &f1,
                             const Flt *c, const Flt *g, const Flt *p, Flt *tmp, Flt *outc,
                             Flt *outg, int ng, int nc, int &evalcnt, Flt &out_alpha,
                             const threadids &tids, Flt *md, const Flt *vs, int step) {
-    MARK();
     const Flt c0 = 0.0001;
     Flt *pg = tmp;
     tmp++;
@@ -796,7 +801,6 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
         if(REQUIRED()) printf("\n\n\n");
     // }
     SYNC();
-    MARK();
 
     if (INMAIN()) {
         m->active = -1;
@@ -835,7 +839,6 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
         // printf("gpu line search tries %d times, alpha %f f1 %f\n", m->active+1, out_alpha, f1);
     }
     SYNC();
-    MARK();
     tc = tmp + (nc+ng) * m->active; // c_new
     tg = tc + nc; // g_new
     copy_change(outg, tg);
@@ -854,7 +857,6 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
 
     }
 #endif
-    MARK();
 }
 #define BFGSIDX threadIdx.z
 // mem requirement
@@ -936,7 +938,6 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
     if(XY0())
         printf("%d %d:%d:%d@%d:%d:%d mark flag3 %d %d f0 %f\n", __LINE__, threadIdx.x,
                 threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy,  *flag);
-    MARKXY();
     if (INMAIN()) {
         // printf("f0 eval synced\n");
         printf("c:\n");
@@ -1021,18 +1022,17 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
                    threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
         SYNC();
 #endif
+#if 1
         if (!(gg[0] >= 1e-5)) {
             // done
-            MARKXYSTEP();
             printf("%d %d:%d:%d@%d:%d:%d %d:%d >>>>> BREAKS <<<<<\n", __LINE__, threadIdx.x,
                    threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy);
             break;
         }
-
+#endif
         if (step == 0) {
             scalar_product_array(y, tmp, yy, ng, TIDS);  // require ng
             SYNC();
-            MARKXYSTEP();
             if (INMAIN()) {
                 CUDBG("yy %f", *yy);
             }
@@ -1046,7 +1046,6 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
                 set_diagonal(h, *beta, ng, TIDS);
                 SYNC();
             }
-            MARKXYSTEP();
         }
 
         copy_change(g, g_new);
@@ -1054,7 +1053,6 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
         bfgs_update3(h, p, y, tmp, *alpha, ng, TIDS);
     }
     SYNC();
-    MARKXY();
 
     if (!(*f0 <= *f_orig)) {
         copy_conf(c, c_orig);
@@ -1241,7 +1239,6 @@ __device__ void mc_xyz(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *c
     }
     copy_conf(TEMP, src_conf);
     SYNC();
-    MARK();
 
     int commited = 0;
     for (int dz = 0; dz < steps; dz++) {
@@ -1252,18 +1249,15 @@ __device__ void mc_xyz(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *c
         SYNC();
             // printf("%d:%d:%d@%d mc step %d/%d after sync\n", threadIdx.x, threadIdx.y, threadIdx.z, blockIdx.x, dz, steps);
             MCPRT("mc step %d/%d after sync", dz, steps);
-        MARKSTEP(dz);
         if (ctx->max_evalcnt > 0 && *evalcnt > ctx->max_evalcnt) {
             break;
         }
-        MARKSTEP(dz);
         auto in = ins->in + dz;
         copy_conf(CANDIDATE, TEMP);
         SYNC();
 
         mutate_conf_xy(m, ctx, in, CANDIDATE, md, tmp);  // update c, requires 4 * srcm->natoms + 2
         SYNC();
-        MARKSTEP(dz);
 #if CUDEBUG
         if (INMAIN()) {
             printf("candidate c:\n");
@@ -1293,12 +1287,9 @@ __device__ void mc_xyz(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *c
             MCPRT("accepted %d beste %f ftemp %f", dz, *beste, FTEMP);
             if (forceadd || FTEMP < *beste) {
                 MCPRT("fine bfgs beste %f ftemp %f", *beste, FTEMP);
-                MARKSTEP(dz);
                 bfgs(m, pa, ch, ctx->local_steps, ctx->average_required_improvement, ctx->over,
                      TEMP, PFTEMP, *evalcnt, ctx->vs + 3, tmp, dz, 1);  // requires SMSIZE()
-                MARKSTEP(dz);
                 SYNC();
-                MARKSTEP(dz);
                 // now add temp as new output
                 auto &out = outs->out[outs->n];
                 // copy e and conf
@@ -1314,7 +1305,6 @@ __device__ void mc_xyz(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCCtx *c
                 }
                 MCPRT("fine bfgs done, commited %d", commited);
             }
-            MARKSTEP(dz);
         }
         MCPRT("satisfied out %d", dz);
 #endif
@@ -1376,9 +1366,9 @@ GLOBAL void bfgs_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx
         ctx->e = *f0;
     }
     // this covers model.set(out.c) in the end of quasi_newton()
-    Flt *active = m->data + m->szflt * m->active;
-    model_set_conf_ligand_c(m, c, active);
-    model_set_conf_flex_c(m, c, active);
+    // Flt *active = m->data + m->szflt * m->active;
+    // model_set_conf_ligand_c(m, c, active);
+    // model_set_conf_flex_c(m, c, active);
 }
 #define MDDBG(fmt, ...) do{ printf("\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
 #define MDPV(hdr, pv, ...) MDDBG(hdr ": %f %f %f", __VA_ARGS__, (pv)->d[0], (pv)->d[1], (pv)->d[2])

@@ -98,6 +98,27 @@ COULD_INLINE void sum_force_and_torque(AtomFrame &frame, const Vec &origin, Vec 
 	}
 	CUVECPDUMP("sumft", out);
 }
+// temp: require 3 flts
+template <typename AtomFrame> // see atom_frame, takes: Size begin, end, Vec origin
+COULD_INLINE void sum_force_and_torque_x(AtomFrame &frame, const Vec &origin, Vec *coords, Vec *forces, Vecp &out) {
+    int idx = threadIdx.x, blk = blockDim.x;
+    if (idx == 0) vecp_clear(out);
+	CUDBG("frame begin %d end %d", frame.begin, frame.end);
+	FOR_RANGE(i, frame.begin, frame.end) {
+        // use out.first as temp var
+		vec_add_c(idx, out.first, forces[i]);
+        // out.second += (coords[i] - origin) x forcee[i]
+		sub_cross_product_add_c(idx, coords[i], origin, forces[i], out.second);
+		CUDBG("    frame %d", i);
+		CUVDUMP("    force", forces[i]);
+		CUVDUMP("    coords", coords[i]);
+		CUVDUMP("    origin", origin);
+		CUVDUMP("    sub", sub);
+		CUVDUMP("    product", product);
+		CUVDUMP("    second", out.second);
+	}
+	CUVECPDUMP("sumft", out);
+}
 
 template <typename T>
 COULD_INLINE void branches_derivative(T *b, int nb, const Vec& origin, Vec *coords, Vec *forces, Vecp& out, Flt *d) { // adds to out
@@ -302,10 +323,25 @@ FORCE_INLINE void c_model_collect_deriv_1(ModelDesc *m, Flt *e, Flt *md) {
 FORCE_INLINE void c_model_eval_deriv_ligand_sum_ft(ModelDesc *m, Flt *md) {
     SrcModel *src = m->src;
     auto coords = model_coords(src, m, md);
-    CU_FORY(i, src->nligand) {
+    FOR(i, src->nligand) {
         Ligand &ligand  = src->ligands[i];
         // first calculate all node force and torque, only for node itself, not include sub-nodes
-        CU_FOR(j, ligand.nr_node) {
+        CU_FORY(j, ligand.nr_node) {
+            CUDBG("ligand %d", j);
+            auto var = model_ligand(src, m, md, i, j);
+            auto minus_forces = model_minus_forces(src, m, md);
+            sum_force_and_torque_x<Segment>(ligand.tree[j], var->origin, coords, minus_forces, var->ft);
+        }
+    }
+
+}
+FORCE_INLINE void c_model_eval_deriv_ligand_sum_ft1(ModelDesc *m, Flt *md) {
+    SrcModel *src = m->src;
+    auto coords = model_coords(src, m, md);
+    CU_FOR(i, src->nligand) {
+        Ligand &ligand  = src->ligands[i];
+        // first calculate all node force and torque, only for node itself, not include sub-nodes
+        CU_FORY(j, ligand.nr_node) {
             CUDBG("ligand %d", j);
             auto var = model_ligand(src, m, md, i, j);
             auto minus_forces = model_minus_forces(src, m, md);
@@ -358,10 +394,10 @@ FORCE_INLINE void c_model_eval_deriv_ligand(ModelDesc *m, Flt *gs, Flt *md) {
 }
 FORCE_INLINE void c_model_eval_deriv_flex_sum_ft(ModelDesc *m, Flt *md) {
     SrcModel *src = m->src;
-    CU_FORY(i, src->nflex) {
+    CU_FOR(i, src->nflex) {
         Residue &flex    = src->flex[i];
         // first calculate all node force and torque, only for node itself, not include sub-nodes
-        CU_FOR(j, flex.nr_node) {
+        CU_FORY(j, flex.nr_node) {
             CUDBG("flex %d", j);
             auto coords = model_coords(src, m, md);
             auto minus_forces = model_minus_forces(src, m, md);

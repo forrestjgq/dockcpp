@@ -125,11 +125,27 @@ namespace dock {
         out.d[1] = v1.d[1] - v2.d[1];
         out.d[2] = v1.d[2] - v2.d[2];
     }
+    FORCE_INLINE void vec_sub_c(int idx, const Vec &v1, const Vec &v2, Vec &out) {
+        // make_vec(out, vec_get(v1, 0) - vec_get(v2, 0), vec_get(v1, 1) - vec_get(v2, 1),vec_get(v1, 2) - vec_get(v2, 2));
+        if (idx < 3) {
+            out.d[idx] = v1.d[idx] - v2.d[idx];
+        }
+    }
+    FORCE_INLINE void vec_sub_c(int idx, const Vec &v1, const Vec &v2, Flt *out) {
+        // make_vec(out, vec_get(v1, 0) - vec_get(v2, 0), vec_get(v1, 1) - vec_get(v2, 1),vec_get(v1, 2) - vec_get(v2, 2));
+        if (idx < 3) {
+            out[idx] = v1.d[idx] - v2.d[idx];
+        }
+    }
     FORCE_INLINE void vec_sub(Vec &v1, const Vec &v2) {
         // make_vec(v1, vec_get(v1, 0) - vec_get(v2, 0), vec_get(v1, 1) - vec_get(v2, 1),vec_get(v1, 2) - vec_get(v2, 2));
         v1.d[0] -= v2.d[0];
         v1.d[1] -= v2.d[1];
         v1.d[2] -= v2.d[2];
+    }
+    FORCE_INLINE void vec_sub_c(int idx, Vec &v1, const Vec &v2) {
+        // make_vec(v1, vec_get(v1, 0) - vec_get(v2, 0), vec_get(v1, 1) - vec_get(v2, 1),vec_get(v1, 2) - vec_get(v2, 2));
+        if (idx < 3) v1.d[idx] -= v2.d[idx];
     }
     FORCE_INLINE void vec_sub(const Vec &v1, Flt f, Vec &out) {
         // make_vec(out, vec_get(v1, 0) - f, vec_get(v1, 1) - f,vec_get(v1, 2) - f);
@@ -160,6 +176,42 @@ namespace dock {
         out.d[0] = a.d[1] * b.d[2] - a.d[2] * b.d[1];
         out.d[1] = a.d[2] * b.d[0] - a.d[0] * b.d[2];
         out.d[2] = a.d[0] * b.d[1] - a.d[1] * b.d[0];
+    }
+    FORCE_INLINE void cross_product_c(int idx, const Vec &a, const Vec &b, Vec &out) {
+        // return make_vec(out, vec_get(a, 1) * vec_get(b, 2) - vec_get(a, 2) * vec_get(b, 1),
+        //                 vec_get(a, 2) * vec_get(b, 0) - vec_get(a, 0) * vec_get(b, 2),
+        //                 vec_get(a, 0) * vec_get(b, 1) - vec_get(a, 1) * vec_get(b, 0));
+        if (idx < 3) {
+            int n1 = idx+1, n2 = idx+2;
+            if (n1 > 3) n1-=3;
+            if (n2 > 3) n2-=3;
+            out.d[idx] = a.d[n1] * b.d[n2] - a.d[n2] * b.d[n1];
+        }
+    }
+
+    // out += cross_product_c(idx, a, b)
+    FORCE_INLINE void cross_product_add_c(int idx, const Flt *a, const Vec &b, Vec &out) {
+        // return make_vec(out, vec_get(a, 1) * vec_get(b, 2) - vec_get(a, 2) * vec_get(b, 1),
+        //                 vec_get(a, 2) * vec_get(b, 0) - vec_get(a, 0) * vec_get(b, 2),
+        //                 vec_get(a, 0) * vec_get(b, 1) - vec_get(a, 1) * vec_get(b, 0));
+        if (idx < 3) {
+            int n1 = idx+1, n2 = idx+2;
+            if (n1 > 3) n1-=3;
+            if (n2 > 3) n2-=3;
+            out.d[idx] += a[n1] * b.d[n2] - a[n2] * b.d[n1];
+        }
+    }
+    // out += (left-right) x b
+    FORCE_INLINE void sub_cross_product_add_c(int idx, const Vec &left, const Vec &right, const Vec &b, Vec &out) {
+        // return make_vec(out, vec_get(a, 1) * vec_get(b, 2) - vec_get(a, 2) * vec_get(b, 1),
+        //                 vec_get(a, 2) * vec_get(b, 0) - vec_get(a, 0) * vec_get(b, 2),
+        //                 vec_get(a, 0) * vec_get(b, 1) - vec_get(a, 1) * vec_get(b, 0));
+        if (idx < 3) {
+            int n1 = idx+1, n2 = idx+2;
+            if (n1 >= 3) n1-=3;
+            if (n2 >= 3) n2-=3;
+            out.d[idx] += (left.d[n1] - right.d[n1]) * b.d[n2] - (left.d[n2] - right.d[n2]) * b.d[n1];
+        }
     }
     FORCE_INLINE void vecp_clear(Vecp &p) {
         make_vec(p.first, 0, 0, 0);

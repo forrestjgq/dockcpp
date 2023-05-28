@@ -232,7 +232,9 @@ struct tree {
 	T node;
 	std::vector< tree<T> > children;
 	int nr_nodes; // record how many T in children
-	int seq;
+	int idx;
+	int parentIdx;
+	int layer;
 	tree(const T& node_) : node(node_) {}
 	void set_conf(const frame& parent, const atomv& atoms, vecv& coords, flv::const_iterator& c) {
 		node.set_conf(parent, atoms, coords, c);
@@ -244,7 +246,7 @@ struct tree {
 		++p;
 		branches_derivative(children, node.get_origin(), coords, forces, force_torque, p);
 		node.set_derivative(force_torque, d);
-		DBG("TreeDer seq %d c %f", seq, d);
+		DBG("TreeDer idx %d c %f", idx, d);
 		VECPDUMP("    tree ft", force_torque);
 		// VDUMP("    forces", forces);
 		return force_torque;

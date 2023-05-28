@@ -246,22 +246,104 @@ int tree_nodes_size(struct tree<T> &tree) {
     }
     return tree.nr_nodes + 1;
 }
-void seg_tree_nodes_copy(int parent, int idx, Segment *segs, struct tree<segment> &tree) {
+int seg_tree_nodes_prep(struct tree<segment> &tree, int layer, std::map<int, std::vector<struct tree<segment> *>> &m) {
+    int ret_layer = layer;
+    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
+        auto ret = seg_tree_nodes_prep(*it, layer+1, m);
+        ret_layer = std::max(ret_layer, ret);
+    }
+    tree.layer = layer;
+    auto it = m.find(layer);
+    if (it == m.end()) {
+        m[layer] = {&tree};
+    } else {
+        m[layer].push_back(&tree);
+    }
+    return ret_layer;
+}
+void seg_tree_nodes_set_parent(struct tree<segment> &tree, int parent) {
+    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
+        seg_tree_nodes_set_parent(*it, tree.idx);
+    }
+    tree.parentIdx = parent;
+}
+template<typename T>
+int htree_nodes_prep(Segment *segs, struct heterotree<T> &tree, int *layermap) {
+    std::map<int, std::vector<struct tree<segment> *>> m;
+    int layerIdx = 0; // layer index for each node, 0 ~ layers
+    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
+        auto ret  = seg_tree_nodes_prep(*it, 1, m);
+        layerIdx = std::max(ret, layerIdx);
+    }
+    int layers = layerIdx + 1; // how many layers
+
+    // setup index for each segment
+    int idx = 0;
+    for (auto i = layerIdx; i > 0; i --) {
+        for (auto node : m[i]) {
+            node->idx = idx;
+            idx++;
+        }
+    }
+    // now idx is the root index
+    // setup parent index for each segment
+    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
+        seg_tree_nodes_set_parent(*it, idx);
+    }
+
+    int mapidx = 0; // for one layer, mapidx indicates the pos of layer starting in segments
+    for (auto i = layerIdx; i > 0; i --) {
+        layermap[i * 2] = mapidx;
+        layermap[i * 2+1] = int(m[i].size());
+        mapidx += int(m[i].size());
+        
+        for (auto t : m[i]) {
+            auto &seg    = segs[t->idx];
+            auto &node   = t->node;
+            seg.begin    = node.begin;
+            seg.end      = node.end;
+            seg.parent   = t->parentIdx;
+            seg.layer    = t->layer;
+            auto &axis   = node.relative_axis;
+            auto &origin = node.relative_origin;
+            make_vec(seg.relative_axis, axis.data[0], axis.data[1], axis.data[2]);
+            make_vec(seg.relative_origin, origin.data[0], origin.data[1], origin.data[2]);
+        }
+    }
+    layermap[0] = idx;
+    layermap[1] = 1;
+
+    auto &seg = segs[idx];
+    seg.begin  = tree.node.begin;
+    seg.end    = tree.node.end;
+    seg.parent = -1;
+    seg.layer  = 0;
+    DBG("COPY HTree, my idx %d child %d begin %d end %d", myidx, tree.nr_nodes, seg.begin, seg.end);
+
+    for (auto i = 0; i < idx; i++) {
+        auto &seg = segs[i];
+        printf("SEG %d/%d: parent %d begin %d end %d layer %d\n", i, idx, seg.parent, seg.begin, seg.end, seg.layer);
+    }
+    return layers;
+}
+// layer: which layer segment in tree, start from 0
+void seg_tree_nodes_copy(int parent, int idx, Segment *segs, struct tree<segment> &tree, int layer) {
     auto myidx = idx + tree.nr_nodes;
     // fill child in reverse order first into segs
     for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
-        seg_tree_nodes_copy(myidx, idx, segs, *it);
+        seg_tree_nodes_copy(myidx, idx, segs, *it, layer+1);
         idx += it->nr_nodes + 1;
     }
     auto &seg = segs[myidx];
     seg.begin = tree.node.begin;
     seg.end = tree.node.end;
     seg.parent = parent;
+    seg.layer = layer;
     auto &axis = tree.node.relative_axis;
     auto &origin = tree.node.relative_origin;
     make_vec(seg.relative_axis, axis.data[0], axis.data[1], axis.data[2]);
     make_vec(seg.relative_origin, origin.data[0], origin.data[1], origin.data[2]);
-    tree.seq = myidx;
+    tree.idx = myidx;
     DBG("COPY HSubTree, my idx %d parent %d child %d begin %d end %d", myidx, parent, tree.nr_nodes, seg.begin, seg.end);
 }
 void segvar_tree_nodes_restore(int parent, int idx, const SegmentVars *segs, struct tree<segment> &tree) {
@@ -303,13 +385,14 @@ void htree_nodes_copy(Segment *segs, struct heterotree<T> &tree) {
     int idx = 0;
     int myidx = tree.nr_nodes; // where this node is stored
     for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
-        seg_tree_nodes_copy(myidx, idx, segs, *it);
+        seg_tree_nodes_copy(myidx, idx, segs, *it, 1);
         idx += it->nr_nodes + 1;
     }
     auto &seg = segs[myidx];
     seg.begin = tree.node.begin;
     seg.end = tree.node.end;
     seg.parent = -1;
+    seg.layer = 0;
     DBG("COPY HTree, my idx %d child %d begin %d end %d", myidx, tree.nr_nodes, seg.begin, seg.end);
 }
 template<typename T>
@@ -321,6 +404,30 @@ void htree_var_nodes_copy(SegmentVars *segs, const struct heterotree<T> &tree) {
         idx += it->nr_nodes + 1;
     }
     auto &seg = segs[myidx];
+    vec_set(seg.axis, tree.node.axis);
+    vec_set(seg.origin, tree.node.get_origin());
+    DBG("copy root node %d", myidx);
+    DBG("    axis %f %f %f", seg.axis.d[0], seg.axis.d[1], seg.axis.d[2]);
+    DBG("    origin %f %f %f", seg.origin.d[0], seg.origin.d[1], seg.origin.d[2]);
+}
+void segvar_tree_nodes_prep(SegmentVars *segs, const struct tree<segment> &tree) {
+    // fill child in reverse order first into segs
+    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
+        segvar_tree_nodes_prep(segs, *it);
+    }
+    auto &seg = segs[tree.idx];
+    vec_set(seg.axis, tree.node.axis);
+    vec_set(seg.origin, tree.node.get_origin());
+    DBG("copy child node %d", myidx);
+    DBG("    axis %f %f %f", seg.axis.d[0], seg.axis.d[1], seg.axis.d[2]);
+    DBG("    origin %f %f %f", seg.origin.d[0], seg.origin.d[1], seg.origin.d[2]);
+}
+template<typename T>
+void htree_var_nodes_prep(SegmentVars *segs, struct heterotree<T> &tree) {
+    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
+        segvar_tree_nodes_prep(segs, *it);
+    }
+    auto &seg = segs[tree.nr_nodes];
     vec_set(seg.axis, tree.node.axis);
     vec_set(seg.origin, tree.node.get_origin());
     DBG("copy root node %d", myidx);
@@ -383,11 +490,15 @@ std::shared_ptr<Memory> create_src_model_memory(model *m) {
 
     for (auto i = 0u; i < m->ligands.size(); i++) {
         auto nr_node = htree_nodes_size(m->ligands[i]);
-        sz += SIZEOFARR(Segment, nr_node);
+        sz += SIZEOFARR(Segment, nr_node)
+        + nr_node * 2 // for Ligand.layers
+        ;
     }
     for (auto i = 0u; i < m->flex.size(); i++) {
         auto nr_node = htree_nodes_size(m->flex[i]);
-        sz += SIZEOFARR(Segment, nr_node);
+        sz += SIZEOFARR(Segment, nr_node)
+            + nr_node * 2 // for Ligand.layers
+        ;
     }
     sz = (sz + 4096 -1) / 4096*4096;
     return makeMemory(sz);
@@ -537,6 +648,8 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
         // see change::num_floats, torsion size in ligand will be nr_node -1(no torsion for rigid-body)
         sm->nrfligands += 6 + ligand.nr_node - 1;
         ALLOC_ARR(ligand.tree, Segment, ligand.nr_node);
+        ALLOC_ARR(ligand.layers, int, ligand.nr_node * 2);
+        // ligand.nr_layers = htree_nodes_prep(ligand.tree, m->ligands[i], ligand.layers);
         htree_nodes_copy(ligand.tree, m->ligands[i]);
         // CHECKSM(i);
     }
@@ -545,6 +658,8 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
         sm->nrfflex += flex.nr_node;
         flex.nr_node = htree_nodes_size(m->flex[i]);
         ALLOC_ARR(flex.tree, Segment, flex.nr_node);
+        ALLOC_ARR(flex.layers, int, flex.nr_node * 2);
+        // flex.nr_layers = htree_nodes_prep(flex.tree, m->flex[i], flex.layers);
         htree_nodes_copy(flex.tree, m->flex[i]);
     }
     sm->nrflts_change = sm->nrfligands + sm->nrfflex;
@@ -635,10 +750,12 @@ bool make_model_desc(Memory *mem, SrcModel *sm, model *m, ModelDesc *md) {
 
     for (int i = 0; i < sm->nligand; i++) {
         auto ligandvar = model_ligand(sm, md, md->data, i, 0);
+        // htree_var_nodes_prep(ligandvar, m->ligands[i]);
         htree_var_nodes_copy(ligandvar, m->ligands[i]);
     }
     for (int i = 0; i < sm->nflex; i++) {
         auto flexvar = model_flex(sm, md, md->data, i, 0);
+        // htree_var_nodes_prep(flexvar, m->flex[i]);
         htree_var_nodes_copy(flexvar, m->flex[i]);
     }
 
@@ -747,12 +864,14 @@ Model *make_model(Memory *mem, SrcModel *sm, model *m, const vec &v) {
         auto &ligand = sm->ligands[i];
         auto &ligandvar = md->ligands[i];
         ALLOC_ARR(ligandvar.tree, SegmentVars, ligand.nr_node);
+        // htree_var_nodes_prep(ligandvar.tree, m->ligands[i]);
         htree_var_nodes_copy(ligandvar.tree, m->ligands[i]);
     }
     for (int i = 0; i < sm->nflex; i++) {
         auto &flex = sm->flex[i];
         auto &flexvar = md->flex[i];
         ALLOC_ARR(flexvar.tree, SegmentVars, flex.nr_node);
+        // htree_var_nodes_prep(flexvar.tree, m->flex[i]);
         htree_var_nodes_copy(flexvar.tree, m->flex[i]);
     }
     ALLOC_ARR(md->minus_forces, Vec, sm->movable_atoms);

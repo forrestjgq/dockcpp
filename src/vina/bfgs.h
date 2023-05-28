@@ -73,8 +73,8 @@ inline bool bfgs_update(flmat& h, const Change& p, const Change& y, const fl alp
 #define MONITOR_TRIAL 0
 // #define REQUIRED() (trial == MONITOR_TRIAL)
 #define REQUIRED() false
-// #define MUSTED() (trial == MONITOR_TRIAL)
-#define MUSTED() false
+#define MUSTED() (trial == MONITOR_TRIAL)
+// #define MUSTED() false
 template<typename F, typename Conf, typename Change>
 fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Change& p, Conf& x_new, Change& g_new, fl& f1, int& evalcount, int step) { // returns alpha
 	const fl c0 = 0.0001;
@@ -115,8 +115,10 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 		if(REQUIRED()) {
 			printf("\n\n\n");
 		}
-		if(f1 - f0 < c0 * alpha * pg) // FIXME check - div by norm(p) ? no?
+		if(f1 - f0 < c0 * alpha * pg) {// FIXME check - div by norm(p) ? no? 
+			printf("breaks at trial %u\n", trial);
 			break;
+		}
 		alpha *= multiplier;
 	}
 	DBG("cpu line search tries %d times, alpha %f f1 %f", t, alpha, f1);
@@ -197,7 +199,10 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 		x = x_new;
 		// auto sg = std::sqrt(scalar_product(g, g, n));
 		// DBG("step %d sqrt g %f", step,sg);
-		if(!(std::sqrt(scalar_product(g, g, n)) >= 1e-5)) break; // breaks for nans too // FIXME !!?? 
+		if(!(std::sqrt(scalar_product(g, g, n)) >= 1e-5))  {
+			// printf("cpu breaks at step %u\n", step);
+			break; // breaks for nans too // FIXME !!?? 
+		}
 		g = g_new; // ?
 #if 0
 		MCDBG("g new in step %d", step);

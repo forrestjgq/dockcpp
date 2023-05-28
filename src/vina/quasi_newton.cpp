@@ -49,7 +49,8 @@ struct quasi_newton_aux {
     }
     fl cpu(const conf& c, change& g) {
         m->set(c);
-        return m->eval_deriv(*p, *ig, v, g);
+        auto f = m->eval_deriv(*p, *ig, v, g);
+        return f;
     }
     fl gpu(const conf& c, change& g) {
         // cnt++;
@@ -110,11 +111,11 @@ void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igri
     auto cdu = clk.mark();
     gpu(m1, p, ig, out1, g1, v, cnt);
     auto gdu = clk.mark();
-    auto diff = int(cdu > gdu ? cdu - gdu : gdu - cdu) /1000;
+    auto diff = int(cdu > gdu ? cdu - gdu : gdu - cdu);
     if (cdu < gdu) {
         diff = -diff;
     }
-    printf("cpu %lu gpu %lu diff %d\n\n", cdu, gdu, diff);
+    printf("cpu %lu cnt %d gpu %lu cnt %d diff %d us\n\n", cdu, evalcount, gdu, cnt, diff);
     if (0) {
         printf("last eval cnt %d\n", evalcount);
         out.c.print();
@@ -145,7 +146,11 @@ void quasi_newton::gpu(model& m, const precalculate_byatom& p, const igrid& ig, 
 
         if (use_gpu) {
             // std::cerr << "use gpu" << std::endl;
+            dock::Clock clk;
+            clk.mark();
             res = dock::run_cuda_bfgs(&m, p, ig, g, out.c, max_steps, average_required_improvement, 10, evalcount, m_gpu, m_bfgs_ctx);
+            auto du = clk.mark();
+            printf("gpu bfgs use %lu us\n", du);
             // todo:
             // printf("gpu done, e: %f cnt %d\n", res, evalcount);
             return;

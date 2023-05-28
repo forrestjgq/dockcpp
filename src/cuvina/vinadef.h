@@ -82,7 +82,7 @@ namespace dock {
         Vec origin;
         Qt orq; // see frame::orientation_q
         Flt orm[9]; // see frame::orientation_m
-        Flt tmp[32];
+        Flt tmp[32]; // used in set conf and sum ft
 
         // outputs
         Vecp ft; // force and torque
@@ -92,6 +92,11 @@ namespace dock {
 #define CU_INVALID_XS_SIZE 9999
     typedef struct {
         int nr_node; // how many nodes in tree
+        int nr_layers; // indicates how many items in layers
+        // alllocation size: 2 * nr_node
+        // pair of <size, idx> size: how many nodes in this layer,
+        //                     idx: start index of each layer in tree 
+        int *layers; 
         Segment *tree;
     } Ligand;
 
@@ -101,7 +106,8 @@ namespace dock {
 
     typedef struct {
         int nr_node;
-        int nr_layer;
+        int nr_layers; // indicates how many items in layers
+        int *layers; // index of each layer in relations, size nr_layers
         Segment *tree;
     } Residue;
     typedef struct {

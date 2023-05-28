@@ -34,7 +34,6 @@ FORCE_INLINE void frame_local_to_lab(SegmentVars *segvar, const Vec &local_coord
     CUVDUMP("    coord", out);
 }
 FORCE_INLINE void frame_local_to_lab_c(int idx, SegmentVars *segvar, const Vec &local_coords, Vec &out) {
-    auto m = segvar->orm;
     mat_multiple_c(idx, segvar->orm, local_coords, out);
     vec_add_c(idx, out, segvar->origin);
 }
@@ -196,7 +195,7 @@ FORCE_INLINE void model_set_conf_ligand_c(ModelDesc *m, const Flt *c, Flt *md) {
             Segment &seg        = ligand.tree[j];
             auto segvar = model_ligand(src, m, md, i, j);
             auto coords = model_coords(src, m, md);
-            CUDBG("ligand %d parent %d k %d", j, seg.parent, k);
+            MCUDBG("ligand %d parent %d k %d", j, seg.parent, k);
             if (seg.parent >= 0) {
                 Segment &parent        = ligand.tree[seg.parent];
                 auto parentVar = model_ligand(src, m, md, i, seg.parent);
