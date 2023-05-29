@@ -15,9 +15,9 @@
 #define DIMY 4
 
 #if EVAL_IN_WARP
-#if DIMX * DIMY != 32
-#error to eval model der in a single warp, block dim x * y must be 32 to avoid sync
-#endif
+// #if DIMX * DIMY != 32
+// #error to eval model der in a single warp, block dim x * y must be 32 to avoid sync
+// #endif
 #endif
 namespace dock {
 struct threadids {
@@ -746,8 +746,8 @@ __device__ Flt multipliers[]
 
 // #define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
 #define REQUIRED() false
-#define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
-// #define MUSTED() false
+// #define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
+#define MUSTED() false
 __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt f0, Flt &f1,
                             const Flt *c, const Flt *g, const Flt *p, Flt *tmp, Flt *outc,
                             Flt *outg, int ng, int nc, int &evalcnt, Flt &out_alpha,

@@ -394,6 +394,20 @@ FORCE_INLINE void c_model_eval_deriv_ligand(ModelDesc *m, Flt *gs, Flt *md) {
 }
 FORCE_INLINE void c_model_eval_deriv_flex_sum_ft(ModelDesc *m, Flt *md) {
     SrcModel *src = m->src;
+    FOR(i, src->nflex) {
+        Residue &flex    = src->flex[i];
+        // first calculate all node force and torque, only for node itself, not include sub-nodes
+        CU_FORY(j, flex.nr_node) {
+            CUDBG("flex %d", j);
+            auto coords = model_coords(src, m, md);
+            auto minus_forces = model_minus_forces(src, m, md);
+            auto seg = model_flex(src, m, md, i, j);
+            sum_force_and_torque_x<Segment>(flex.tree[j], seg->origin, coords, minus_forces, seg->ft);
+        }
+    }
+}
+FORCE_INLINE void c_model_eval_deriv_flex_sum_ft_1(ModelDesc *m, Flt *md) {
+    SrcModel *src = m->src;
     CU_FOR(i, src->nflex) {
         Residue &flex    = src->flex[i];
         // first calculate all node force and torque, only for node itself, not include sub-nodes
