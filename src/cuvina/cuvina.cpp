@@ -318,7 +318,6 @@ int htree_nodes_prep(Segment *segs, struct heterotree<T> &tree, int *layermap) {
     seg.end    = tree.node.end;
     seg.parent = -1;
     seg.layer  = 0;
-    DBG("COPY HTree, my idx %d child %d begin %d end %d", myidx, tree.nr_nodes, seg.begin, seg.end);
 
     for (auto i = 0; i < idx; i++) {
         auto &seg = segs[i];
@@ -418,9 +417,6 @@ void segvar_tree_nodes_prep(SegmentVars *segs, const struct tree<segment> &tree)
     auto &seg = segs[tree.idx];
     vec_set(seg.axis, tree.node.axis);
     vec_set(seg.origin, tree.node.get_origin());
-    DBG("copy child node %d", myidx);
-    DBG("    axis %f %f %f", seg.axis.d[0], seg.axis.d[1], seg.axis.d[2]);
-    DBG("    origin %f %f %f", seg.origin.d[0], seg.origin.d[1], seg.origin.d[2]);
 }
 template<typename T>
 void htree_var_nodes_prep(SegmentVars *segs, struct heterotree<T> &tree) {
@@ -430,9 +426,6 @@ void htree_var_nodes_prep(SegmentVars *segs, struct heterotree<T> &tree) {
     auto &seg = segs[tree.nr_nodes];
     vec_set(seg.axis, tree.node.axis);
     vec_set(seg.origin, tree.node.get_origin());
-    DBG("copy root node %d", myidx);
-    DBG("    axis %f %f %f", seg.axis.d[0], seg.axis.d[1], seg.axis.d[2]);
-    DBG("    origin %f %f %f", seg.origin.d[0], seg.origin.d[1], seg.origin.d[2]);
 }
 template<typename T>
 void htree_var_nodes_restore(const SegmentVars *segs, struct heterotree<T> &tree) {

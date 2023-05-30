@@ -163,6 +163,7 @@ fl cache::eval_deriv(model& m, fl v) const { // needs m.coords, sets m.minus_for
 
 		vec deriv;
 		const grid& g = m_grids[t];
+		DBG("coord %f %f %f", m.coords[i].data[0], m.coords[i].data[1], m.coords[i].data[2]);
 		auto e1 = g.evaluate(m.coords[i], m_slope, v, deriv);
 		DBG("cache %lu eval e %f", i, e1);
 		VDUMP("force deriv", deriv);

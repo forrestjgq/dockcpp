@@ -133,30 +133,187 @@ FORCE_INLINE Flt grid_eval(const Grid *g, const Vec &location, Flt slope, Flt v,
 	}
 
 }
+// make sure grid_eval_x runs inside a single warp
+// tmp require 3*5+8+4 = 27 Flt
+FORCE_INLINE void grid_eval_x(int seq, const Grid *g, const Vec &location, Flt slope, Flt v, Vec *deriv, Flt *e, Flt *tmp) {
+	const int dx = threadIdx.x;
+	Flt *s, *miss, *f, *gs;
+	int *region;
+	Size *a, *b;
+
+	int offset = 0;
+
+    s    = tmp + offset, offset += 3;
+    miss = tmp + offset, offset += 3;
+    f    = tmp + offset, offset += 8;
+    gs   = tmp + offset, offset += 4;
+
+    region     = (int *)(tmp + offset), offset += 3;
+	a          = (Size *)(tmp + offset), offset += 3;
+	b          = (Size *)(tmp + offset), offset += 3;
+	if (dx < 3) {
+
+        s[dx]            = (location.d[dx] - g->m_init.d[dx]) * g->m_factor.d[dx];
+        Flt &si          = s[dx];
+        const Flt &minus = g->m_dim_fl_minus_1.d[dx];
+#if CUDEBUG
+		if (seq == 0) CUDBG("s[%d] %f minus %f", dx, s[dx], minus);
+#endif
+        Flt m            = 0;
+        if (si < 0) {
+            m          = -si;
+            region[dx] = -1;
+            a[dx]      = 0;
+            si         = 0;
+        } else if (si >= minus) {
+            m          = si - minus;
+            region[dx] = 1;
+            a[dx]      = g->m_data.dim[dx] - 2;
+            si         = 1;
+        } else {
+            region[dx] = 0;
+            a[dx]      = (Size)si;
+            si -= a[dx];
+        }
+        miss[dx] = m * g->m_factor_inv.d[dx] * slope;
+        // FIXME check that inv_factor is correctly initialized and serialized
+    }
+
+#if CUDEBUG
+	if (seq == 0 && dx == 0)  {
+		CUDBG("a %lu %lu %lu", a[0], a[1], a[2]);
+	}
+#endif
+	if (dx < 4)  {
+		// there are 8 f-s, f[0] - f[7], each dx in [0, 3] will calc 2 of them
+		// const fl f000 = m_data(x0, y0, z0);
+		// const fl f001 = m_data(x0, y0, z1);
+		// const fl f010 = m_data(x0, y1, z0);
+		// const fl f011 = m_data(x0, y1, z1);
+		// const fl f100 = m_data(x1, y0, z0);
+		// const fl f101 = m_data(x1, y0, z1);
+		// const fl f110 = m_data(x1, y1, z0);
+		// const fl f111 = m_data(x1, y1, z1);
+		Size aa[3] = {a[0], a[1], a[2]};
+		
+        if (dx > 1) aa[0] += 1;
+        if (dx & 1) aa[1] += 1;
+#if 0
+		if (seq == 0 && dx == 0)  {
+			CUDBG("changed a %lu %lu %lu", aa[0], aa[1], aa[2]);
+		}
+#endif
+
+        // return a->data[i + a->dim[0] * (j + a->dim[1] * k)];
+        int fidx    = dx << 1;
+        f[fidx]     = arr3d_get<Flt>(&g->m_data, aa[0], aa[1], aa[2]);
+        f[fidx + 1] = arr3d_get<Flt>(&g->m_data, aa[0], aa[1], aa[2] + 1);
+#if 0
+		if (seq == 0) {
+			CUDBG("f[%d] = %f", fidx, f[fidx]);
+			CUDBG("f[%d] = %f", fidx+1, f[fidx+1]);
+		}
+#endif
+
+        Flt s1[3], s2[3];
+        // as x, y, z
+        s1[0] = s[0], s1[1] = s[1], s1[2] = s[2];
+        // as mx, my, mz
+        s2[0] = 1 - s[0], s2[1] = 1 - s[1], s2[2] = 1 - s[2];
+        if (dx < 4 && dx > 0) {
+            int idx = dx - 1;  // 0, 1, 2
+			// the pattern of f and x/y/z _g calc is f = f[0..7] * x * y *z
+			// for x_g/y_g/z_g the x/y/z part will be replaced with 1/-1, here we set to 1 first,
+			// later we will set f[0..7] = -f[0..7]
+			s2[idx] = -1;
+			s1[idx] = 1;
+        }
+        gs[dx] = f[0] * s2[0] * s2[1] * s2[2] + 
+		         f[1] * s2[0] * s2[1] * s1[2] + 
+				 f[2] * s2[0] * s1[1] * s2[2] + 
+				 f[3] * s2[0] * s1[1] * s1[2] + 
+				 f[4] * s1[0] * s2[1] * s2[2] + 
+				 f[5] * s1[0] * s2[1] * s1[2] + 
+				 f[6] * s1[0] * s1[1] * s2[2] + 
+				 f[7] * s1[0] * s1[1] * s1[2];
+
+#if 0
+		if (seq == 0 && dx == 0)  {
+			CUDBG("f %f %f %f %f %f %f %f %f", f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+			CUDBG("s1 %f %f %f s2 %f %f %f", s1[0], s1[1], s1[2],  s2[0], s2[1], s2[2]);
+			CUDBG("s %f %f %f gs %f %f %f %f", s[0], s[1], s[2], gs[0], gs[1], gs[2], gs[3]);
+		}
+#endif
+        Vec gradient;
+        make_vec(gradient, gs[1], gs[2], gs[3]);
+
+        curl(gs[0], gradient, v);
+        Flt gradient_everywhere[3];
+
+        if (dx < 3) {
+            gradient_everywhere[dx] = ((region[dx] == 0) ? gradient.d[dx] : 0);
+            deriv->d[dx] = g->m_factor.d[dx] * gradient_everywhere[dx] + slope * region[dx];
+        }
+        if (dx == 0) {
+            *e = gs[0] + miss[0] + miss[1] + miss[2];
+        }
+    }
+
+}
 // oute must has model movable_atoms size
 // depends on model coords
-__device__ void c_cache_eval_deriv(const Cache *c, const ModelDesc *m, Flt *md, const Flt *vs) {
+__device__ void c_cache_eval_deriv_xy(const Cache *c, const ModelDesc *m, Flt *md, const Flt *vs) {
 	auto src = m->src;
 	CU_FOR2(i, src->movable_atoms) {
-		Vec deriv;
-		make_vec(deriv, 0, 0, 0);
 		Flt e = 0;
 		Size t = src->xs_sizes[i];
+		auto &force = *model_minus_forces(src, m, md, i);
+		make_vec(force, 0, 0, 0);
 		// NNCUDBG("cache %d t %lu ncoords %d md %p mforce offset %d", i, t, m->ncoords, md, m->minus_forces);
 		if (t < c->ngrids) {
 			auto *g = &c->grids[t];
 			auto coord = model_coords(src, m, md, i);
-			e = grid_eval(g, *coord, c->m_slope, vs[1], &deriv);
+			e = grid_eval(g, *coord, c->m_slope, vs[1], &force);
 		}
-		auto minus_forces = model_minus_forces(src, m, md, i);
-		vec_set(*minus_forces, deriv);//i = 0, t = 1
 		auto me = model_movable_e(src, m, md, i);
 		*me = e;
-		CUDBG("cme %d t %lu %f %p e %f\n", i, t, *me, me, e);
 		CUDBG("cache %d eval e %f", i, e);
-		CUVDUMP("force deriv", deriv);
+		CUVDUMP("force deriv", force);
 		
 	}
-	__syncwarp();
+}
+#define CACHE_EVAL_MEM_SIZE(src) (((src)->movable_atoms) * 27)
+// each grid eval requires 27 flt, tmp requires src->movable_atoms * 27 Flts
+__device__ void c_cache_eval_deriv_xyz(const Cache *c, const ModelDesc *m, Flt *md, const Flt *vs, Flt *tmp) {
+	auto src = m->src;
+
+	// use yz for atoms visiting, x for grid evaluation
+	for (int i = threadIdx.y + threadIdx.z * blockDim.y; i < src->movable_atoms; i += blockDim.y * blockDim.z) {
+		Flt *e = model_movable_e(src, m, md, i);
+		*e = 0;
+		Size t = src->xs_sizes[i];
+		auto force = model_minus_forces(src, m, md, i);
+		if (threadIdx.x < 3) {
+			force->d[threadIdx.x] = 0;
+		}
+		// NNCUDBG("cache %d t %lu ncoords %d md %p mforce offset %d", i, t, m->ncoords, md, m->minus_forces);
+		if (t < c->ngrids) {
+			auto *g = &c->grids[t];
+			auto coord = model_coords(src, m, md, i);
+#if CUDEBUG
+			if (threadIdx.x == 0) {
+				CUDBG("cache %d coord %f %f %f", i, coord->d[0], coord->d[1], coord->d[2]);
+			}
+#endif
+			grid_eval_x(i, g, *coord, c->m_slope, vs[1], force, e, tmp + 27 * i);
+		}
+#if CUDEBUG
+		if (threadIdx.x == 0) {
+			CUDBG("cache %d eval e %f", i, *e);
+			CUVDUMP("force deriv", *force);
+		}
+#endif
+		
+	}
 }
 };  // namespace dock

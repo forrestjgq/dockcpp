@@ -51,6 +51,7 @@ fl grid::evaluate_aux(const vec& location, fl slope, fl v, vec* deriv) const { /
 	boost::array<sz, 3> a;
 
 	VINA_FOR(i, 3) {
+		DBG("s[%ld] %f minus %f", i, s[i], m_dim_fl_minus_1[i]);
 		if(s[i] < 0) {
 			miss[i] = -s[i];
 			region[i] = -1;
@@ -85,6 +86,7 @@ fl grid::evaluate_aux(const vec& location, fl slope, fl v, vec* deriv) const { /
 	const sz y1 = y0+1;
 	const sz z1 = z0+1;
 
+	// printf("a %lu %lu %lu\n", x0, y0, z0);
 
 	const fl f000 = m_data(x0, y0, z0);
 	const fl f100 = m_data(x1, y0, z0);
@@ -105,47 +107,48 @@ fl grid::evaluate_aux(const vec& location, fl slope, fl v, vec* deriv) const { /
 
 	fl f = 
 		f000 *  mx * my * mz  +
-		f100 *   x * my * mz  +
-		f010 *  mx *  y * mz  + 
-		f110 *   x *  y * mz  +
 		f001 *  mx * my *  z  +
-		f101 *   x * my *  z  +
+		f010 *  mx *  y * mz  + 
 		f011 *  mx *  y *  z  +
+		f100 *   x * my * mz  +
+		f101 *   x * my *  z  +
+		f110 *   x *  y * mz  +
 		f111 *   x *  y *  z  ;
 
 	if(deriv) { // valid pointer
 		const fl x_g = 
 			f000 * (-1)* my * mz  +
-			f100 *   1 * my * mz  +
-			f010 * (-1)*  y * mz  + 
-			f110 *   1 *  y * mz  +
 			f001 * (-1)* my *  z  +
-			f101 *   1 * my *  z  +
+			f010 * (-1)*  y * mz  + 
 			f011 * (-1)*  y *  z  +
+			f100 *   1 * my * mz  +
+			f101 *   1 * my *  z  +
+			f110 *   1 *  y * mz  +
 			f111 *   1 *  y *  z  ;
 
 
 		const fl y_g = 
 			f000 *  mx *(-1)* mz  +
-			f100 *   x *(-1)* mz  +
-			f010 *  mx *  1 * mz  + 
-			f110 *   x *  1 * mz  +
 			f001 *  mx *(-1)*  z  +
-			f101 *   x *(-1)*  z  +
+			f010 *  mx *  1 * mz  + 
 			f011 *  mx *  1 *  z  +
+			f100 *   x *(-1)* mz  +
+			f101 *   x *(-1)*  z  +
+			f110 *   x *  1 * mz  +
 			f111 *   x *  1 *  z  ;
 
 
 		const fl z_g =  
 			f000 *  mx * my *(-1) +
-			f100 *   x * my *(-1) +
-			f010 *  mx *  y *(-1) + 
-			f110 *   x *  y *(-1) +
 			f001 *  mx * my *  1  +
-			f101 *   x * my *  1  +
+			f010 *  mx *  y *(-1) + 
 			f011 *  mx *  y *  1  +
+			f100 *   x * my *(-1) +
+			f101 *   x * my *  1  +
+			f110 *   x *  y *(-1) +
 			f111 *   x *  y *  1  ;
 
+		DBG("s %f %f %f gs %f %f %f %f", x, y, z, f, x_g, y_g, z_g);
 		vec gradient(x_g, y_g, z_g);
 		curl(f, gradient, v);
 		vec gradient_everywhere;

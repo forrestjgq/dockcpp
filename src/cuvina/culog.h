@@ -39,9 +39,9 @@ __forceinline__ __device__ unsigned warp_id()
 // extern void dump_flv(const char *s, const flv& vv, const char *file, int line) ;
 // extern void dump_vecpv(const char *s, const std::vector<vecp>& vv, const char *file, int line) ;
 
-#define CUDBG(fmt, ...) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
+#define CUDBG(fmt, ...) do{ printf("%d [%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, lane_id(), warp_id(), threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
 // #define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.x, v.y, v.z)
-#define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", v.d[0], v.d[1], v.d[2])
+#define CUVDUMP(hdr, v) CUDBG(hdr ": %f %f %f", (v).d[0], (v).d[1], (v).d[2])
 // #define VECVDUMP(hdr, vv) dump_vecv(hdr, vv, fileOf(__FILE__), __LINE__)
 // #define CUVECPDUMP(hdr, vp) do{ printf("%d [%d:%d:%d] [%d:%d:%d]\t" hdr " (%f %f %f) (%f %f %f)\n", \
 //     __LINE__,blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  \

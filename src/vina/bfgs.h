@@ -73,8 +73,8 @@ inline bool bfgs_update(flmat& h, const Change& p, const Change& y, const fl alp
 #define MONITOR_TRIAL 0
 // #define REQUIRED() (trial == MONITOR_TRIAL)
 #define REQUIRED() false
-#define MUSTED() (trial == MONITOR_TRIAL)
-// #define MUSTED() false
+// #define MUSTED() (trial == MONITOR_TRIAL)
+#define MUSTED() false
 template<typename F, typename Conf, typename Change>
 fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Change& p, Conf& x_new, Change& g_new, fl& f1, int& evalcount, int step) { // returns alpha
 	const fl c0 = 0.0001;
@@ -84,9 +84,7 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 	fl alpha = 1;
 
 	const fl pg = scalar_product(p, g, n);
-#if 0
-	printf("step %d pg: %f\n", step, pg);
-#endif
+	// printf("cpu step %d pg: %f\n", step, pg);
 
 	int t = 0;
 	VINA_U_FOR(trial, max_trials) {
@@ -108,6 +106,7 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 		f1 = f(x_new, g_new);
 		evalcount++;
 		t++;
+#if 0
 		DBG("cpu lsm %d alpha %f f1 %f f0 %f", trial, alpha, f1, f0);
 		if (MUSTED()) {
 			printf("cpu line search step %d trial %d der %f\n", step, trial, f1);
@@ -115,8 +114,9 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 		if(REQUIRED()) {
 			printf("\n\n\n");
 		}
+#endif
 		if(f1 - f0 < c0 * alpha * pg) {// FIXME check - div by norm(p) ? no? 
-			printf("breaks at trial %u\n", trial);
+			// printf("breaks at trial %u\n", trial);
 			break;
 		}
 		alpha *= multiplier;
@@ -147,8 +147,8 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 	Conf x_new(x);
 	fl f0 = f(x, g);
 	evalcount++;
-	// printf("eval %d f0 %f\n", evalcount, f0);
 #if 0
+	 printf("cpu f0 %f\n", f0);
 	printf("c:\n");
 	x.print();
 	printf("g:\n");

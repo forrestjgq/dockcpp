@@ -4,6 +4,7 @@
 #include <cstring>
 #include "culog.h"
 #include "model_desc.cuh"
+#include "bfgsdef.h"
 
 namespace dock {
 
@@ -113,8 +114,6 @@ COULD_INLINE void sum_force_and_torque_x(AtomFrame &frame, const Vec &origin, Ve
 		CUVDUMP("    force", forces[i]);
 		CUVDUMP("    coords", coords[i]);
 		CUVDUMP("    origin", origin);
-		CUVDUMP("    sub", sub);
-		CUVDUMP("    product", product);
 		CUVDUMP("    second", out.second);
 	}
 	CUVECPDUMP("sumft", out);
@@ -190,6 +189,15 @@ FORCE_INLINE  void c_model_eval_deriv_pairs(ModelDesc *m, const PrecalculateByAt
         // printf("pair %d e %f\n force %f %f %f\n", i, pair_res->e, pair_res->force.x , pair_res->force.y, pair_res->force.z );
 	}
 }
+FORCE_INLINE  void c_model_eval_deriv_pairs_c(int idx, int blk, ModelDesc *m, const PrecalculateByAtom *p, Flt *md, const Flt *vs) {
+	SrcModel *src = m->src;
+	for(int i = idx;i < src->npairs; i += blk) {
+        auto coords = model_coords(src, m, md);
+        auto pair_res = model_pair_res(src, m, md, i);
+		eval_interacting_pair_deriv(i, p, src->pairs[i], coords, *pair_res, vs);
+        // printf("pair %d e %f\n force %f %f %f\n", i, pair_res->e, pair_res->force.x , pair_res->force.y, pair_res->force.z );
+	}
+}
 template <size_t WARP_SIZE>
 void __global__ warp_asum_kernel(
 	const size_t n,
@@ -208,46 +216,67 @@ void __global__ warp_asum_kernel(
 }
 // collect e and setup forces
 // make sure x*y = 32
-COULD_INLINE void c_model_collect_deriv(ModelDesc *m, Flt *e, Flt *md) {
+COULD_INLINE void c_model_collect_deriv_e_xy(ModelDesc *m, Flt *e, Flt *md) {
 	SrcModel *src = m->src;
 
     // reduce e in movable atoms and pairs
     Flt val = 0;
     const int n = src->movable_atoms;
-    CU_FOR2(i, src->movable_atoms) {
+    const int tid = threadIdx.x + threadIdx.y * blockDim.x;
+    const int blk = blockDim.x * blockDim.y;
+    for(int i = tid; i < src->movable_atoms; i+= blk) {
         val += (*model_movable_e(src, m, md, i));
     }
-    CU_FOR2(i, src->npairs) {
+    for(int i = tid; i < src->npairs; i += blk) {
         val += model_pair_res(src, m, md, i)->e;
     }
 	for (size_t offset = 32 >> 1; offset > 0; offset >>= 1)
 		val += __shfl_xor_sync(0xffffffff, val, offset, 32);
-	if (IS_2DMAIN()) *e = val;
-#if 0
-    if (ZIS(0)) {
-        for (int i = 0; i < src->movable_atoms + src->npairs; i++) {
-            printf("gpu map add %d: %d\n", i, src->force_pair_map_add[i]);
-        }
-        #if 0
-        for(int i = 0; i < src->movable_atoms; i++) {
-            int d = src->idx_add[i];
-            printf("index add %d: %d\n", i, d);
-            if (d >= 0) {
-                int n = src->force_pair_map_add[d];
-                for (int j = 0, start = d+1; j < n; j++, start++) {
-                    auto k = src->force_pair_map_add[start];
-                    printf("\tpair %d\n", k);
-                }
 
-            }
-        }
-        for(int i = 0; i < src->movable_atoms; i++) {
-            printf("index sub %d: %d\n", i, src->idx_sub[i]);
-        }
-        #endif
-    }
+	if (tid == 0) *e = val; // collect e from warp 0
+#if DIMXY == 64
+    // sync warp 2
+    SYNC();
+    if(tid == 32) *e += val;
+#elif DIMXY != 32
+#error support 1 or 2 warps only
 #endif
-#if 1
+}
+// based on warp reducing
+// tmp requires blockSize/32, which is warp count
+COULD_INLINE void c_model_collect_deriv_e_xyz(ModelDesc *m, Flt *e, Flt *md, Flt *tmp) {
+	SrcModel *src = m->src;
+
+    // reduce e in movable atoms and pairs
+    Flt val = 0;
+    const int n = src->movable_atoms;
+    const int tid = blockDim.x *blockDim.y * threadIdx.z +blockDim.x * threadIdx.y + threadIdx.x;
+    const int blk = blockDim.x * blockDim.y * blockDim.z;
+
+    for(int i = tid; i < src->movable_atoms; i+= blk) {
+        val += (*model_movable_e(src, m, md, i));
+    }
+    for(int i = tid; i < src->npairs; i += blk) {
+        val += model_pair_res(src, m, md, i)->e;
+    }
+	for (size_t offset = 32 >> 1; offset > 0; offset >>= 1)
+		val += __shfl_xor_sync(0xffffffff, val, offset, 32);
+
+    if ((tid & 31) == 0) {
+        // laneid == 0, move val to shared memory
+        tmp[tid >> 5] = val;
+    }
+    SYNC();
+    if (tid == 0) {
+        *e = 0;
+        int warpsz = blk >> 5;
+        FOR(i, warpsz) {
+            *e += tmp[i];
+        }
+    }
+}
+COULD_INLINE void c_model_update_forces_xy(ModelDesc *m, Flt *md) {
+	SrcModel *src = m->src;
     CU_FOR2(i, src->movable_atoms) {
         int offset = src->idx_add[i];
         // printf("add minus forces %d offset %d\n", i, offset);
@@ -274,22 +303,44 @@ COULD_INLINE void c_model_collect_deriv(ModelDesc *m, Flt *e, Flt *md) {
             }
         }
     }
-#else
-	// accumulate minus_forces
-	if (IS_2DMAIN()) {
-		FOR(i, src->npairs) {
-			InteractingPair &pair = src->pairs[i];
-            if (threadIdx.z == 0)printf("force %d pair %p a %d b %d\n", i, &pair, pair.a, pair.b);
-			auto res = model_pair_res(src, m, md, i);
-            auto paira = model_minus_forces(src, m, md, pair.a);
-            auto pairb = model_minus_forces(src, m, md, pair.b);
-			vec_sub(*paira, res->force);
-			vec_add(*pairb, res->force);
-		}
-	}
-#endif
 }
-FORCE_INLINE void c_model_collect_deriv_1(ModelDesc *m, Flt *e, Flt *md) {
+COULD_INLINE void c_model_update_forces_xyz(ModelDesc *m, Flt *md) {
+    SrcModel *src = m->src;
+    const int tid = blockDim.x * blockDim.y * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
+    const int blk = blockDim.x * blockDim.y * blockDim.z;
+    for (int i = tid; i < src->movable_atoms; i += blk) {
+        int offset = src->idx_add[i];
+        // printf("add minus forces %d offset %d\n", i, offset);
+        if (offset >= 0) {
+            int n      = src->force_pair_map_add[offset];
+            auto force = model_minus_forces(src, m, md, i);
+            for (auto j = 0; j < n; j++) {
+                auto pairidx = src->force_pair_map_add[offset + j + 1];
+                auto res     = model_pair_res(src, m, md, pairidx);
+                // printf("add %d to %d\n", pairidx, i);
+                vec_add(*force, res->force);
+            }
+        }
+    }
+    for (int i = tid; i < src->movable_atoms; i += blk) {
+        int offset = src->idx_sub[i];
+        if (offset >= 0) {
+            int n      = src->force_pair_map_sub[offset];
+            auto force = model_minus_forces(src, m, md, i);
+            for (auto j = 0; j < n; j++) {
+                auto pairidx = src->force_pair_map_sub[offset + j + 1];
+                auto res     = model_pair_res(src, m, md, pairidx);
+                vec_sub(*force, res->force);
+            }
+        }
+    }
+}
+COULD_INLINE void c_model_collect_deriv(ModelDesc *m, Flt *e, Flt *md) {
+    c_model_collect_deriv_e_xy(m, e, md);
+    c_model_update_forces_xy(m, md);
+}
+// single thread processing
+FORCE_INLINE void c_model_collect_deriv_single(ModelDesc *m, Flt *e, Flt *md) {
 	SrcModel *src = m->src;
 
 	// accumulate e as deriviative result
@@ -335,6 +386,21 @@ FORCE_INLINE void c_model_eval_deriv_ligand_sum_ft(ModelDesc *m, Flt *md) {
     }
 
 }
+FORCE_INLINE void c_model_eval_deriv_ligand_sum_ft_xyz(ModelDesc *m, Flt *md) {
+    SrcModel *src = m->src;
+    auto coords = model_coords(src, m, md);
+    CU_FORZ(i, src->nligand) {
+        Ligand &ligand  = src->ligands[i];
+        // first calculate all node force and torque, only for node itself, not include sub-nodes
+        CU_FORY(j, ligand.nr_node) {
+            CUDBG("ligand %d", j);
+            auto var = model_ligand(src, m, md, i, j);
+            auto minus_forces = model_minus_forces(src, m, md);
+            sum_force_and_torque_x<Segment>(ligand.tree[j], var->origin, coords, minus_forces, var->ft);
+        }
+    }
+
+}
 FORCE_INLINE void c_model_eval_deriv_ligand_sum_ft1(ModelDesc *m, Flt *md) {
     SrcModel *src = m->src;
     auto coords = model_coords(src, m, md);
@@ -351,9 +417,54 @@ FORCE_INLINE void c_model_eval_deriv_ligand_sum_ft1(ModelDesc *m, Flt *md) {
 
 }
 
+// todo
 FORCE_INLINE void c_model_eval_deriv_ligand(ModelDesc *m, Flt *gs, Flt *md) {
     SrcModel *src = m->src;
     CU_FOR2(i, src->nligand) {
+        Flt *g = get_ligand_change(src, gs, i);
+
+        Ligand &ligand  = src->ligands[i];
+        // climbing from the leaves to root and accumulate force and torque
+        if (IS_2DMAIN()) {
+            FOR(j, ligand.nr_node - 1) {
+                Segment &seg        = ligand.tree[j];
+                auto segvar = model_ligand(src, m, md, i, j);
+                CUDBG("ligand %d", j);
+                Segment &parent        = ligand.tree[seg.parent];
+                auto parentVar = model_ligand(src, m, md, i, seg.parent);
+                CUDBG("    parent %d", seg.parent);
+                CUVECPDUMP("    parent ft", parentVar->ft);
+                CUVECPDUMP("    child ft", segvar->ft);
+                CUVDUMP("    parent origin", parentVar->origin);
+                CUVDUMP("    child origin", segvar->origin);
+                vec_add(parentVar->ft.first, segvar->ft.first);
+
+                // this is not a leaf, calculate torque with new force
+                Vec r, product;
+                vec_sub(segvar->origin, parentVar->origin, r);
+                cross_product(r, segvar->ft.first, product);
+                vec_add(product, segvar->ft.second);
+                vec_add(parentVar->ft.second, product);
+                CUVECPDUMP("    childft added", parentVar->ft);
+                // note that torsions has reversed order from segments
+                set_derivative(segvar->axis, segvar->ft,
+                               get_ligand_change_torsion(g, ligand.nr_node - j - 2));
+                CUDBG("set ligands %d ligand %d torsion[%d] %f", i, j, ligand.nr_node - j - 2,
+                      get_ligand_change_torsion(g, ligand.nr_node - j - 2));
+                CUVDUMP("    axis", segvar->axis);
+                CUVECPDUMP("    ft", segvar->ft);
+            }
+            auto svar = model_ligand(src, m, md, i, ligand.nr_node - 1);
+            set_derivative(svar->ft, g);
+        }
+    }
+}
+// todo:
+FORCE_INLINE void c_model_eval_deriv_ligand_xyz(ModelDesc *m, Flt *gs, Flt *md) {
+    SrcModel *src = m->src;
+    const int tid = blockDim.x * blockDim.y * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
+    const int blk = blockDim.x * blockDim.y * blockDim.z;
+    for(int i = tid; i < src->nligand; i++) {
         Flt *g = get_ligand_change(src, gs, i);
 
         Ligand &ligand  = src->ligands[i];
@@ -406,6 +517,20 @@ FORCE_INLINE void c_model_eval_deriv_flex_sum_ft(ModelDesc *m, Flt *md) {
         }
     }
 }
+FORCE_INLINE void c_model_eval_deriv_flex_sum_ft_xyz(ModelDesc *m, Flt *md) {
+    SrcModel *src = m->src;
+    CU_FORZ(i, src->nflex) {
+        Residue &flex    = src->flex[i];
+        // first calculate all node force and torque, only for node itself, not include sub-nodes
+        CU_FORY(j, flex.nr_node) {
+            CUDBG("flex %d", j);
+            auto coords = model_coords(src, m, md);
+            auto minus_forces = model_minus_forces(src, m, md);
+            auto seg = model_flex(src, m, md, i, j);
+            sum_force_and_torque_x<Segment>(flex.tree[j], seg->origin, coords, minus_forces, seg->ft);
+        }
+    }
+}
 FORCE_INLINE void c_model_eval_deriv_flex_sum_ft_1(ModelDesc *m, Flt *md) {
     SrcModel *src = m->src;
     CU_FOR(i, src->nflex) {
@@ -423,6 +548,38 @@ FORCE_INLINE void c_model_eval_deriv_flex_sum_ft_1(ModelDesc *m, Flt *md) {
 FORCE_INLINE void c_model_eval_deriv_flex(ModelDesc *m, Flt *gs, Flt *md) {
     SrcModel *src = m->src;
     CU_FOR2(i, src->nflex) {
+        Flt *g           = get_flex_change(src, gs, i);
+        Residue &flex    = src->flex[i];
+        if (IS_2DMAIN()) {
+            FOR(j, flex.nr_node) {
+                Segment &seg        = flex.tree[j];
+                auto segvar = model_flex(src, m, md, i, j);
+                if (seg.parent >= 0) {
+                    Segment &parent        = flex.tree[seg.parent];
+                    auto parentVar = model_flex(src, m, md, i, seg.parent);
+                    vec_add(parentVar->ft.first, segvar->ft.first);
+
+                    // this is not a leaf, calculate torque with new force
+                    Vec r, product;
+                    vec_sub(segvar->origin, parentVar->origin, r);
+                    cross_product(r, segvar->ft.first, product);
+                    vec_add(product, segvar->ft.second);
+                    vec_add(parentVar->ft.second, product);
+                }
+                // note that torsions has reversed order from segments
+                set_derivative(segvar->axis, segvar->ft,
+                               get_flex_change_torsion(g, flex.nr_node - j - 1));
+            }
+        }
+    }
+    // climbing from the leaves to root and accumulate force and torque
+}
+// todo
+FORCE_INLINE void c_model_eval_deriv_flex_xyz(ModelDesc *m, Flt *gs, Flt *md) {
+    SrcModel *src = m->src;
+    const int tid = blockDim.x * blockDim.y * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
+    const int blk = blockDim.x * blockDim.y * blockDim.z;
+    for(int i = tid; i < src->nflex; i++) {
         Flt *g           = get_flex_change(src, gs, i);
         Residue &flex    = src->flex[i];
         if (IS_2DMAIN()) {
