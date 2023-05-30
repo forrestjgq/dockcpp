@@ -244,6 +244,24 @@ COULD_INLINE void c_model_collect_deriv_e_xy(ModelDesc *m, Flt *e, Flt *md) {
 }
 // based on warp reducing
 // tmp requires blockSize/32, which is warp count
+__device__ void dump_es(ModelDesc *m, Flt *e, Flt *md, Flt *tmp) {
+    SYNC();
+    if (ZIS(0)) {
+        SrcModel *src = m->src;
+        printf("Moveable E:\n");
+        for(int i = 0; i < src->movable_atoms; i+= 1) {
+            auto e = (*model_movable_e(src, m, md, i));
+            printf("\t%d: %f\n", i, e);
+        }
+        printf("Pair E:\n");
+        for(int i = 0; i < src->npairs; i+= 1) {
+            auto e = model_pair_res(src, m, md, i)->e;
+            printf("\t%d: %f\n", i, e);
+        }
+
+    }
+    SYNC();
+}
 COULD_INLINE void c_model_collect_deriv_e_xyz(ModelDesc *m, Flt *e, Flt *md, Flt *tmp) {
 	SrcModel *src = m->src;
 
@@ -274,6 +292,7 @@ COULD_INLINE void c_model_collect_deriv_e_xyz(ModelDesc *m, Flt *e, Flt *md, Flt
             *e += tmp[i];
         }
     }
+    // dump_es(m, e, md, tmp);
 }
 COULD_INLINE void c_model_update_forces_xy(ModelDesc *m, Flt *md) {
 	SrcModel *src = m->src;

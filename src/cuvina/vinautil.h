@@ -16,6 +16,8 @@ namespace dock {
 #define SQR(x) ((x) * (x))
 #define EVAL_IN_WARP 1
 #if USE_CUDA_VINA
+    #define THREADID (blockDim.x *blockDim.y * threadIdx.z +blockDim.x * threadIdx.y + threadIdx.x)
+    #define BLOCKSZ (blockDim.x * blockDim.y * blockDim.z)
     #define FORCE_INLINE __forceinline__ __device__
     // #define FORCE_INLINE static __device__
     #define COULD_INLINE __forceinline__ __device__
@@ -36,6 +38,7 @@ namespace dock {
     #define ZIS(n) (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == n)
     #define XY0() (threadIdx.x == 0 && threadIdx.y == 0)
     #define CU_FOR2(i, n) for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < n; i += blockDim.x * blockDim.y)
+    #define CU_FOR3(i, n) for (int i = THREADID; i < n; i += BLOCKSZ)
     #define CU_FORZ(i, n) for (int i = threadIdx.z; i < n; i += blockDim.z)
     #define IS_GRID(n) (blockIdx.x == n)
     #define CEIL(x) ceil(x)

@@ -483,15 +483,15 @@ std::shared_ptr<Memory> create_src_model_memory(model *m) {
 
     for (auto i = 0u; i < m->ligands.size(); i++) {
         auto nr_node = htree_nodes_size(m->ligands[i]);
-        sz += SIZEOFARR(Segment, nr_node)
-        + nr_node * 2 // for Ligand.layers
-        ;
+        sz += SIZEOFARR(Segment, nr_node);
+        sz += SIZEOFARR(int, nr_node * 2); // for Ligand.layers
+        sz += SIZEOFARR(int, m->atoms.size()); // for Ligand.atom_map
     }
     for (auto i = 0u; i < m->flex.size(); i++) {
         auto nr_node = htree_nodes_size(m->flex[i]);
-        sz += SIZEOFARR(Segment, nr_node)
-            + nr_node * 2 // for Ligand.layers
-        ;
+        sz += SIZEOFARR(Segment, nr_node);
+        sz += SIZEOFARR(int, nr_node * 2); // for FLex.layers
+        sz += SIZEOFARR(int, m->atoms.size()); // for Flex.atom_map
     }
     sz = (sz + 4096 -1) / 4096*4096;
     return makeMemory(sz);
@@ -597,7 +597,7 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
     ALLOC_ARR(sm->force_pair_map_add, int, sm->movable_atoms + sm->npairs);
     // printf("ints %d, add %p -> %p\n", sm->movable_atoms + sm->npairs, sm->force_pair_map_add, sm->force_pair_map_add + sm->movable_atoms + sm->npairs);
     ALLOC_ARR(sm->force_pair_map_sub, int, sm->movable_atoms + sm->npairs);
-
+    
     for (int i = 0; i < sm->movable_atoms; i++) {
         auto &add = adds[i];
         if (add.empty()) {
@@ -642,8 +642,18 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
         sm->nrfligands += 6 + ligand.nr_node - 1;
         ALLOC_ARR(ligand.tree, Segment, ligand.nr_node);
         ALLOC_ARR(ligand.layers, int, ligand.nr_node * 2);
+        ALLOC_ARR(ligand.atom_map, int, sm->natoms);
         // ligand.nr_layers = htree_nodes_prep(ligand.tree, m->ligands[i], ligand.layers);
         htree_nodes_copy(ligand.tree, m->ligands[i]);
+        for (auto j = 0u; j < sm->natoms; j ++) {
+            ligand.atom_map[j] = -1;
+        }
+        for (auto j = 0; j < ligand.nr_node; j++) {
+            auto &seg = ligand.tree[j];
+            for (auto k = seg.begin; k < seg.end; k++) {
+                ligand.atom_map[k] = j;
+            }
+        }
         // CHECKSM(i);
     }
     for (int i = 0; i < sm->nflex; i++) {
@@ -652,8 +662,18 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
         flex.nr_node = htree_nodes_size(m->flex[i]);
         ALLOC_ARR(flex.tree, Segment, flex.nr_node);
         ALLOC_ARR(flex.layers, int, flex.nr_node * 2);
+        ALLOC_ARR(flex.atom_map, int, sm->natoms);
         // flex.nr_layers = htree_nodes_prep(flex.tree, m->flex[i], flex.layers);
         htree_nodes_copy(flex.tree, m->flex[i]);
+        for (auto j = 0u; j < sm->natoms; j ++) {
+            flex.atom_map[j] = -1;
+        }
+        for (auto j = 0; j < flex.nr_node; j++) {
+            auto &seg = flex.tree[j];
+            for (auto k = seg.begin; k < seg.end; k++) {
+                flex.atom_map[k] = j;
+            }
+        }
     }
     sm->nrflts_change = sm->nrfligands + sm->nrfflex;
     // conf has qt orientation and change has vec orientation, so each ligand in conf

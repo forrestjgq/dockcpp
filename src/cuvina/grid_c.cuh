@@ -5,7 +5,10 @@
 #include <algorithm>
 #include "model_desc.cuh"
 
+#define GRID_DEBUG 0
+#define GRIDIDX 16
 
+#define GRIDDBG(fmt, ...) do{ printf("%d [%d:%d] [%d:%d:%d]\t" fmt "\n",  __LINE__, lane_id(), warp_id(), threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
 namespace dock {
 // nc
 FORCE_INLINE Flt grid_eval(const Grid *g, const Vec &location, Flt slope, Flt v, Vec *deriv) {
@@ -156,8 +159,8 @@ FORCE_INLINE void grid_eval_x(int seq, const Grid *g, const Vec &location, Flt s
         s[dx]            = (location.d[dx] - g->m_init.d[dx]) * g->m_factor.d[dx];
         Flt &si          = s[dx];
         const Flt &minus = g->m_dim_fl_minus_1.d[dx];
-#if CUDEBUG
-		if (seq == 0) CUDBG("s[%d] %f minus %f", dx, s[dx], minus);
+#if GRID_DEBUG
+		if (seq == GRIDIDX) GRIDDBG("s[%d] %f minus %f", dx, s[dx], minus);
 #endif
         Flt m            = 0;
         if (si < 0) {
@@ -179,9 +182,9 @@ FORCE_INLINE void grid_eval_x(int seq, const Grid *g, const Vec &location, Flt s
         // FIXME check that inv_factor is correctly initialized and serialized
     }
 
-#if CUDEBUG
-	if (seq == 0 && dx == 0)  {
-		CUDBG("a %lu %lu %lu", a[0], a[1], a[2]);
+#if GRID_DEBUG
+	if (seq == GRIDIDX && dx == 0)  {
+		GRIDDBG("a %lu %lu %lu", a[0], a[1], a[2]);
 	}
 #endif
 	if (dx < 4)  {
@@ -198,9 +201,9 @@ FORCE_INLINE void grid_eval_x(int seq, const Grid *g, const Vec &location, Flt s
 		
         if (dx > 1) aa[0] += 1;
         if (dx & 1) aa[1] += 1;
-#if 0
-		if (seq == 0 && dx == 0)  {
-			CUDBG("changed a %lu %lu %lu", aa[0], aa[1], aa[2]);
+#if GRID_DEBUG
+		if (seq == GRIDIDX && dx == 0)  {
+			GRIDDBG("changed a %lu %lu %lu", aa[0], aa[1], aa[2]);
 		}
 #endif
 
@@ -208,10 +211,10 @@ FORCE_INLINE void grid_eval_x(int seq, const Grid *g, const Vec &location, Flt s
         int fidx    = dx << 1;
         f[fidx]     = arr3d_get<Flt>(&g->m_data, aa[0], aa[1], aa[2]);
         f[fidx + 1] = arr3d_get<Flt>(&g->m_data, aa[0], aa[1], aa[2] + 1);
-#if 0
-		if (seq == 0) {
-			CUDBG("f[%d] = %f", fidx, f[fidx]);
-			CUDBG("f[%d] = %f", fidx+1, f[fidx+1]);
+#if GRID_DEBUG
+		if (seq == GRIDIDX) {
+			GRIDDBG("f[%d] = %f", fidx, f[fidx]);
+			GRIDDBG("f[%d] = %f", fidx+1, f[fidx+1]);
 		}
 #endif
 
@@ -237,11 +240,11 @@ FORCE_INLINE void grid_eval_x(int seq, const Grid *g, const Vec &location, Flt s
 				 f[6] * s1[0] * s1[1] * s2[2] + 
 				 f[7] * s1[0] * s1[1] * s1[2];
 
-#if 0
-		if (seq == 0 && dx == 0)  {
-			CUDBG("f %f %f %f %f %f %f %f %f", f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
-			CUDBG("s1 %f %f %f s2 %f %f %f", s1[0], s1[1], s1[2],  s2[0], s2[1], s2[2]);
-			CUDBG("s %f %f %f gs %f %f %f %f", s[0], s[1], s[2], gs[0], gs[1], gs[2], gs[3]);
+#if GRID_DEBUG
+		if (seq == GRIDIDX && dx == 0)  {
+			GRIDDBG("f %f %f %f %f %f %f %f %f", f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7]);
+			GRIDDBG("s1 %f %f %f s2 %f %f %f", s1[0], s1[1], s1[2],  s2[0], s2[1], s2[2]);
+			GRIDDBG("s %f %f %f gs %f %f %f %f", s[0], s[1], s[2], gs[0], gs[1], gs[2], gs[3]);
 		}
 #endif
         Vec gradient;
@@ -300,17 +303,17 @@ __device__ void c_cache_eval_deriv_xyz(const Cache *c, const ModelDesc *m, Flt *
 		if (t < c->ngrids) {
 			auto *g = &c->grids[t];
 			auto coord = model_coords(src, m, md, i);
-#if CUDEBUG
-			if (threadIdx.x == 0) {
-				CUDBG("cache %d coord %f %f %f", i, coord->d[0], coord->d[1], coord->d[2]);
+#if GRID_DEBUG
+			if (threadIdx.x == 0 && i == GRIDIDX) {
+				GRIDDBG("cache %d coord %f %f %f", i, coord->d[0], coord->d[1], coord->d[2]);
 			}
 #endif
 			grid_eval_x(i, g, *coord, c->m_slope, vs[1], force, e, tmp + 27 * i);
 		}
-#if CUDEBUG
-		if (threadIdx.x == 0) {
-			CUDBG("cache %d eval e %f", i, *e);
-			CUVDUMP("force deriv", *force);
+#if GRID_DEBUG
+		if (threadIdx.x == 0 && i == GRIDIDX) {
+			GRIDDBG("cache %d eval e %f", i, *e);
+			GRIDDBG("force derive: %f %f %f", force->d[0], force->d[1], force->d[2]);
 		}
 #endif
 		

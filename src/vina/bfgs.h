@@ -24,7 +24,7 @@
 #define VINA_BFGS_H
 
 #include "matrix.h"
-
+#define BFGSDEBUG 0
 typedef triangular_matrix<fl> flmat;
 
 template<typename Change>
@@ -84,17 +84,19 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 	fl alpha = 1;
 
 	const fl pg = scalar_product(p, g, n);
-	// printf("cpu step %d pg: %f\n", step, pg);
+#if BFGSDEBUG
+		printf("step %d pg: %f\n", step, pg);
+        printf("p:\n");
+		p.print();
+#endif
 
 	int t = 0;
 	VINA_U_FOR(trial, max_trials) {
-#if 0
-		if (REQUIRED()) {
-			printf("step %d trial %d p:\n", step, trial);
-			p.print();
-			printf("before conf:\n");
-			x.print();
-		}
+#if BFGSDEBUG
+		printf("step %d trial %d p:\n", step, trial);
+		p.print();
+		printf("before conf:\n");
+		x.print();
 #endif
 		x_new = x; x_new.increment(p, alpha);
 #if 0
@@ -106,14 +108,8 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 		f1 = f(x_new, g_new);
 		evalcount++;
 		t++;
-#if 0
-		DBG("cpu lsm %d alpha %f f1 %f f0 %f", trial, alpha, f1, f0);
-		if (MUSTED()) {
-			printf("cpu line search step %d trial %d der %f\n", step, trial, f1);
-		}
-		if(REQUIRED()) {
-			printf("\n\n\n");
-		}
+#if BFGSDEBUG
+		printf("cpu line search step %d trial %d der %f\n", step, trial, f1);
 #endif
 		if(f1 - f0 < c0 * alpha * pg) {// FIXME check - div by norm(p) ? no? 
 			// printf("breaks at trial %u\n", trial);
@@ -147,8 +143,8 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 	Conf x_new(x);
 	fl f0 = f(x, g);
 	evalcount++;
-#if 0
-	 printf("cpu f0 %f\n", f0);
+#if BFGSDEBUG
+	printf("cpu f0 %f\n", f0);
 	printf("c:\n");
 	x.print();
 	printf("g:\n");
@@ -162,23 +158,23 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 
 	flv f_values; f_values.reserve(max_steps+1);
 	f_values.push_back(f0);
-#if 1
+
 	VINA_U_FOR(step, max_steps) {
 		minus_mat_vec_product(h, g, p);
 		fl f1 = 0;
-#if 0
+#if BFGSDEBUG
 		printf("CPU step %d\n", step);
-		printf("cpu g:\n");
+		printf("g:\n");
 		g.print();
-		printf("cpu p:\n");
+		printf("p:\n");
 		p.print();
-		printf("cpu c:\n");
+		printf("c:\n");
 		x.print();
 #endif
 		const fl alpha = line_search(f, n, x, g, f0, p, x_new, g_new, f1, evalcount, step);
 
 		// printf("step %d alpha %f f1 %f\n", step, alpha, f1);
-#if 0
+#if BFGSDEBUG
 		printf("alpha %f f1 %f\n", alpha, f1);
 		printf("c_new:\n");
 		x_new.print();
@@ -221,7 +217,6 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 		// bool h_updated =
 		 bfgs_update(h, p, y, alpha);
 	}
-#endif
 	if(!(f0 <= f_orig)) { // succeeds for nans too
 		// printf("restore f0\n");
 		f0 = f_orig;

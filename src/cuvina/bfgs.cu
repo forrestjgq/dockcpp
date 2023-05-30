@@ -14,6 +14,15 @@ namespace dock {
 struct threadids {
     int tid, blksz;
 };
+#define BFGSDEBUG 0
+#if BFGSDEBUG
+#define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
+#define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
+#else
+#define REQUIRED() false
+#define MUSTED() false
+#endif
+
 #define INMAIN() (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0)
 #define X0 (threadIdx.x == 0)
 #define Z0 (threadIdx.z == 0)
@@ -124,8 +133,6 @@ FORCE_INLINE void copy_change_conf(SrcModel *sm, T * dst, const T *src) {
     }
 }
 
-#define THREADID (blockDim.x *blockDim.y * threadIdx.z +blockDim.x * threadIdx.y + threadIdx.x)
-#define BLOCKSZ (blockDim.x * blockDim.y * blockDim.z)
 #define FOR_TID(i, sz) for(int i = tids.tid; i < sz; i += tids.blksz)
 
 FORCE_INLINE void convert_conf(SrcModel *sm, Conf * dst, const Flt *src) {
@@ -493,8 +500,9 @@ FORCE_INLINE void model_eval_deriv_e_xy(ModelDesc *m, const PrecalculateByAtom *
     int blk = blockDim.x * blockDim.y;
     // 2300
     // sed model::set, update conf
-    // model_set_conf_ligand_xy_old(m, cf, md);
-    model_set_conf_ligand_xy(m, cf, md, tmp);
+    // model_set_conf_ligand_xy_old(m, cf, md); // 4518
+    // model_set_conf_ligand_xy(m, cf, md, tmp); // 4194
+    model_set_conf_ligand_coords_xy(m, cf, md, tmp);// 3857
     model_set_conf_flex_xy(m, cf, md);
     XYSYNC();
 
@@ -551,22 +559,25 @@ FORCE_INLINE void model_eval_deriv_e_xyz(ModelDesc *m, const PrecalculateByAtom 
     int tid = THREADID;
     int blk = BLOCKSZ;
     // sed model::set, update conf
-    if (threadIdx.z == 0) model_set_conf_ligand_xy(m, cf, md, tmp);
+    model_set_conf_ligand_xyz(m, cf, md, tmp);
     // if (threadIdx.z == 0) model_set_conf_ligand_xy_old(m, cf, md);
     if (threadIdx.z == 1) model_set_conf_flex_xy(m, cf, md);
     SYNC();
 
     // 2800
     c_cache_eval_deriv_xyz(c, m, md, vs, tmp);
+    // dump_segvars(__LINE__, m, md);
     SYNC();
 
     // 3200
     // depends on c_cache_eval_deriv
     c_model_eval_deriv_pairs_c(tid, blk, m, p, md, vs);
+    // dump_segvars(__LINE__, m, md);
     SYNC();
 
     //3980
     c_model_collect_deriv_e_xyz(m, e, md, tmp);
+    // dump_segvars(__LINE__, m, md);
     SYNC();
 }
 
@@ -857,10 +868,6 @@ __device__ Flt multipliers[]
 // output: outc, outg, out_alpha,
 // evalcnt will be added to steps count used
 
-#define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
-// #define REQUIRED() false
-// #define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
-#define MUSTED() false
 __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt f0, Flt &f1,
                             const Flt *c, const Flt *g, const Flt *p, Flt *tmp, Flt *outc,
                             Flt *outg, int ng, int nc, int &evalcnt, Flt &out_alpha,
@@ -875,7 +882,7 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
     scalar_product_array(p, g, pg, tmp, ng, TIDS); // tmp require ng
     SYNC();
 
-#if 1//CUDEBUG
+#if BFGSDEBUG
     if(REQUIRED()) {
         printf("gpu step %d pg: %f\n", step, *pg);
         printf("p:\n");
@@ -922,7 +929,7 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
         }
 #endif
         model_eval_deriv_e_xy(m, pa, ch, tc,  &e, mdz, vs, cs);
-#if 1//CUDEBUG
+#if BFGSDEBUG
         SYNC();
         if(IS_2DMAIN()) printf("gpu line search step %d trial %d der e %f\n",step, dz, e);
         // if(REQUIRED()) printf("\n\n\n");
@@ -1029,7 +1036,7 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
     }
     SYNC();
 
-#if 1//CUDEBUG
+#if BFGSDEBUG
     if (INMAIN()) {
         printf("gpu f0 %f\n", *f0);
         printf("c:\n");
@@ -1055,7 +1062,7 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
         SYNC();
         minus_mat_vec_product3(h, g, p, tmp, ng, tids);  // require ng * ng
         SYNC();
-#if 1//CUDEBUG
+#if BFGSDEBUG
         if (INMAIN()) {
             printf("GPU step %d\n", step);
             printf("g:\n");
@@ -1076,7 +1083,7 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
             fs[step + 1] = *f1;
             *f0          = *f1;
         }
-#if 1//CUDEBUG
+#if BFGSDEBUG
         if (INMAIN()) {
             printf("alpha %f f1 %f\n", *alpha, *f1);
             printf("c_new:\n");

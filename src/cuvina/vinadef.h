@@ -97,6 +97,11 @@ namespace dock {
         // pair of <size, idx> size: how many nodes in this layer,
         //                     idx: start index of each layer in tree 
         int *layers; 
+
+        // map from atom to index of tree segment
+        // value range of each item in map will be [-1, nr_node-1]
+        // -1 means atom not involved in ligand, otherwise the index in tree
+        int *atom_map;
         Segment *tree;
     } Ligand;
 
@@ -108,6 +113,7 @@ namespace dock {
         int nr_node;
         int nr_layers; // indicates how many items in layers
         int *layers; // index of each layer in relations, size nr_layers
+        int *atom_map;
         Segment *tree;
     } Residue;
     typedef struct {
