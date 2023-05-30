@@ -23,21 +23,23 @@ FORCE_INLINE void frame_set_orientation(SegmentVars *segvar, const Qt &q) {
     qt_to_mat(q, segvar->orm);
 }
 FORCE_INLINE void frame_local_to_lab(SegmentVars *segvar, const Vec &local_coords, Vec &out) {
+#if CUDEBUG
     // CUVDUMP("    orm", segvar->orm);
     CUVDUMP("    local coords(atoms)", local_coords);
     CUVDUMP("    origin", segvar->origin);
     auto m = segvar->orm;
     CUDBG("    orm: %f %f %f %f %f %f %f %f %f", m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+#endif
     mat_multiple(segvar->orm, local_coords, out);
     CUVDUMP("    before coord", out);
     vec_add(out, segvar->origin);
     CUVDUMP("    coord", out);
 }
-FORCE_INLINE void frame_local_to_lab_c(int idx, SegmentVars *segvar, const Vec &local_coords, Vec &out) {
+FORCE_INLINE void frame_local_to_lab_c(int idx, const SegmentVars *segvar, const Vec &local_coords, Vec &out) {
     mat_multiple_c(idx, segvar->orm, local_coords, out);
     vec_add_c(idx, out, segvar->origin);
 }
-FORCE_INLINE void frame_local_to_lab_direction(SegmentVars *segvar, const Vec &local_direction, Vec &out) {
+FORCE_INLINE void frame_local_to_lab_direction(const SegmentVars *segvar, const Vec &local_direction, Vec &out) {
     mat_multiple(segvar->orm, local_direction, out);
 }
 FORCE_INLINE void frame_local_to_lab_direction_c(int idx, SegmentVars *segvar, const Vec &local_direction, Vec &out) {
@@ -56,6 +58,7 @@ FORCE_INLINE void atom_frame_set_coords_c(int idx, int blk, Atom *atoms, Segment
         frame_local_to_lab(segvar, atoms[i].coords, coords[i]);
     }
 }
+// use conf to update origin/orm/orq, and use origin/orm + atoms coords to update coords
 FORCE_INLINE void rigid_body_set_conf(Segment *seg, SegmentVars *segvar, Atom *atoms, Vec *coords,
                          const Flt *rigid) {
     CUDBG("conf position %f %f %f", rigid[0], rigid[1], rigid[2]);
@@ -92,11 +95,27 @@ FORCE_INLINE void segment_set_conf(SegmentVars *parent, SegmentVars *segvar, Seg
     atom_frame_set_coords(atoms, seg, segvar, coords);
 }
 FORCE_INLINE void segment_set_conf_c(int idx, int blk, SegmentVars *parent, SegmentVars *segvar, Segment *seg, Atom *atoms,
-                      Vec *coords, Flt torsion) {
+                      Vec *coords, const Flt torsion) {
+    // update segvar origin and axis
     frame_local_to_lab_c(idx, parent, seg->relative_origin, segvar->origin);
     frame_local_to_lab_direction_c(idx, parent, seg->relative_axis, segvar->axis);
     auto tmp = segvar->tmp; // use orm for temperary variable
     angle_to_quaternion_c(idx, segvar->axis, torsion, tmp);
+    qt_multiple_c(idx, tmp, (Flt *)&(parent->orq));
+    if (IS_2DMAIN()) {
+        quaternion_normalize_approx(tmp);  // normalization added in 1.1.2
+    }
+    // quaternion_normalize(tmp); // normalization added in 1.1.2
+    frame_set_orientation_c(idx, blk, segvar, tmp);
+    atom_frame_set_coords_c(idx, blk, atoms, seg, segvar, coords);
+}
+FORCE_INLINE void segment_set_conf_c(int idx, int blk, SegmentVars *parent, SegmentVars *segvar, Segment *seg, Atom *atoms,
+                      Vec *coords, const Flt* cs) {
+    // update segvar origin and axis
+    frame_local_to_lab_c(idx, parent, seg->relative_origin, segvar->origin);
+    frame_local_to_lab_direction_c(idx, parent, seg->relative_axis, segvar->axis);
+    auto tmp = segvar->tmp; // use orm for temperary variable
+    angle_to_quaternion_c(idx, segvar->axis, cs, tmp);
     qt_multiple_c(idx, tmp, (Flt *)&(parent->orq));
     if (IS_2DMAIN()) {
         quaternion_normalize_approx(tmp);  // normalization added in 1.1.2
@@ -181,7 +200,50 @@ FORCE_INLINE void model_set_conf_ligand_1(ModelDesc *m, const Flt *c, Flt *md) {
     }
     // dump_segvars(m, md);
 }
-FORCE_INLINE void model_set_conf_ligand_xy(ModelDesc *m, const Flt *c, Flt *md) {
+// require tmp: src->nrflts_change * 2
+FORCE_INLINE void model_set_conf_ligand_xy(ModelDesc *m, const Flt *c, Flt *md, Flt *tmp) {
+    SrcModel *src = m->src;
+    Atom *atoms   = src->atoms;
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        CUDBG("nligand %d", src->nligand);
+    }
+    // use Y for ligands, X for ligand to make sure:
+    // all set_conf for one segment is executed inside same warp to avoid sync
+    CU_FORY(i, src->nligand) {
+        const int tid = threadIdx.x;
+        const int blk = blockDim.x;
+        Ligand &ligand  = src->ligands[i];
+        auto p          = get_ligand_conf(src, c, i);
+        int offset = get_ligand_conf_angle_offset(src, i);
+        Flt *cs = tmp + offset; // save torsion angles
+        CU_FOR(j, ligand.nr_node-1) {
+            auto angle = get_ligand_conf_torsion(p, j);
+            normalize_angle(angle);
+            angle *= 0.5;
+            cs[j << 1] = COS(angle);
+            cs[(j << 1)+1] = SIN(angle);
+        }
+        FOR(k, ligand.nr_node) {
+            int j               = ligand.nr_node - k - 1;  // from root to leaf
+            Segment &seg        = ligand.tree[j];
+            auto segvar = model_ligand(src, m, md, i, j);
+            auto coords = model_coords(src, m, md);
+            MCUDBG("ligand %d parent %d k %d", j, seg.parent, k);
+            if (seg.parent >= 0) {
+                Segment &parent        = ligand.tree[seg.parent];
+                auto parentVar = model_ligand(src, m, md, i, seg.parent);
+                segment_set_conf_c(tid, blk, parentVar, segvar, &seg, atoms, coords, cs + (k-1)*2);
+            } else {
+                // root
+                rigid_body_set_conf_c(tid, blk, &seg, segvar, atoms, coords, p);
+            }
+        }
+    }
+
+
+    // dump_segvars(m, md);
+}
+FORCE_INLINE void model_set_conf_ligand_xy_old(ModelDesc *m, const Flt *c, Flt *md) {
     SrcModel *src = m->src;
     Atom *atoms   = src->atoms;
     if (threadIdx.x == 0 && threadIdx.y == 0) {

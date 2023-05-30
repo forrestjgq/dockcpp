@@ -459,7 +459,7 @@ FORCE_INLINE void set_diagonal(Flt *h, Flt v, int ng) {
 FORCE_INLINE void model_eval_deriv(ModelDesc *m, const PrecalculateByAtom *p, const Cache *c, const Flt *cf, Flt *cg, Flt *e, Flt *md, const Flt *vs) {
     // 970
     // sed model::set, update conf
-    model_set_conf_ligand_xy(m, cf, md);
+    model_set_conf_ligand_xy_old(m, cf, md);
     model_set_conf_flex_xy(m, cf, md);
     WARPSYNC();
 
@@ -488,12 +488,13 @@ FORCE_INLINE void model_eval_deriv(ModelDesc *m, const PrecalculateByAtom *p, co
 // evaluate deriviate and get loss value
 // already synchronized
 FORCE_INLINE void model_eval_deriv_e_xy(ModelDesc *m, const PrecalculateByAtom *p, const Cache *c,
-                                         const Flt *cf,  Flt *e, Flt *md, const Flt *vs) {
+                                         const Flt *cf,  Flt *e, Flt *md, const Flt *vs, Flt * tmp) {
     int tid = threadIdx.x + threadIdx.y * blockDim.x;
     int blk = blockDim.x * blockDim.y;
     // 2300
     // sed model::set, update conf
-    model_set_conf_ligand_xy(m, cf, md);
+    // model_set_conf_ligand_xy_old(m, cf, md);
+    model_set_conf_ligand_xy(m, cf, md, tmp);
     model_set_conf_flex_xy(m, cf, md);
     XYSYNC();
 
@@ -544,13 +545,14 @@ FORCE_INLINE void model_update_xyz(ModelDesc *m, Flt *cg, Flt *md) {
     c_model_eval_deriv_flex_xyz(m, cg, md);
     SYNC();
 }
-#define MODEL_EVAL_DERIV_MEM_SIZE(src) (CACHE_EVAL_MEM_SIZE(src) + WARPSZ)
+#define MODEL_EVAL_DERIV_MEM_SIZE(src) (CACHE_EVAL_MEM_SIZE(src) + WARPSZ + (src)->nrflts_conf * 2)
 FORCE_INLINE void model_eval_deriv_e_xyz(ModelDesc *m, const PrecalculateByAtom *p, const Cache *c,
                                          const Flt *cf,  Flt *e, Flt *md, const Flt *vs, Flt *tmp) {
     int tid = THREADID;
     int blk = BLOCKSZ;
     // sed model::set, update conf
-    if (threadIdx.z == 0) model_set_conf_ligand_xy(m, cf, md);
+    if (threadIdx.z == 0) model_set_conf_ligand_xy(m, cf, md, tmp);
+    // if (threadIdx.z == 0) model_set_conf_ligand_xy_old(m, cf, md);
     if (threadIdx.z == 1) model_set_conf_flex_xy(m, cf, md);
     SYNC();
 
@@ -843,7 +845,9 @@ __device__ Flt multipliers[]
         1.9073486328125e-06
     };
 
-#define LINESRCH_SIZE(nc, ng) (MAX_TRIALS * ((nc)+2) + (ng) + 2)
+#define LINESRCH_SIZE(nc, ng) (MAX_TRIALS * ((3 * (nc))+ 2) + (ng) + 2)
+// #define LINESRCH_SIZE(nc, ng) (MAX_TRIALS * ((nc)+2) + (ng) + 2)
+
 // ng, nc: size of Flt for a change and conf
 // tmp: require MAX_TRIALS * (nc+2) + ng + 2 Flts
 // outc: write only, output conf
@@ -893,8 +897,16 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
     for (int dz = threadIdx.z; dz < MAX_TRIALS; dz += blockDim.z) {
         flags[dz] = 0;
     }
+    int lsblk = 3 * nc;
     for (int dz = threadIdx.z; dz < MAX_TRIALS && !exit; dz += blockDim.z) {
+#if 1
+        Flt *tc = tmp + lsblk * dz; // c_new
+        Flt *cs = tc + nc;
+
+#else
         Flt *tc = tmp + nc * dz; // c_new
+        Flt *cs = nullptr;
+#endif
         Flt &e = es[dz];
         Flt *mdz = md + dz * m->szflt;
         Flt alpha = multipliers[dz];
@@ -912,8 +924,8 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
             printc(m->src, tc);
         }
 #endif
-        model_eval_deriv_e_xy(m, pa, ch, tc,  &e, mdz, vs);
-#if 0
+        model_eval_deriv_e_xy(m, pa, ch, tc,  &e, mdz, vs, cs);
+#if 1
         if(IS_2DMAIN()) printf("gpu line search step %d trial %d der e %f\n",step, dz, e);
         if(REQUIRED()) printf("\n\n\n");
 #endif
@@ -956,7 +968,7 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
     }
     SYNC();
 
-    copy_conf(outc, tmp + nc * m->active);
+    copy_conf(outc, tmp + lsblk * m->active);
     model_update_xyz(m, outg, md + m->active * m->szflt);
 }
 #define BFGSIDX threadIdx.z

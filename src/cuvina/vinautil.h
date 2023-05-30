@@ -578,6 +578,14 @@ FORCE_INLINE void angle_to_quaternion_c(int idx, const Vec& axis, Flt angle, Flt
         out[idx] = SIN(angle) * vec_get(axis, idx-1);
     }
 }
+FORCE_INLINE void angle_to_quaternion_c(int idx, const Vec& axis, const Flt *cs, Flt *out) { // axis is assumed to be a unit vector
+	//assert(eq(tvmet::norm2(axis), 1));
+    if (idx == 0) {
+        out[0] = cs[0];
+    } else if (idx < 4) {
+        out[idx] = cs[1] * vec_get(axis, idx-1);
+    }
+}
 FORCE_INLINE Flt quaternion_norm_sqr(const Qt& q) { // equivalent to sqr(boost::math::abs(const qt&))
 	return SQR(q.x) + SQR(q.y) + SQR(q.z) + SQR(q.w);
 }
@@ -633,6 +641,7 @@ FORCE_INLINE T get_ligand_conf(SrcModel *src, T g, int idx) {
 }
 #define get_ligand_conf_torsion(g, idx) (g)[7+(idx)]
 
+
 template<typename T>// T = Flt * or const Flt *
 FORCE_INLINE T get_flex_conf(SrcModel *src, T g, int idx) {
     int offset = src->nrfligands;
@@ -642,5 +651,22 @@ FORCE_INLINE T get_flex_conf(SrcModel *src, T g, int idx) {
     return g + offset; 
 }
 #define get_flex_conf_torsion(g, idx)  (g)[idx]
+
+
+// we'll calculate each torsion's cos/sin and save them inside an array for conf set
+FORCE_INLINE int get_ligand_conf_angle_offset(SrcModel *src, int idx) {
+    int offset = 0;
+    for (int i = 0; i < idx; i++) {
+        offset += src->ligands[i].nr_node - 1;
+    }
+    return offset * 2;  // for cos + sin
+}
+FORCE_INLINE int get_flex_conf_angle_offset(SrcModel *src, int idx) {
+    int offset = 0;
+    for (int i = 0; i < idx; i++) {
+        offset += src->flex[i].nr_node - 1;// 3+4 for position and oritentation, rest will be torsions
+    }
+    return offset; 
+}
 };
 #endif
