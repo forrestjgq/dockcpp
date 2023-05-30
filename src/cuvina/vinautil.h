@@ -16,10 +16,10 @@ namespace dock {
 #define SQR(x) ((x) * (x))
 #define EVAL_IN_WARP 1
 #if USE_CUDA_VINA
-    // #define FORCE_INLINE __forceinline__ __device__
-    #define FORCE_INLINE static __device__
-    // #define COULD_INLINE __forceinline__ __device__
-    #define COULD_INLINE static __device__
+    #define FORCE_INLINE __forceinline__ __device__
+    // #define FORCE_INLINE static __device__
+    #define COULD_INLINE __forceinline__ __device__
+    // #define COULD_INLINE static __device__
     #define GLOBAL __global__ 
     #define CU_FOR(i, n) for (int i = threadIdx.x; i < n; i += blockDim.x)
     #define CU_FORY(i, n) for (int i = threadIdx.y; i < n; i += blockDim.y)
@@ -564,8 +564,7 @@ FORCE_INLINE void angle_to_quaternion_c(int idx, const Vec& axis, Flt angle, Qt 
     angle = angle * 0.5;
     if (idx == 0) {
         qt_set(out, 0, COS(angle));
-    }
-    if (idx < 4) {
+    } else if (idx < 4) {
         qt_set(out, idx, SIN(angle) * vec_get(axis, idx-1));
     }
 }
@@ -575,8 +574,7 @@ FORCE_INLINE void angle_to_quaternion_c(int idx, const Vec& axis, Flt angle, Flt
     angle = angle * 0.5;
     if (idx == 0) {
         out[0] = COS(angle);
-    }
-    else if (idx < 4) {
+    } else if (idx < 4) {
         out[idx] = SIN(angle) * vec_get(axis, idx-1);
     }
 }

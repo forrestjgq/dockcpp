@@ -491,22 +491,22 @@ FORCE_INLINE void model_eval_deriv_e_xy(ModelDesc *m, const PrecalculateByAtom *
                                          const Flt *cf,  Flt *e, Flt *md, const Flt *vs) {
     int tid = threadIdx.x + threadIdx.y * blockDim.x;
     int blk = blockDim.x * blockDim.y;
-    // 970
+    // 2300
     // sed model::set, update conf
     model_set_conf_ligand_xy(m, cf, md);
     model_set_conf_flex_xy(m, cf, md);
     XYSYNC();
 
-    // 2800
+    // 300 ~ 1000
     c_cache_eval_deriv_xy(c, m, md, vs);
     XYSYNC();
 
-    // 3200
+    // 800
     // depends on c_cache_eval_deriv
     c_model_eval_deriv_pairs_c(tid, blk, m, p, md, vs);
     XYSYNC();
 
-    //3980
+    //100
     c_model_collect_deriv_e_xy(m, e, md);
     XYSYNC();
 }
