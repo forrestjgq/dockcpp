@@ -857,8 +857,8 @@ __device__ Flt multipliers[]
 // output: outc, outg, out_alpha,
 // evalcnt will be added to steps count used
 
-// #define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
-#define REQUIRED() false
+#define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
+// #define REQUIRED() false
 // #define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
 #define MUSTED() false
 __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt f0, Flt &f1,
@@ -874,17 +874,14 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
 
     scalar_product_array(p, g, pg, tmp, ng, TIDS); // tmp require ng
     SYNC();
-#if 0
-    if(REQUIRED()) {
-        CUDBG("gpu step %d pg: %f", step, *pg);
-    }
-#endif
+
 #if 1//CUDEBUG
     if(REQUIRED()) {
-        printf("pg: %f\n", *pg);
+        printf("gpu step %d pg: %f\n", step, *pg);
         printf("p:\n");
         printg(m->src, p);
     }
+    SYNC();
 #endif
 
     Flt c0pg = c0 * (*pg);
@@ -925,9 +922,11 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
         }
 #endif
         model_eval_deriv_e_xy(m, pa, ch, tc,  &e, mdz, vs, cs);
-#if 1
+#if 1//CUDEBUG
+        SYNC();
         if(IS_2DMAIN()) printf("gpu line search step %d trial %d der e %f\n",step, dz, e);
-        if(REQUIRED()) printf("\n\n\n");
+        // if(REQUIRED()) printf("\n\n\n");
+        SYNC();
 #endif
         // update my flag
         if (XY0() && e - f0 < c0pg * alpha) {
@@ -1030,15 +1029,15 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
     }
     SYNC();
 
-#if CUDEBUG
-    if (REQUIRED()) printf("gpu f0 %f\n", *f0);
+#if 1//CUDEBUG
     if (INMAIN()) {
-        // printf("f0 eval synced\n");
+        printf("gpu f0 %f\n", *f0);
         printf("c:\n");
         printc(srcm, c);
         printf("g:\n");
         printg(srcm, g);
     }
+    SYNC();
 #endif
 
     copy_change(g_orig, g);
@@ -1054,15 +1053,9 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
     // require max(ng * ng, MAX_TRIALS * (nc+ng+1) + 2, ng * ng + 4)
     for (int step = 0; step < max_steps; step++) {
         SYNC();
-        #if 0
-        if (INMAIN()) {
-            printf("%d %d:%d:%d@%d bfgs step %d/%d\n" , __LINE__, threadIdx.x,
-                threadIdx.y, threadIdx.z, blockIdx.x, step, max_steps);
-        }
-        #endif
         minus_mat_vec_product3(h, g, p, tmp, ng, tids);  // require ng * ng
         SYNC();
-#if CUDEBUG
+#if 1//CUDEBUG
         if (INMAIN()) {
             printf("GPU step %d\n", step);
             printf("g:\n");
@@ -1072,6 +1065,7 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
             printf("c:\n");
             printc(srcm, c);
         }
+        SYNC();
 #endif
         line_search(m, pa, ch, *f0, *f1, c, g, p, tmp, c_new, g_new, ng, nc, evalcnt, *alpha, TIDS,
                     md, vs, step);
@@ -1081,8 +1075,9 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
         if (INMAIN()) {
             fs[step + 1] = *f1;
             *f0          = *f1;
-#if CUDEBUG
-// g same, g_new c_new diff, alpha same, f1: cpu 13205288550.489218 gpu 13397753744.724092
+        }
+#if 1//CUDEBUG
+        if (INMAIN()) {
             printf("alpha %f f1 %f\n", *alpha, *f1);
             printf("c_new:\n");
             printc(srcm, c_new);
@@ -1091,8 +1086,8 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
             printf("g_new\n");
             printg(srcm, g_new);
             printf("\n\n\n\n");
-#endif
         }
+#endif
         copy_conf(c, c_new);
         sqrt_product_array(g, ng, gg, TIDS);
         SYNC();
