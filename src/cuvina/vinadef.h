@@ -7,7 +7,7 @@
 namespace dock {
     typedef double Flt;
     struct Qt {
-        double x, y, z, w;
+        Flt d[4];
     };
     struct Vec {
         Flt d[3];

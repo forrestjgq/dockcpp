@@ -19,7 +19,7 @@ FORCE_INLINE void frame_set_orientation_c(int idx, int blk, SegmentVars *segvar,
     qt_to_mat_c(idx, blk, q, segvar->orm);
 }
 FORCE_INLINE void frame_set_orientation(SegmentVars *segvar, const Qt &q) {
-    CUDBG("set orientation: %f %f %f %f", q.x, q.y, q.z, q.w);
+    CUDBG("set orientation: %f %f %f %f", q.d[0], q.d[1], q.d[2], q.d[3]);
     qt_set(segvar->orq, q);
     qt_to_mat(q, segvar->orm);
 }
@@ -84,13 +84,13 @@ FORCE_INLINE void segment_set_conf(SegmentVars *parent, SegmentVars *segvar, Seg
     CUVDUMP("    my origin", segvar->origin);
     CUVDUMP("    axis", segvar->axis);
     CUDBG("torsion %f", torsion);
-    CUDBG("parent orientation %f %f %f %f", parent->orq.x , parent->orq.y , parent->orq.z , parent->orq.w );
+    CUDBG("parent orientation %f %f %f %f", parent->orq.d[0] , parent->orq.d[1] , parent->orq.d[2] , parent->orq.d[3] );
     Qt tmp;
     angle_to_quaternion(segvar->axis, torsion, tmp);
     qt_multiple(tmp, parent->orq);
-    CUDBG("tmp %f %f %f %f", tmp.x, tmp.y, tmp.z, tmp.w);
+    CUDBG("tmp %f %f %f %f", tmp.d[0], tmp.d[1], tmp.d[2], tmp.d[3]);
     quaternion_normalize_approx(tmp);  // normalization added in 1.1.2
-    CUDBG("approx tmp %f %f %f %f", tmp.x, tmp.y, tmp.z, tmp.w);
+    CUDBG("approx tmp %f %f %f %f", tmp.d[0], tmp.d[1], tmp.d[2], tmp.d[3]);
     // quaternion_normalize(tmp); // normalization added in 1.1.2
     frame_set_orientation(segvar, tmp);
     atom_frame_set_coords(atoms, seg, segvar, coords);
@@ -166,7 +166,7 @@ __device__ void dump_ligands(ModelDesc *m, Flt *md) {
             printf("\t\tcoord begin %d end %d\n", seg.begin, seg.end);
             printf("\t\taxis %f %f %f\n", segvar->axis.d[0], segvar->axis.d[1], segvar->axis.d[2]);
             printf("\t\torign %f %f %f\n", segvar->origin.d[0], segvar->origin.d[1], segvar->origin.d[2]);
-            printf("\t\torq %f %f %f %f\n", segvar->orq.x, segvar->orq.y, segvar->orq.z, segvar->orq.w);
+            printf("\t\torq %f %f %f %f\n", segvar->orq.d[0], segvar->orq.d[1], segvar->orq.d[2], segvar->orq.d[3]);
             printf("\t\torm %f %f %f \n\t\t%f %f %f \n\t\t%f %f %f\n", segvar->orm[0], segvar->orm[1], segvar->orm[2], segvar->orm[3], segvar->orm[4], segvar->orm[5], segvar->orm[6], segvar->orm[7], segvar->orm[8]);
         }
     }

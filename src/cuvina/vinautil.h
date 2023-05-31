@@ -228,17 +228,16 @@ namespace dock {
         dst = src;
     }
     FORCE_INLINE void qt_set(Qt &dst, Flt x, Flt y, Flt z, Flt w) {
-        dst.x = x, dst.y = y, dst.z = z, dst.w = w;
+        dst.d[0] = x, dst.d[1] = y, dst.d[2] = z, dst.d[3] = w;
     }
     FORCE_INLINE void qt_set(Qt &dst, int idx, Flt x) {
-        Flt * f = (Flt *)&dst;
-        *(f+idx) = x;
+        dst.d[idx] = x;
     }
     FORCE_INLINE void qt_multiple(Qt &dst, Flt x) {
-        dst.x *= x;
-        dst.y *= x;
-        dst.z *= x;
-        dst.w *= x;
+        dst.d[0] *= x;
+        dst.d[1] *= x;
+        dst.d[2] *= x;
+        dst.d[3] *= x;
     }
     FORCE_INLINE void qt_multiple(Flt *dst, Flt x) {
         dst[0] *= x;
@@ -247,8 +246,8 @@ namespace dock {
         dst[3] *= x;
     }
     FORCE_INLINE void qt_multiple(Qt &dst, const Qt &src) {
-        Flt xr = src.x, yr = src.y, zr = src.z, wr = src.w;
-        Flt x = dst.x, y = dst.y, z = dst.z, w = dst.w;
+        Flt xr = src.d[0], yr = src.d[1], zr = src.d[2], wr = src.d[3];
+        Flt x = dst.d[0], y = dst.d[1], z = dst.d[2], w = dst.d[3];
         qt_set(dst, x * xr - y * yr - z * zr - w * wr, x * yr + y * xr + z * wr - w * zr,
                x * zr - y * wr + z * xr + w * yr, x * wr + y * zr - z * yr + w * xr);
     }
@@ -332,10 +331,10 @@ namespace dock {
         mat_set(mat, 2, 2, (aa - bb - cc + dd));
     }
     FORCE_INLINE void qt_to_mat(const Qt &qt, Flt *mat) {
-        const Flt a = qt.x;
-        const Flt b = qt.y;
-        const Flt c = qt.z;
-        const Flt d = qt.w;
+        const Flt a = qt.d[0];
+        const Flt b = qt.d[1];
+        const Flt c = qt.d[2];
+        const Flt d = qt.d[3];
 
         const Flt aa = a * a;
         const Flt ab = a * b;
@@ -590,7 +589,7 @@ FORCE_INLINE void angle_to_quaternion_c(int idx, const Vec& axis, const Flt *cs,
     }
 }
 FORCE_INLINE Flt quaternion_norm_sqr(const Qt& q) { // equivalent to sqr(boost::math::abs(const qt&))
-	return SQR(q.x) + SQR(q.y) + SQR(q.z) + SQR(q.w);
+	return SQR(q.d[0]) + SQR(q.d[1]) + SQR(q.d[2]) + SQR(q.d[3]);
 }
 FORCE_INLINE void quaternion_normalize_approx(Qt& q, const Flt tolerance = 1e-6) {
 	const Flt s = quaternion_norm_sqr(q);

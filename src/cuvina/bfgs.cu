@@ -14,7 +14,7 @@ namespace dock {
 struct threadids {
     int tid, blksz;
 };
-#define BFGSDEBUG 0
+#define BFGSDEBUG 1
 #if BFGSDEBUG
 #define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
 #define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
@@ -169,10 +169,10 @@ FORCE_INLINE void read_conf(SrcModel *sm, const Conf * dst, Flt *src) {
                     p[0] = ligand->rigid.position.d[0];
                     p[1] = ligand->rigid.position.d[1];
                     p[2] = ligand->rigid.position.d[2];
-                    p[3] = ligand->rigid.orientation.x;
-                    p[4] = ligand->rigid.orientation.y;
-                    p[5] = ligand->rigid.orientation.z;
-                    p[6] = ligand->rigid.orientation.w;
+                    p[3] = ligand->rigid.orientation.d[0];
+                    p[4] = ligand->rigid.orientation.d[1];
+                    p[5] = ligand->rigid.orientation.d[2];
+                    p[6] = ligand->rigid.orientation.d[3];
                     // printf("conf %f %f %f %f %f %f %f\n", p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
                 }
                 p[i+7] = ligand->torsions[i];
@@ -1282,7 +1282,7 @@ __device__ void dump_md(ModelDesc *m) {
         auto seg = model_ligand(src, m, data, i, j);
         printf("\taxis: %f %f %f\n", seg->axis.d[0], seg->axis.d[1], seg->axis.d[2]);
         printf("\torigin: %f %f %f\n", seg->origin.d[0], seg->origin.d[1], seg->origin.d[2]);
-        printf("\torq: %f %f %f %f\n", seg->orq.x, seg->orq.y, seg->orq.z, seg->orq.w);
+        printf("\torq: %f %f %f %f\n", seg->orq.d[0], seg->orq.d[1], seg->orq.d[2], seg->orq.d[3]);
         auto a = seg->orm;
         printf("\torm: %f %f %f %f %f %f %f %f %f\n", a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8]);
     }

@@ -211,7 +211,7 @@ void copy_vecs(vecv &dst, const Vec *srcs) {
     }
 }
 static inline void qt_set(qt &dst, const Qt &src) {
-    dst = qt(src.x, src.y, src.z, src.w);
+    dst = qt(src.d[0], src.d[1], src.d[2], src.d[3]);
 }
 void copy_pair(InteractingPair *dst, interacting_pair *src,Flt cutoff_sqr, int v) {
     dst->a = src->a, dst->b = src->b, dst->type_pair_index = src->type_pair_index;
@@ -232,10 +232,10 @@ void eval_pairs(int &idx, std::map<int, std::vector<int>> &adds,std::map<int, st
     }
 }
 void copy_qt(Qt &dst, const qt &src) {
-    dst.x = src.R_component_1();
-    dst.y = src.R_component_2();
-    dst.z = src.R_component_3();
-    dst.w = src.R_component_4();
+    dst.d[0] = src.R_component_1();
+    dst.d[1] = src.R_component_2();
+    dst.d[2] = src.R_component_3();
+    dst.d[3] = src.R_component_4();
 }
 // ok
 template<typename T>
