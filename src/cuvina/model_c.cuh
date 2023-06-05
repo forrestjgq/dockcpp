@@ -244,9 +244,10 @@ COULD_INLINE void c_model_collect_deriv_e_xy(ModelDesc *m, Flt *e, Flt *md) {
 }
 // based on warp reducing
 // tmp requires blockSize/32, which is warp count
-__device__ void dump_es(ModelDesc *m, Flt *e, Flt *md, Flt *tmp) {
+__device__ void dump_es(int line, ModelDesc *m, Flt *md) {
     SYNC();
     if (ZIS(0)) {
+        printf("DUMPES at %d\n", line);
         SrcModel *src = m->src;
         printf("Moveable E:\n");
         for(int i = 0; i < src->movable_atoms; i+= 1) {
@@ -262,6 +263,7 @@ __device__ void dump_es(ModelDesc *m, Flt *e, Flt *md, Flt *tmp) {
     }
     SYNC();
 }
+#define DUMPES(m, md) dump_es(__LINE__, m, md)
 COULD_INLINE void c_model_collect_deriv_e_xyz(ModelDesc *m, Flt *e, Flt *md, Flt *tmp) {
 	SrcModel *src = m->src;
 
@@ -292,7 +294,7 @@ COULD_INLINE void c_model_collect_deriv_e_xyz(ModelDesc *m, Flt *e, Flt *md, Flt
             *e += tmp[i];
         }
     }
-    // dump_es(m, e, md, tmp);
+    DUMPES(m, md);
 }
 COULD_INLINE void c_model_update_forces_xy(ModelDesc *m, Flt *md) {
 	SrcModel *src = m->src;
@@ -479,6 +481,7 @@ FORCE_INLINE void c_model_eval_deriv_ligand(ModelDesc *m, Flt *gs, Flt *md) {
     }
 }
 // todo:
+#if LIGAND_LAYER_SET
 FORCE_INLINE void c_model_eval_deriv_ligand_xyz(ModelDesc *m, Flt *gs, Flt *md) {
     SrcModel *src = m->src;
     const int tid = blockDim.x * blockDim.y * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
@@ -522,6 +525,51 @@ FORCE_INLINE void c_model_eval_deriv_ligand_xyz(ModelDesc *m, Flt *gs, Flt *md) 
         }
     }
 }
+#else
+FORCE_INLINE void c_model_eval_deriv_ligand_xyz(ModelDesc *m, Flt *gs, Flt *md) {
+    SrcModel *src = m->src;
+    const int tid = blockDim.x * blockDim.y * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
+    const int blk = blockDim.x * blockDim.y * blockDim.z;
+    for(int i = tid; i < src->nligand; i++) {
+        Flt *g = get_ligand_change(src, gs, i);
+
+        Ligand &ligand  = src->ligands[i];
+        // climbing from the leaves to root and accumulate force and torque
+        if (IS_2DMAIN()) {
+            FOR(j, ligand.nr_node - 1) {
+                Segment &seg        = ligand.tree[j];
+                auto segvar = model_ligand(src, m, md, i, j);
+                CUDBG("ligand %d", j);
+                Segment &parent        = ligand.tree[seg.parent];
+                auto parentVar = model_ligand(src, m, md, i, seg.parent);
+                CUDBG("    parent %d", seg.parent);
+                CUVECPDUMP("    parent ft", parentVar->ft);
+                CUVECPDUMP("    child ft", segvar->ft);
+                CUVDUMP("    parent origin", parentVar->origin);
+                CUVDUMP("    child origin", segvar->origin);
+                vec_add(parentVar->ft.first, segvar->ft.first);
+
+                // this is not a leaf, calculate torque with new force
+                Vec r, product;
+                vec_sub(segvar->origin, parentVar->origin, r);
+                cross_product(r, segvar->ft.first, product);
+                vec_add(product, segvar->ft.second);
+                vec_add(parentVar->ft.second, product);
+                CUVECPDUMP("    childft added", parentVar->ft);
+                // note that torsions has reversed order from segments
+                set_derivative(segvar->axis, segvar->ft,
+                               get_ligand_change_torsion(g, ligand.nr_node - j - 2));
+                CUDBG("set ligands %d ligand %d torsion[%d] %f", i, j, ligand.nr_node - j - 2,
+                      get_ligand_change_torsion(g, ligand.nr_node - j - 2));
+                CUVDUMP("    axis", segvar->axis);
+                CUVECPDUMP("    ft", segvar->ft);
+            }
+            auto svar = model_ligand(src, m, md, i, ligand.nr_node - 1);
+            set_derivative(svar->ft, g);
+        }
+    }
+}
+#endif
 FORCE_INLINE void c_model_eval_deriv_flex_sum_ft(ModelDesc *m, Flt *md) {
     SrcModel *src = m->src;
     FOR(i, src->nflex) {

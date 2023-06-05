@@ -3,6 +3,7 @@
 
 #include "cuda_runtime_api.h"
 #include <stdint.h>
+#define TREE_LAYER 0
 
 namespace dock {
     typedef double Flt;
@@ -97,6 +98,7 @@ namespace dock {
         // pair of <size, idx> size: how many nodes in this layer,
         //                     idx: start index of each layer in tree 
         int *layers; 
+        int *layer_map; //saves index of tree, but arranged by layer from top to buttom
 
         // map from atom to index of tree segment
         // value range of each item in map will be [-1, nr_node-1]
@@ -113,6 +115,7 @@ namespace dock {
         int nr_node;
         int nr_layers; // indicates how many items in layers
         int *layers; // index of each layer in relations, size nr_layers
+        int *layer_map; //saves index of tree, but arranged by layer from top to buttom
         int *atom_map;
         Segment *tree;
     } Residue;
@@ -189,6 +192,7 @@ namespace dock {
         int nrfligands, nrfflex; 
         Ligand *ligands;
         Residue *flex;
+        int max_ligand_layers, max_flex_layers;
     } SrcModel;
 
     typedef struct  {

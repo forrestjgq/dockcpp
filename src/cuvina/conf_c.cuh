@@ -163,6 +163,7 @@ __device__ void dump_ligands(ModelDesc *m, Flt *md) {
             printf("\tnode %d/%d:\n", j, ligand.nr_node);
             Segment &seg        = ligand.tree[j];
             auto segvar = model_ligand(src, m, md, i, j);
+            printf("\tparent %d layer %d\n", seg.parent, seg.layer);
             printf("\t\tcoord begin %d end %d\n", seg.begin, seg.end);
             printf("\t\taxis %f %f %f\n", segvar->axis.d[0], segvar->axis.d[1], segvar->axis.d[2]);
             printf("\t\torign %f %f %f\n", segvar->origin.d[0], segvar->origin.d[1], segvar->origin.d[2]);
@@ -189,6 +190,7 @@ __device__ void dump_segvars(int line, ModelDesc *m, Flt *md) {
     }
     SYNC();
 }
+#define DUMP_SEGVARS(m, md) dump_segvars(__LINE__, m, md)
 // single
 FORCE_INLINE void model_set_conf_ligand_1(ModelDesc *m, const Flt *c, Flt *md) {
     SrcModel *src = m->src;
@@ -215,10 +217,11 @@ FORCE_INLINE void model_set_conf_ligand_1(ModelDesc *m, const Flt *c, Flt *md) {
             }
         }
     }
-    // dump_segvars(__LINE__, m, md);
+    DUMP_SEGVARS(m, md);
 }
 
 #define USE_GOOD_CONF 0
+#define LIGAND_LAYER_SET 1
 
 #if USE_GOOD_CONF
 // good
@@ -263,9 +266,229 @@ FORCE_INLINE void model_set_conf_ligand_xy(ModelDesc *m, const Flt *c, Flt *md, 
             segment_set_conf_c(tid, blk, parentVar, segvar, &seg, atoms, coords, cs + k*2);
         }
     }
-    // dump_segvars(__LINE__, m, md);
+    DUMP_SEGVARS(m, md);
+}
+#elif LIGAND_LAYER_SET
+
+FORCE_INLINE void model_set_conf_ligand_xy(ModelDesc *m, const Flt *c, Flt *md, Flt *tmp) {
+    SrcModel *src = m->src;
+    Atom *atoms   = src->atoms;
+    auto coords = model_coords(src, m, md);
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        CUDBG("nligand %d", src->nligand);
+    }
+    const int tid = threadIdx.x;
+    const int blk = blockDim.x;
+    
+    // set root conf and prepare cos/sin angle for all ligands
+    CU_FORY(i, src->nligand) {
+        Ligand &ligand  = src->ligands[i];
+        auto p          = get_ligand_conf(src, c, i);
+        auto segvar = model_ligand(src, m, md, i, ligand.nr_node-1);
+        Segment &seg        = ligand.tree[ligand.nr_node-1];
+        // setup root
+        rigid_body_set_conf_c(tid, blk, &seg, segvar, atoms, coords, p);
+
+        int offset = get_ligand_conf_angle_offset(src, i);
+        Flt *cs = tmp + offset; // save torsion angles
+        CU_FOR(j, ligand.nr_node-1) {
+            auto angle = get_ligand_conf_torsion(p, j);
+            normalize_angle(angle);
+            angle *= 0.5;
+            cs[j << 1] = COS(angle);
+            cs[(j << 1)+1] = SIN(angle);
+        }
+    }
+    FOR(i, src->nligand) {
+        Ligand &ligand  = src->ligands[i];
+        auto p          = get_ligand_conf(src, c, i);
+        int offset = get_ligand_conf_angle_offset(src, i);
+        Flt *cs = tmp + offset; // save torsion angles
+        for(int layeridx = 1; layeridx <ligand.nr_layers; layeridx++) { // except root(layer 0)
+            XYSYNC();
+            // this layer locates in layer map [mapidx, mapidx + layernodes - 1]
+            int mapidx = ligand.layers[layeridx*2];
+            int layernodes = ligand.layers[layeridx*2+1];
+            CU_FORY(idx, layernodes) {
+                int segidx = ligand.layer_map[mapidx + idx]; // segment index
+                auto &seg = ligand.tree[segidx];
+                auto segvar = model_ligand(src, m, md, i, segidx);
+                auto &parent = ligand.tree[seg.parent];
+                auto parentVar = model_ligand(src, m, md, i, seg.parent);
+                // ntorision = nr_node - 1, so segidx + torsionidx = nr_node - 2
+                // do not forget cs occupies 2 flts
+                int csidx = 2 * (ligand.nr_node - 2 - segidx);
+                // if (tid == 0) printf("layer %d mapidx %d layernodes %d idx %d segidx %d parent %d csid %d\n",
+                //        layeridx, mapidx, layernodes, idx, segidx, seg.parent, csidx);
+                segment_set_conf_c(tid, blk, parentVar, segvar, &seg, atoms, coords, cs + csidx);
+            }
+        }
+    }
+
+    DUMP_SEGVARS(m, md);
+}
+FORCE_INLINE void model_set_conf_ligand_coords_xy(ModelDesc *m, const Flt *c, Flt *md, Flt *tmp) {
+    SrcModel *src = m->src;
+    Atom *atoms   = src->atoms;
+    auto coords = model_coords(src, m, md);
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        CUDBG("nligand %d", src->nligand);
+    }
+    const int tid = threadIdx.x;
+    const int blk = blockDim.x;
+    
+    // set root conf and prepare cos/sin angle for all ligands
+    CU_FORY(i, src->nligand) {
+        Ligand &ligand  = src->ligands[i];
+        auto p          = get_ligand_conf(src, c, i);
+        auto segvar = model_ligand(src, m, md, i, ligand.nr_node-1);
+        // setup root
+        if (tid < 3) segvar->origin.d[tid] = p[tid];
+        frame_set_orientation_c(tid, blk, segvar, p+3);
+
+        int offset = get_ligand_conf_angle_offset(src, i);
+        Flt *cs = tmp + offset; // save torsion angles
+        CU_FOR(j, ligand.nr_node-1) {
+            auto angle = get_ligand_conf_torsion(p, j);
+            normalize_angle(angle);
+            angle *= 0.5;
+            cs[j << 1] = COS(angle);
+            cs[(j << 1)+1] = SIN(angle);
+        }
+    }
+    FOR(i, src->nligand) {
+        Ligand &ligand  = src->ligands[i];
+        auto p          = get_ligand_conf(src, c, i);
+        int offset = get_ligand_conf_angle_offset(src, i);
+        Flt *cs = tmp + offset; // save torsion angles
+        for(int layeridx = 1; layeridx <ligand.nr_layers; layeridx++) { // except root(layer 0)
+            XYSYNC();
+            // this layer locates in layer map [mapidx, mapidx + layernodes - 1]
+            int mapidx = ligand.layers[layeridx*2];
+            int layernodes = ligand.layers[layeridx*2+1];
+            CU_FORY(idx, layernodes) {
+                int segidx = ligand.layer_map[mapidx + idx]; // segment index
+                auto &seg = ligand.tree[segidx];
+                auto segvar = model_ligand(src, m, md, i, segidx);
+                auto &parent = ligand.tree[seg.parent];
+                auto parentVar = model_ligand(src, m, md, i, seg.parent);
+                // ntorision = nr_node - 1, so segidx + torsionidx = nr_node - 2
+                // do not forget cs occupies 2 flts
+                int csidx = 2* (ligand.nr_node - 2 - segidx);
+                // if (tid == 0) printf("layer %d mapidx %d layernodes %d idx %d segidx %d parent %d csid %d\n",
+                //        layeridx, mapidx, layernodes, idx, segidx, seg.parent, csidx);
+                segment_set_conf_c(tid, blk, parentVar, segvar, &seg,  cs + csidx);
+            }
+        }
+    }
+    XYSYNC();
+    FOR(i, src->nligand) {
+        Ligand &ligand  = src->ligands[i];
+        CU_FOR2(j, int(src->natoms)) {
+            auto segidx = ligand.atom_map[j];
+            // printf("%d %d: atom %d seg %d\n", threadIdx.x, threadIdx.y, j, segidx);
+            if (segidx >= 0) {
+                auto &seg = ligand.tree[segidx];
+                auto segvar = model_ligand(src, m, md, i, segidx);
+                frame_local_to_lab(segvar, atoms[j].coords, coords[j]);
+            }
+        }
+    }
+
+    DUMP_SEGVARS(m, md);
+}
+FORCE_INLINE void model_set_conf_ligand_xyz(ModelDesc *m, const Flt *c, Flt *md, Flt *tmp) {
+    SrcModel *src = m->src;
+    Atom *atoms   = src->atoms;
+    if (threadIdx.x == 0 && threadIdx.y == 0) {
+        CUDBG("nligand %d", src->nligand);
+    }
+    CU_FORZ (i,  src->nligand) {
+        const int tid = threadIdx.x + threadIdx.y * blockDim.x;
+        const int blk = blockDim.x * blockDim.y;
+        Ligand &ligand  = src->ligands[i];
+        auto p          = get_ligand_conf(src, c, i);
+        int offset = get_ligand_conf_angle_offset(src, i);
+        Flt *cs = tmp + offset; // save torsion angles
+
+        auto segvar = model_ligand(src, m, md, i, ligand.nr_node-1);
+        // setup root
+        if (tid < 3) segvar->origin.d[tid] = p[tid];
+        frame_set_orientation_c(tid, blk, segvar, p+3);
+
+        CU_FOR2(j, ligand.nr_node-1) {
+            auto angle = get_ligand_conf_torsion(p, j);
+            normalize_angle(angle);
+            angle *= 0.5;
+            cs[j << 1] = COS(angle);
+            cs[(j << 1)+1] = SIN(angle);
+        }
+    }
+    SYNC();
+    // use Y for ligands, X for ligand to make sure:
+    // all set_conf for one segment is executed inside same warp to avoid sync
+    // the nz/valid/max_ligand_layers are all used to make sure sync() execute on all threads
+    int nz = blockDim.z;
+    while(src->nligand > nz) {
+        nz += blockDim.z;
+    }
+    CU_FORZ(i, nz) {
+        const int tid = threadIdx.x;
+        const int blk = blockDim.x;
+        bool valid = i < src->nligand;
+        if (!valid) {
+            i = 0;
+        }
+        Ligand &ligand  = src->ligands[i];
+        auto p          = get_ligand_conf(src, c, i);
+        int offset = get_ligand_conf_angle_offset(src, i);
+        Flt *cs = tmp + offset; // save torsion angles
+
+        for(int layeridx = 1; layeridx < src->max_ligand_layers; layeridx++) { // except root(layer 0)
+            SYNC();
+            if (valid && layeridx < ligand.nr_layers) {
+                // this layer locates in layer map [mapidx, mapidx + layernodes - 1]
+                int mapidx     = ligand.layers[layeridx * 2];
+                int layernodes = ligand.layers[layeridx * 2 + 1];
+                CU_FORY(idx, layernodes) {
+                    int segidx     = ligand.layer_map[mapidx + idx];  // segment index
+                    auto &seg      = ligand.tree[segidx];
+                    auto segvar    = model_ligand(src, m, md, i, segidx);
+                    auto &parent   = ligand.tree[seg.parent];
+                    auto parentVar = model_ligand(src, m, md, i, seg.parent);
+                    // ntorision = nr_node - 1, so segidx + torsionidx = nr_node - 2
+                    // do not forget cs occupies 2 flts
+                    int csidx = 2 * (ligand.nr_node - 2 - segidx);
+                    // if (tid == 0) printf("layer %d mapidx %d layernodes %d idx %d segidx %d
+                    // parent %d csid %d\n",
+                    //        layeridx, mapidx, layernodes, idx, segidx, seg.parent, csidx);
+                    segment_set_conf_c(tid, blk, parentVar, segvar, &seg, cs + csidx);
+                }
+            }
+        }
+    }
+    SYNC();
+    // update coords
+    auto coords = model_coords(src, m, md);
+
+    CU_FORZ(i, src->nligand) {
+        Ligand &ligand  = src->ligands[i];
+        CU_FOR2(j, int(src->natoms)) {
+            auto segidx = ligand.atom_map[j];
+            // printf("%d %d: atom %d seg %d\n", threadIdx.x, threadIdx.y, j, segidx);
+            if (segidx >= 0) {
+                auto &seg = ligand.tree[segidx];
+                auto segvar = model_ligand(src, m, md, i, segidx);
+                frame_local_to_lab(segvar, atoms[j].coords, coords[j]);
+            }
+        }
+    }
+
+
+    DUMP_SEGVARS(m, md);
 }
 #else
+
 // bad
 FORCE_INLINE void model_set_conf_ligand_xy(ModelDesc *m, const Flt *c, Flt *md, Flt *tmp) {
     SrcModel *src = m->src;
@@ -307,7 +530,7 @@ FORCE_INLINE void model_set_conf_ligand_xy(ModelDesc *m, const Flt *c, Flt *md, 
         }
     }
 
-    // dump_segvars(__LINE__, m, md);
+    DUMP_SEGVARS(m, md);
 }
 FORCE_INLINE void model_set_conf_ligand_coords_xy(ModelDesc *m, const Flt *c, Flt *md, Flt *tmp) {
     SrcModel *src = m->src;
@@ -365,7 +588,7 @@ FORCE_INLINE void model_set_conf_ligand_coords_xy(ModelDesc *m, const Flt *c, Fl
     }
 
 
-    // dump_segvars(__LINE__, m, md);
+    DUMP_SEGVARS(m, md);
 }
 FORCE_INLINE void model_set_conf_ligand_xyz(ModelDesc *m, const Flt *c, Flt *md, Flt *tmp) {
     SrcModel *src = m->src;
@@ -430,7 +653,7 @@ FORCE_INLINE void model_set_conf_ligand_xyz(ModelDesc *m, const Flt *c, Flt *md,
     }
 
 
-    // dump_segvars(__LINE__, m, md);
+    DUMP_SEGVARS(m, md);
 }
 #endif
 FORCE_INLINE void model_set_conf_ligand_xy_old(ModelDesc *m, const Flt *c, Flt *md) {
@@ -462,7 +685,7 @@ FORCE_INLINE void model_set_conf_ligand_xy_old(ModelDesc *m, const Flt *c, Flt *
     }
 
 
-    // dump_segvars(__LINE__, m, md);
+    DUMP_SEGVARS(m, md);
 }
 FORCE_INLINE void model_set_conf_flex_1(ModelDesc *m, const Flt *c, Flt *md) {
     SrcModel *src = m->src;

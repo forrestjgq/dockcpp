@@ -97,6 +97,16 @@ __device__ void printg(SrcModel *sm, const Flt *c) {
         c += sm->flex[i].nr_node;
     }
 }
+__device__ void printh(int ng, const Flt *h) {
+    int idx = 0;
+    for (auto row = 0; row < ng; row++) {
+        printf("[%d]:", row);
+        for (auto col = 0; col <= row; col++) {
+            printf(" %f", h[idx++]);
+        }
+        printf("\n");
+    }
+}
 
 // todo: do we need these? if we need, use threadIdx correctly
 template <typename Ligand> // T = LigandChange, or LigandConf
@@ -566,18 +576,18 @@ FORCE_INLINE void model_eval_deriv_e_xyz(ModelDesc *m, const PrecalculateByAtom 
 
     // 2800
     c_cache_eval_deriv_xyz(c, m, md, vs, tmp);
-    // dump_segvars(__LINE__, m, md);
+    DUMP_SEGVARS(m, md);
     SYNC();
 
     // 3200
     // depends on c_cache_eval_deriv
     c_model_eval_deriv_pairs_c(tid, blk, m, p, md, vs);
-    // dump_segvars(__LINE__, m, md);
+    DUMP_SEGVARS(m, md);
     SYNC();
 
     //3980
     c_model_collect_deriv_e_xyz(m, e, md, tmp);
-    // dump_segvars(__LINE__, m, md);
+    DUMP_SEGVARS(m, md);
     SYNC();
 }
 
@@ -1098,55 +1108,66 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
         copy_conf(c, c_new);
         sqrt_product_array(g, ng, gg, TIDS);
         SYNC();
-#if CUDEBUG
+#if BFGSDEBUG
         if (INMAIN()) {
-            MCUDBG("step %d sqrt g %f", g[0]);
-            MCUDBG("y in step %d", step);
+            printf("sqrt g %f\n", g[0]);
+            printf("y:\n");
             printg(srcm, y);
         }
-        if(XY0())
-            printf("%d %d:%d:%d@%d:%d:%d mark1 %d %d step %d g0 %f %p\n", __LINE__, threadIdx.x,
-                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
-        SYNC();
-        if(XY0())
-            printf("%d %d:%d:%d@%d:%d:%d mark2 %d %d step %d g0 %f %p\n", __LINE__, threadIdx.x,
-                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
-        SYNC();
-        if(XY0())
-            printf("%d %d:%d:%d@%d:%d:%d mark3 %d %d step %d g0 %f %p\n", __LINE__, threadIdx.x,
-                   threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy, step, gg[0], gg);
         SYNC();
 #endif
-#if 1
         if (!(gg[0] >= 1e-5)) {
             // done
             // printf("%d %d:%d:%d@%d:%d:%d %d:%d >>>>> BREAKS <<<<<\n", __LINE__, threadIdx.x,
             //        threadIdx.y, threadIdx.z, blockIdx.x, lane_id(), warp_id(), sx, sy);
             break;
         }
-#endif
         if (step == 0) {
             scalar_product_array(y, tmp, yy, ng, TIDS);  // require ng
             SYNC();
-#if 0
+#if BFGSDEBUG
             if (INMAIN()) {
-                CUDBG("yy %f", *yy);
+                printf("yy %f\n", *yy);
             }
 #endif
             if (abs(*yy) > EPSILON) {
                 scalar_product_array(y, p, yp, tmp, ng, TIDS);  // require ng
                 if (INMAIN()) {
                     *beta = (*alpha) * (*yp) / (*yy);
-                    CUDBG("step %d set diag %f", step, *beta);
+#if BFGSDEBUG
+                    printf("set diag %f\n", *beta);
+#endif                    
                 }
                 SYNC();
+#if BFGSDEBUG
+                if (INMAIN()) {
+                    printf("H before diag:\n");
+                    printh(ng, h);
+                }
+                SYNC();
+#endif                    
                 set_diagonal(h, *beta, ng, TIDS);
                 SYNC();
             }
         }
 
         copy_change(g, g_new);
+#if BFGSDEBUG
+        SYNC();
+        if (INMAIN()) {
+            printf("H before update:\n");
+            printh(ng, h);
+        }
+        SYNC();
+#endif                    
         bfgs_update3(h, p, y, tmp, *alpha, ng, TIDS);
+#if BFGSDEBUG
+        SYNC();
+        if (INMAIN()) {
+            printf("H after update:\n");
+            printh(ng, h);
+        }
+#endif                    
     }
     SYNC();
 

@@ -40,6 +40,7 @@ namespace dock {
     #define CU_FOR2(i, n) for (int i = threadIdx.x + threadIdx.y * blockDim.x; i < n; i += blockDim.x * blockDim.y)
     #define CU_FOR3(i, n) for (int i = THREADID; i < n; i += BLOCKSZ)
     #define CU_FORZ(i, n) for (int i = threadIdx.z; i < n; i += blockDim.z)
+    #define CU_FORYZ(i, n) for (int i = threadIdx.y + threadIdx.z * blockDim.y; i < n; i += blockDim.y * blockDim.z)
     #define IS_GRID(n) (blockIdx.x == n)
     #define CEIL(x) ceil(x)
     #define SIN(x) sin(x)
