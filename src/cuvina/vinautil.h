@@ -92,6 +92,9 @@ namespace dock {
         // dst[0] = src.x, dst[1] = src.y, dst[2] = src.z;
         dst[0] = src.d[0], dst[1] = src.d[1], dst[2] = src.d[2];
     }
+    FORCE_INLINE void vec_copy_to(const int idx, const Vec &src, Flt *dst) {
+        if (idx < 3) dst[idx] = src.d[idx];
+    }
 
     FORCE_INLINE void vec_add(const Vec &v1, const Vec &v2, Vec &out) {
         // make_vec(out, vec_get(v1, 0) + vec_get(v2, 0), vec_get(v1, 1) + vec_get(v2, 1),vec_get(v1, 2) + vec_get(v2, 2));

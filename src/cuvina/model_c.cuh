@@ -142,6 +142,11 @@ FORCE_INLINE void set_derivative(const Vecp& force_torque, Flt *r) {
     vec_copy_to(force_torque.second, r+3);
 
 }
+FORCE_INLINE void set_derivative(const int idx, const Vecp& force_torque, Flt *r) {
+    vec_copy_to(idx, force_torque.first, r);
+    vec_copy_to(idx, force_torque.second, r+3);
+
+}
 // see tree::derivative
 // template <typename T>
 // COULD_INLINE void tree_derivative(T &t, Vec *coords, Vec *forces, Flt *&p) {
@@ -483,46 +488,31 @@ FORCE_INLINE void c_model_eval_deriv_ligand(ModelDesc *m, Flt *gs, Flt *md) {
 // todo:
 #if LIGAND_LAYER_SET
 FORCE_INLINE void c_model_eval_deriv_ligand_xyz(ModelDesc *m, Flt *gs, Flt *md) {
+    const int tid = threadIdx.x;
+    const int blk = blockDim.x;
     SrcModel *src = m->src;
-    const int tid = blockDim.x * blockDim.y * threadIdx.z + blockDim.x * threadIdx.y + threadIdx.x;
-    const int blk = blockDim.x * blockDim.y * blockDim.z;
-    for(int i = tid; i < src->nligand; i++) {
-        Flt *g = get_ligand_change(src, gs, i);
-
+    CU_FORYZ(i, src->nligand) {
         Ligand &ligand  = src->ligands[i];
-        // climbing from the leaves to root and accumulate force and torque
-        if (IS_2DMAIN()) {
-            FOR(j, ligand.nr_node - 1) {
-                Segment &seg        = ligand.tree[j];
-                auto segvar = model_ligand(src, m, md, i, j);
-                CUDBG("ligand %d", j);
-                Segment &parent        = ligand.tree[seg.parent];
-                auto parentVar = model_ligand(src, m, md, i, seg.parent);
-                CUDBG("    parent %d", seg.parent);
-                CUVECPDUMP("    parent ft", parentVar->ft);
-                CUVECPDUMP("    child ft", segvar->ft);
-                CUVDUMP("    parent origin", parentVar->origin);
-                CUVDUMP("    child origin", segvar->origin);
-                vec_add(parentVar->ft.first, segvar->ft.first);
+        Flt *g = get_ligand_change(src, gs, i);
+        FOR(j, ligand.nr_node - 1) {
+            Segment &seg        = ligand.tree[j];
+            auto segvar = model_ligand(src, m, md, i, j);
+            auto parentVar = model_ligand(src, m, md, i, seg.parent);
+            vec_add_c(tid, parentVar->ft.first, segvar->ft.first);
 
-                // this is not a leaf, calculate torque with new force
-                Vec r, product;
-                vec_sub(segvar->origin, parentVar->origin, r);
-                cross_product(r, segvar->ft.first, product);
-                vec_add(product, segvar->ft.second);
-                vec_add(parentVar->ft.second, product);
-                CUVECPDUMP("    childft added", parentVar->ft);
-                // note that torsions has reversed order from segments
+            // parent ft second += ((child origin - parent origin) X child-force) + child-torque
+            // this is not a leaf, calculate torque with new force
+            sub_cross_product_add_c(tid, segvar->origin, parentVar->origin, segvar->ft.first, parentVar->ft.second);
+            vec_add_c(tid, parentVar->ft.second, segvar->ft.second);
+
+            // note that torsions has reversed order from segments
+            if (tid == 0) {
                 set_derivative(segvar->axis, segvar->ft,
-                               get_ligand_change_torsion(g, ligand.nr_node - j - 2));
-                CUDBG("set ligands %d ligand %d torsion[%d] %f", i, j, ligand.nr_node - j - 2,
-                      get_ligand_change_torsion(g, ligand.nr_node - j - 2));
-                CUVDUMP("    axis", segvar->axis);
-                CUVECPDUMP("    ft", segvar->ft);
+                                get_ligand_change_torsion(g, ligand.nr_node - j - 2));
             }
-            auto svar = model_ligand(src, m, md, i, ligand.nr_node - 1);
-            set_derivative(svar->ft, g);
         }
+        auto svar = model_ligand(src, m, md, i, ligand.nr_node - 1);
+        set_derivative(tid, svar->ft, g);
     }
 }
 #else

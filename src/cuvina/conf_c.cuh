@@ -432,10 +432,11 @@ FORCE_INLINE void model_set_conf_ligand_xyz(ModelDesc *m, const Flt *c, Flt *md,
     while(src->nligand > nz) {
         nz += blockDim.z;
     }
-    CU_FORZ(i, nz) {
+    CU_FORZ(zidx, nz) {
         const int tid = threadIdx.x;
         const int blk = blockDim.x;
-        bool valid = i < src->nligand;
+        int i = zidx;
+        bool valid = zidx < src->nligand;
         if (!valid) {
             i = 0;
         }
