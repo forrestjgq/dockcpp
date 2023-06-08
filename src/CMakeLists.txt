@@ -84,9 +84,6 @@ list(APPEND LBFGS_SRC
 set(VINA_DIR ${SRC}/vina)
 set(CUVINA_DIR ${SRC}/cuvina)
 list(APPEND VINA_SRC
-    ${CUVINA_DIR}/model.cu
-    ${CUVINA_DIR}/grid.cu
-    ${CUVINA_DIR}/conf.cu
     ${CUVINA_DIR}/cuvina.cpp
     ${CUVINA_DIR}/bfgs.cu
     # ${CUVINA_DIR}/vinasrv.cpp

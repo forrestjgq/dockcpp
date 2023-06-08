@@ -619,11 +619,7 @@ FORCE_INLINE void quaternion_normalize_approx(Flt * q, const Flt tolerance = 1e-
 }
 template<typename T>// T = Flt * or const Flt *
 FORCE_INLINE T get_ligand_change(SrcModel *src, T g, int idx) {
-    int offset = 0;
-    for (int i = 0; i < idx; i++) {
-        offset += src->ligands[i].nr_node - 1 + 6;// 3+3 for position and oritentation, rest will be torsions
-    }
-    return g + offset; 
+    return g + src->ligands[idx].change_offset;
 }
 #define get_ligand_change_torsion(g, idx) (g)[6+(idx)]
 
@@ -639,11 +635,7 @@ FORCE_INLINE T get_flex_change(SrcModel *src, T g, int idx) {
 
 template<typename T>// T = Flt * or const Flt *
 FORCE_INLINE T get_ligand_conf(SrcModel *src, T g, int idx) {
-    int offset = 0;
-    for (int i = 0; i < idx; i++) {
-        offset += src->ligands[i].nr_node - 1 + 7;// 3+4 for position and oritentation, rest will be torsions
-    }
-    return g + offset; 
+    return g + src->ligands[idx].conf_offset;
 }
 #define get_ligand_conf_torsion(g, idx) (g)[7+(idx)]
 
@@ -663,7 +655,11 @@ FORCE_INLINE T get_flex_conf(SrcModel *src, T g, int idx) {
 FORCE_INLINE int get_ligand_conf_angle_offset(SrcModel *src, int idx) {
     int offset = 0;
     for (int i = 0; i < idx; i++) {
-        offset += src->ligands[i].nr_node - 1;
+        auto &ligand = src->ligands[i];
+        offset += ligand.nr_node;
+        if (ligand.bflex == 0) { // ligand has nr_node-1 torsions
+            offset--;
+        }
     }
     return offset * 2;  // for cos + sin
 }

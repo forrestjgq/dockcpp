@@ -1482,10 +1482,6 @@ GLOBAL void bfgs_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx
     if (INMAIN()) {
         ctx->e = *f0;
     }
-    // this covers model.set(out.c) in the end of quasi_newton()
-    // Flt *active = m->data + m->szflt * m->active;
-    // model_set_conf_ligand_xy(m, c, active);
-    // model_set_conf_flex_xy(m, c, active);
 }
 #define MDDBG(fmt, ...) do{ printf("\t" fmt "\n",  __LINE__, blockIdx.x, blockIdx.y, blockIdx.z, threadIdx.x, threadIdx.y, threadIdx.z,  __VA_ARGS__);}while(0)
 #define MDPV(hdr, pv, ...) MDDBG(hdr ": %f %f %f", __VA_ARGS__, (pv)->d[0], (pv)->d[1], (pv)->d[2])

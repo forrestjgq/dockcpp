@@ -3,7 +3,6 @@
 
 #include "cuda_runtime_api.h"
 #include <stdint.h>
-#define TREE_LAYER 0
 
 namespace dock {
     typedef double Flt;
@@ -65,11 +64,13 @@ namespace dock {
 
     // constant part of ligands and flex
     typedef struct {
+        int ligandidx; // ligand/flex index in ligands
+        int segidx; // segment index in ligand tree
+        int bflex = 0;
         int begin;
         int end;
         int parent; // -1 for root
         int layer; // 0 for root, 1 for child of root, ...
-        int *children; //children id
         // for segment, not for rigid_body and first_segment
         Vec relative_axis;
         Vec relative_origin;
@@ -79,6 +80,7 @@ namespace dock {
     // Alignment: sizeof(Flt)
     typedef struct {
         // inputs, changes in set_conf
+        int bflex = 0;
         Vec axis; // for first_segment, it's const, for others updated in set_conf
         Vec origin;
         Qt orq; // see frame::orientation_q
@@ -92,7 +94,9 @@ namespace dock {
 #define CU_XS_TYPE_SIZE 32
 #define CU_INVALID_XS_SIZE 9999
     typedef struct {
+        int bflex = 0; // 0 or 1 for ligand or flex
         int nr_node; // how many nodes in tree
+        int seg_offset; // segment offset
         int nr_layers; // indicates how many items in layers
         // alllocation size: 2 * nr_node
         // pair of <size, idx> size: how many nodes in this layer,
@@ -103,38 +107,16 @@ namespace dock {
         // map from atom to index of tree segment
         // value range of each item in map will be [-1, nr_node-1]
         // -1 means atom not involved in ligand, otherwise the index in tree
-        int *atom_map;
-        Segment *tree;
+        int *atom_map; // todo, we should set a global map for all ligands and flex
+        int conf_offset; // the conf offset in c Flt array
+        int change_offset; // the change offset in g Flt array
+
     } Ligand;
 
     typedef struct {
         SegmentVars *tree; // array size: Ligand.nr_node
     } LigandVars;
 
-    typedef struct {
-        int nr_node;
-        int nr_layers; // indicates how many items in layers
-        int *layers; // index of each layer in relations, size nr_layers
-        int *layer_map; //saves index of tree, but arranged by layer from top to buttom
-        int *atom_map;
-        Segment *tree;
-    } Residue;
-    typedef struct {
-        SegmentVars *tree;
-    } ResidueVars;
-
-    typedef struct {
-        Vec position;
-        Vec orientation;
-    } RigidChange;
-    typedef struct {
-        RigidChange rigid;
-        // note that torsions has reversed order from segments
-        Flt *torsions;
-    } LigandChange;
-    typedef struct {
-        Flt * torsions;
-    } ResidueChange;
 
     typedef struct {
         Vec position;
@@ -185,14 +167,16 @@ namespace dock {
         int *force_pair_map_sub;
         int *force_pair_map_add;
 
-        int nligand, nflex; // how many ligand and flex in model
+        int nligand, nflex, nall; // how many ligand and flex in model, and nall = nligand + nflex
         int nrflts_change, nrflts_conf; // how many Flt in a change and conf
         // in a change, how may floats for ligands and flex
         // note that nrfligands + nligand will be Flt number of conf for ligand, and nrfflex are same for conf and change
         int nrfligands, nrfflex; 
-        Ligand *ligands;
-        Residue *flex;
-        int max_ligand_layers, max_flex_layers;
+        int max_ligand_layers, max_flex_layers, max_layers;
+        int nrsegs = 0;
+        Ligand *ligands; // includes nligand + nflex
+
+        Segment * segs; // segment for all ligands and flex
     } SrcModel;
 
     typedef struct  {
@@ -203,22 +187,6 @@ namespace dock {
     } PairEvalResult;
     typedef struct {
         SrcModel *src;
-
-        Flt vs[3]; // const value used to eval der
-
-        // changes at conf updating, and as input of der eval
-        int ncoords;
-        Vec * coords; // array of atom size, for atom coords, see model::coords
-
-        // for der eval
-        LigandVars *ligands; // array size: SrcModel.nligand
-        ResidueVars *flex; // array size: SrcModel.nflex
-        Vec *minus_forces; // size: movable atoms, see SrcModel.movable_atoms, used in eval_deriv, no init value
-        Flt *movable_e; // result of movable atoms, size: src->movable_atoms, used in eval_deriv, no init value
-        PairEvalResult *pair_res; // size: src->nparis, used in eval deriv, no init value
-    } Model;
-    typedef struct {
-        SrcModel *src;
         int szflt; // how many flts ModelVars takes
         int ncoords;
         int active = 0; // data contains some model description data, this indicates the active one
@@ -227,7 +195,6 @@ namespace dock {
         int coords; // will be updated after model der
         // offset of each ligands, array size: SrcModel.nligand
         int *ligands;  // will be updated after model der
-        int *flex; // will be updated after model der
         int minus_forces; // used only inside model der
         int movable_e; // used only inside model der
         int pair_res; // used only inside model der
@@ -241,40 +208,17 @@ namespace dock {
         int ngrids;
         Grid *grids; // cache.m_grids
     } Cache;
-    typedef struct {
-        LigandChange *ligands;
-        ResidueChange *flex;
-    } Change;
+
     typedef struct {
         LigandConf *ligands;
         ResidueConf *flex;
     } Conf;
     typedef struct  {
         Flt vs[3];
-        Change g;
         Conf c; // input c
         Flt e; // output e
         Vec *coords; // output model coords , size: SrcModel:: ncoords
-        // Flt *pair_e; // output loss
-        // Flt *atom_e; // output loss
         int eval_cnt; // how many model eval called in this bfgs
-
-        // tmp for bfgs
-
-        // see bfgs.h(flmat) , todo
-        // int dimh; // dim of h, its value will be SrcModel::nrflts
-        // Flt *h; // size dimh, init value 0
-        // Change g_new;
-        // Conf c_new;
-
-        // Change g_orig;
-        // Conf c_orig;
-
-        // Change p;
-        // Change y;
-
-        // int max_step;
-        // Flt *fs; // size: max_step + 1
     } BFGSCtx;
 
     #define MC_MAX_STEP_BATCH 200

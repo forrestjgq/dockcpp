@@ -247,86 +247,11 @@ int tree_nodes_size(struct tree<T> &tree) {
     return tree.nr_nodes + 1;
 }
 
-int seg_tree_nodes_prep(struct tree<segment> &tree, int layer, std::map<int, std::vector<struct tree<segment> *>> &m) {
-    int ret_layer = layer;
-    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
-        auto ret = seg_tree_nodes_prep(*it, layer+1, m);
-        ret_layer = std::max(ret_layer, ret);
-    }
-    tree.layer = layer;
-    auto it = m.find(layer);
-    if (it == m.end()) {
-        m[layer] = {&tree};
-    } else {
-        m[layer].push_back(&tree);
-    }
-    return ret_layer;
-}
 void seg_tree_nodes_set_parent(struct tree<segment> &tree, int parent) {
     for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
         seg_tree_nodes_set_parent(*it, tree.idx);
     }
     tree.parentIdx = parent;
-}
-template<typename T>
-int htree_nodes_prep(Segment *segs, struct heterotree<T> &tree, int *layermap) {
-    std::map<int, std::vector<struct tree<segment> *>> m;
-    int layerIdx = 0; // layer index for each node, 0 ~ layers
-    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
-        auto ret  = seg_tree_nodes_prep(*it, 1, m);
-        layerIdx = std::max(ret, layerIdx);
-    }
-    int layers = layerIdx + 1; // how many layers
-
-    // setup index for each segment
-    int idx = 0;
-    for (auto i = layerIdx; i > 0; i --) {
-        for (auto node : m[i]) {
-            node->idx = idx;
-            idx++;
-        }
-    }
-    // now idx is the root index
-    // setup parent index for each segment
-    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
-        seg_tree_nodes_set_parent(*it, idx);
-    }
-
-    int mapidx = 0; // for one layer, mapidx indicates the pos of layer starting in segments
-    for (auto i = layerIdx; i > 0; i --) {
-        layermap[i * 2] = mapidx;
-        layermap[i * 2+1] = int(m[i].size());
-        mapidx += int(m[i].size());
-        
-        for (auto t : m[i]) {
-            auto &seg    = segs[t->idx];
-            auto &node   = t->node;
-            seg.begin    = node.begin;
-            seg.end      = node.end;
-            seg.parent   = t->parentIdx;
-            seg.layer    = t->layer;
-            vec_set(seg.relative_axis, node.relative_axis);
-            vec_set(seg.relative_origin, node.relative_origin);
-            // auto &axis   = node.relative_axis;
-            // auto &origin = node.relative_origin;
-            // make_vec(seg.relative_axis, axis.data[0], axis.data[1], axis.data[2]);
-            // make_vec(seg.relative_origin, origin.data[0], origin.data[1], origin.data[2]);
-        }
-    }
-    layermap[0] = idx;
-    layermap[1] = 1;
-
-    auto &seg = segs[idx];
-    seg.begin  = tree.node.begin;
-    seg.end    = tree.node.end;
-    seg.parent = -1;
-    seg.layer  = 0;
-
-    for (auto i = 0; i < idx; i++) {
-        auto &seg = segs[i];
-        printf("SEG %d/%d: parent %d begin %d end %d layer %d\n", i, idx, seg.parent, seg.begin, seg.end, seg.layer);
-    }
-    return layers;
 }
 // layer: which layer segment in tree, start from 0
 int seg_tree_nodes_copy(int parent, int idx, Segment *segs, struct tree<segment> &tree, int layer) {
@@ -418,36 +343,6 @@ void htree_var_nodes_copy(SegmentVars *segs, const struct heterotree<T> &tree) {
     DBG("    axis %f %f %f", seg.axis.d[0], seg.axis.d[1], seg.axis.d[2]);
     DBG("    origin %f %f %f", seg.origin.d[0], seg.origin.d[1], seg.origin.d[2]);
 }
-void segvar_tree_nodes_prep(SegmentVars *segs, const struct tree<segment> &tree) {
-    // fill child in reverse order first into segs
-    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
-        segvar_tree_nodes_prep(segs, *it);
-    }
-    auto &seg = segs[tree.idx];
-    vec_set(seg.axis, tree.node.axis);
-    vec_set(seg.origin, tree.node.get_origin());
-}
-template<typename T>
-void htree_var_nodes_prep(SegmentVars *segs, struct heterotree<T> &tree) {
-    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
-        segvar_tree_nodes_prep(segs, *it);
-    }
-    auto &seg = segs[tree.nr_nodes];
-    vec_set(seg.axis, tree.node.axis);
-    vec_set(seg.origin, tree.node.get_origin());
-}
-template<typename T>
-void htree_var_nodes_restore(const SegmentVars *segs, struct heterotree<T> &tree) {
-    int idx = 0;
-    int myidx = tree.nr_nodes; // where this node is stored
-    for (auto it = tree.children.rbegin(); it != tree.children.rend(); ++it) {
-        segvar_tree_nodes_restore(myidx, idx, segs, *it);
-        idx += it->nr_nodes + 1;
-    }
-    auto &seg = segs[myidx];
-    vec_set(tree.node.axis, seg.axis);
-    vec_set(tree.node.origin, seg.origin);
-}
         // std::cout << __FILE__ << ":" << __LINE__ << " " << "alloc " #type " size " << sizeof(type) << std::endl;
     #define ALLOC(dst, type) do {\
         mem->crop((void **)&(dst), sizeof(type), sizeof(double));\
@@ -465,7 +360,7 @@ void htree_var_nodes_restore(const SegmentVars *segs, struct heterotree<T> &tree
 #define SIZEOF(t) ALIGN(sizeof(t), ALIGNMENT)
 #define SIZEOFARR(t, sz) ALIGN(sizeof(t)*(sz), ALIGNMENT)
 // ok
-std::shared_ptr<Memory> create_src_model_memory(model *m) {
+std::shared_ptr<Memory> create_src_model_memory(model *m, int &nrsegs) {
 
     auto npairs = int(m->inter_pairs.size() + m->glue_pairs.size() + m->other_pairs.size());
     for (auto &ligand : m->ligands) {
@@ -474,8 +369,7 @@ std::shared_ptr<Memory> create_src_model_memory(model *m) {
     Size sz = SIZEOF(SrcModel) + SIZEOFARR(Size, m->num_movable_atoms()) +
     SIZEOFARR(Atom, m->atoms.size()) +
     SIZEOFARR(InteractingPair, npairs) +
-    SIZEOFARR(Ligand, m->ligands.size()) +
-    SIZEOFARR(Residue, m->flex.size());
+    SIZEOFARR(Ligand, m->ligands.size() + m->flex.size());
 
 
     // allocated memory space for idx_sub/add, force_pair_map_sub/add
@@ -490,8 +384,10 @@ std::shared_ptr<Memory> create_src_model_memory(model *m) {
     // for force_pair_map_sub and force_pair_map_add
     sz += SIZEOFARR(int, m->num_movable_atoms() * (npairs + 1));
 
+    nrsegs = 0;
     for (auto i = 0u; i < m->ligands.size(); i++) {
         auto nr_node = htree_nodes_size(m->ligands[i]);
+        nrsegs += nr_node;
         sz += SIZEOFARR(Segment, nr_node);
         sz += SIZEOFARR(int, nr_node * 2); // for Ligand.layers
         sz += SIZEOFARR(int, nr_node); // for Ligand.layer_map
@@ -499,6 +395,7 @@ std::shared_ptr<Memory> create_src_model_memory(model *m) {
     }
     for (auto i = 0u; i < m->flex.size(); i++) {
         auto nr_node = htree_nodes_size(m->flex[i]);
+        nrsegs += nr_node;
         sz += SIZEOFARR(Segment, nr_node);
         sz += SIZEOFARR(int, nr_node * 2); // for FLex.layers
         sz += SIZEOFARR(int, nr_node); // for Flex.layer_map
@@ -519,7 +416,7 @@ void checksm(SrcModel *sm, int mark, const char *f, int line) {
     }
 }
 #define CHECKSM(i) checksm(sm , i, __FILE__, __LINE__)
-SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
+SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p, const int nrsegs) {
 
     SrcModel *sm;
     InteractingPair *pair;
@@ -642,26 +539,43 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
     // prepare ligands and flex, in the reverse order to store tree
     sm->nligand = m->ligands.size();
     sm->nflex = m->flex.size();
-    ALLOC_ARR(sm->ligands, Ligand, sm->nligand);
-    ALLOC_ARR(sm->flex, Residue, sm->nflex);
+    ALLOC_ARR(sm->ligands, Ligand, sm->nligand + sm->nflex);
+    ALLOC_ARR(sm->segs, Segment, nrsegs);
+
     sm->nrfligands = 0;
     sm->nrfflex = 0;
     sm->max_ligand_layers = 0;
     sm->max_flex_layers = 0;
+
+    int segidx = 0;
+    int confidx = 0;
+    int chgidx = 0;
     for (int i = 0; i < sm->nligand; i++) {
         auto &ligand = sm->ligands[i];
         ligand.nr_node = htree_nodes_size(m->ligands[i]);
+        ligand.bflex = 0;
+        ligand.seg_offset = segidx;
+        ligand.change_offset = chgidx;
+        ligand.conf_offset = confidx;
+
+        auto tree = sm->segs + segidx;
+        segidx += ligand.nr_node;
+
+
         // see change::num_floats, torsion size in ligand will be nr_node -1(no torsion for rigid-body)
-        sm->nrfligands += 6 + ligand.nr_node - 1;
-        ALLOC_ARR(ligand.tree, Segment, ligand.nr_node);
+        int szchg = 6 + ligand.nr_node - 1;
+        sm->nrfligands += szchg;
+        chgidx += szchg;
+        confidx += szchg + 1; // conf: rigid body coords(3 flts) + orientation(4 flts) + torsions(nr_node-1)
+        
         ALLOC_ARR(ligand.layers, int, ligand.nr_node * 2);
         ALLOC_ARR(ligand.layer_map, int, ligand.nr_node);
         ALLOC_ARR(ligand.atom_map, int, sm->natoms);
-#if TREE_LAYER
-        ligand.nr_layers = htree_nodes_prep(ligand.tree, m->ligands[i], ligand.layers);
-#else
-        ligand.nr_layers = htree_nodes_copy(ligand.tree, m->ligands[i]);
-#endif
+        ligand.nr_layers = htree_nodes_copy(tree, m->ligands[i]);
+        for (auto j = 0; j < ligand.nr_node; j ++) {
+            tree[j].ligandidx = i;
+            tree[j].segidx = j;
+        }
         if (ligand.nr_layers > sm->max_ligand_layers) {
             sm->max_ligand_layers = ligand.nr_layers;
         }
@@ -670,7 +584,7 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
             ligand.layers[layersidx] = mapidx;
             int nr = 0;
             for (auto k = 0; k < ligand.nr_node; k++) {
-                if (ligand.tree[k].layer == j) {
+                if (tree[k].layer == j) {
                     ligand.layer_map[mapidx] = k;
                     printf("layermap %d = %d\n", mapidx, k);
                     nr++;
@@ -685,7 +599,7 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
             ligand.atom_map[j] = -1;
         }
         for (auto j = 0; j < ligand.nr_node; j++) {
-            auto &seg = ligand.tree[j];
+            auto &seg = tree[j];
             for (auto k = seg.begin; k < seg.end; k++) {
                 ligand.atom_map[k] = j;
             }
@@ -693,18 +607,29 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
         // CHECKSM(i);
     }
     for (int i = 0; i < sm->nflex; i++) {
-        auto &flex = sm->flex[i];
+        auto &flex = sm->ligands[i+sm->nligand];
         sm->nrfflex += flex.nr_node;
         flex.nr_node = htree_nodes_size(m->flex[i]);
-        ALLOC_ARR(flex.tree, Segment, flex.nr_node);
+        flex.bflex = 1;
+        flex.seg_offset = segidx;
+        flex.change_offset = chgidx;
+        flex.conf_offset = confidx;
+
+        auto tree = sm->segs + segidx;
+        segidx += flex.nr_node;
+
+        // flex change and conf takes only torsions for each node
+        chgidx += flex.nr_node;
+        confidx += flex.nr_node;
+
         ALLOC_ARR(flex.layers, int, flex.nr_node * 2);
         ALLOC_ARR(flex.layer_map, int, flex.nr_node);
         ALLOC_ARR(flex.atom_map, int, sm->natoms);
-#if TREE_LAYER
-        flex.nr_layers = htree_nodes_prep(flex.tree, m->flex[i], flex.layers);
-#else
-        flex.nr_layers = htree_nodes_copy(flex.tree, m->flex[i]);
-#endif
+        flex.nr_layers = htree_nodes_copy(tree, m->flex[i]);
+        for (auto j = 0; j < flex.nr_node; j ++) {
+            tree[j].ligandidx = i + sm->nligand;
+            tree[j].segidx = j;
+        }
         if (flex.nr_layers > sm->max_flex_layers) {
             sm->max_flex_layers = flex.nr_layers;
         }
@@ -712,7 +637,7 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
             flex.layers[layersidx] = mapidx;
             int nr = 0;
             for (auto k = 0; k < flex.nr_node; k++) {
-                if (flex.tree[k].layer == j) {
+                if (tree[k].layer == j) {
                     flex.layer_map[mapidx++] = k;
                     nr++;
                 }
@@ -723,7 +648,7 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
             flex.atom_map[j] = -1;
         }
         for (auto j = 0; j < flex.nr_node; j++) {
-            auto &seg = flex.tree[j];
+            auto &seg = tree[j];
             for (auto k = seg.begin; k < seg.end; k++) {
                 flex.atom_map[k] = j;
             }
@@ -736,14 +661,16 @@ SrcModel *make_src_model(Memory *mem, model *m, const precalculate_byatom &p) {
     // for (auto i = 0; i < sm->movable_atoms + sm->npairs; i++) {
     //         printf("cpu map add %d: %d\n", i, sm->force_pair_map_add[i]);
     // }
+    sm->max_layers = std::max(sm->max_flex_layers, sm->max_ligand_layers);
     return sm;
 cleanup:
     return nullptr;
 }
 bool makeSrcModel(model *m, precalculate_byatom &p) {
-    auto mem = create_src_model_memory(m);
+    int nrsegs = 0;
+    auto mem = create_src_model_memory(m, nrsegs);
     if (mem) {
-        auto sm = make_src_model(mem.get(), m, p);
+        auto sm = make_src_model(mem.get(), m, p, nrsegs);
         if (sm) {
             m->m_gpu = makeCuObject(mem, sm);
             return true;
@@ -758,13 +685,9 @@ std::shared_ptr<Memory> create_model_desc_memory(model *m, SrcModel *sm, int nmc
     int offset = 0;
     /*md->coords = offset,*/ offset += sizeof(Vec) * m->coords.size();
 
-    for (int i = 0; i < sm->nligand; i++) {
+    for (int i = 0; i < sm->nall; i++) {
         auto &ligand = sm->ligands[i];
         /*md->ligands[i] = offset,*/ offset += sizeof(SegmentVars) * ligand.nr_node;
-    }
-    for (int i = 0; i < sm->nflex; i++) {
-        auto &flex = sm->flex[i];
-        /*md->flex[i] = offset,*/ offset += sizeof(SegmentVars) * flex.nr_node;
     }
 
     /*md->minus_forces = offset,*/ offset += sizeof(Vec) * sm->movable_atoms;
@@ -791,17 +714,11 @@ bool make_model_desc(Memory *mem, SrcModel *sm, model *m, ModelDesc *md) {
     md->coords = set_desc_offset<Vec>(offset, md->ncoords);
     // md->coords = offset, offset += sizeof(Vec) * md->ncoords;
     ALLOC_ARR(md->ligands, int, sm->nligand);
-    ALLOC_ARR(md->flex, int, sm->nflex);
 
-    for (int i = 0; i < sm->nligand; i++) {
+    for (int i = 0; i < sm->nall; i++) {
         auto &ligand = sm->ligands[i];
         // md->ligands[i] = offset, offset += sizeof(SegmentVars) * ligand.nr_node;
         md->ligands[i] = set_desc_offset<SegmentVars>(offset, ligand.nr_node);
-    }
-    for (int i = 0; i < sm->nflex; i++) {
-        auto &flex = sm->flex[i];
-        // md->flex[i] = offset, offset += sizeof(SegmentVars) * flex.nr_node;
-        md->flex[i] = set_desc_offset<SegmentVars>(offset, flex.nr_node);
     }
 
     // md->minus_forces = offset, offset += sizeof(Vec) * sm->movable_atoms;
@@ -817,19 +734,11 @@ bool make_model_desc(Memory *mem, SrcModel *sm, model *m, ModelDesc *md) {
 
     for (int i = 0; i < sm->nligand; i++) {
         auto ligandvar = model_ligand(sm, md, md->data, i, 0);
-#if TREE_LAYER
-        htree_var_nodes_prep(ligandvar, m->ligands[i]);
-#else
         htree_var_nodes_copy(ligandvar, m->ligands[i]);
-#endif
     }
     for (int i = 0; i < sm->nflex; i++) {
-        auto flexvar = model_flex(sm, md, md->data, i, 0);
-#if TREE_LAYER
-        htree_var_nodes_prep(flexvar, m->flex[i]);
-#else
+        auto flexvar = model_ligand(sm, md, md->data, i+sm->nligand, 0);
         htree_var_nodes_copy(flexvar, m->flex[i]);
-#endif
     }
 
     copy_vecs(model_coords(sm, md, md->data), m->coords);
@@ -851,19 +760,6 @@ ModelDesc *make_model_desc(Memory *mem, SrcModel *sm, model *m, int nmc) {
     return md;
 cleanup:
     return nullptr;
-}
-void restore_model_desc(ModelDesc *md, SrcModel *sm, model *m) {
-
-    for (int i = 0; i < sm->nligand; i++) {
-        auto ligandvar = model_ligand(sm, md, md->data, i, 0);
-        htree_var_nodes_restore(ligandvar, m->ligands[i]);
-    }
-    for (int i = 0; i < sm->nflex; i++) {
-        auto flexvar = model_flex(sm, md, md->data, i, 0);
-        htree_var_nodes_restore(flexvar, m->flex[i]);
-    }
-
-    copy_vecs(m->coords, model_coords(sm, md, md->data));
 }
 std::shared_ptr<void> makeModelDesc(model *m, int nmc) {
     auto sm = extract_object<SrcModel>(m->m_gpu);
@@ -905,96 +801,6 @@ bool makeModelDesc(std::shared_ptr<void> &obj, model *m, int nmc) {
         }
     }  else {
         obj = makeModelDesc(m, nmc);
-        return bool(obj);
-    }
-    return false;
-}
-// ok
-std::shared_ptr<Memory> create_model_memory(model *m, SrcModel *sm) {
-    Size sz = SIZEOF(Model) + SIZEOFARR(LigandVars, sm->nligand) + SIZEOFARR(ResidueVars, sm->nflex);
-    for (int i = 0; i < sm->nligand; i++) {
-        sz += SIZEOFARR(SegmentVars, sm->ligands[i].nr_node);
-    }
-    for (int i = 0; i < sm->nflex; i++) {
-        sz += SIZEOFARR(SegmentVars, sm->flex[i].nr_node);
-    }
-    sz += SIZEOFARR(Vec, sm->movable_atoms);
-    sz += SIZEOFARR(Flt, sm->movable_atoms);
-    sz += SIZEOFARR(PairEvalResult, sm->npairs);
-    sz += SIZEOFARR(Vec, m->coords.size());
-
-    sz = (sz + 4096 -1) / 4096*4096;
-    return makeMemory(sz);
-}
-Model *make_model(Memory *mem, SrcModel *sm, model *m, const vec &v) {
-    Model *md;
-    ALLOC(md, Model);
-    md->src = sm;
-    md->vs[0] = v.data[0], md->vs[1] = v.data[1], md->vs[2] = v.data[2];
-    ALLOC_ARR(md->ligands, LigandVars, sm->nligand);
-    ALLOC_ARR(md->flex, ResidueVars, sm->nflex);
-    for (int i = 0; i < sm->nligand; i++) {
-        auto &ligand = sm->ligands[i];
-        auto &ligandvar = md->ligands[i];
-        ALLOC_ARR(ligandvar.tree, SegmentVars, ligand.nr_node);
-
-#if TREE_LAYER
-        htree_var_nodes_prep(ligandvar.tree, m->ligands[i]);
-#else
-        htree_var_nodes_copy(ligandvar.tree, m->ligands[i]);
-#endif
-    }
-    for (int i = 0; i < sm->nflex; i++) {
-        auto &flex = sm->flex[i];
-        auto &flexvar = md->flex[i];
-        ALLOC_ARR(flexvar.tree, SegmentVars, flex.nr_node);
-#if TREE_LAYER
-        htree_var_nodes_prep(flexvar.tree, m->flex[i]);
-#else
-        htree_var_nodes_copy(flexvar.tree, m->flex[i]);
-#endif
-    }
-    ALLOC_ARR(md->minus_forces, Vec, sm->movable_atoms);
-    ALLOC_ARR(md->movable_e, Flt, sm->movable_atoms);
-    ALLOC_ARR(md->pair_res, PairEvalResult, sm->npairs);
-
-    md->ncoords = m->coords.size();
-    ALLOC_ARR(md->coords, Vec, md->ncoords);
-    PRINT("Copy model vec");
-    copy_vecs(md->coords, m->coords);
-    return md;
-cleanup:
-    return nullptr;
-}
-std::shared_ptr<void> makeModel(model *m, const vec &v) {
-    auto sm = extract_object<SrcModel>(m->m_gpu);
-    auto mem = create_model_memory(m, sm);
-    if (mem) {
-        auto md = make_model(mem.get(), sm, m, v);
-        if (md) {
-            auto gpusm = extract_cuda_object<SrcModel>(m->m_gpu);
-            md->src = gpusm;
-            auto ret = makeCuObject(mem, md);
-            md->src = sm;
-            return ret;
-        }
-    }
-    return nullptr;
-}
-bool makeModel(std::shared_ptr<void> &obj, model *m, const vec &v) {
-    if (obj) {
-        auto mem = extract_memory(obj);
-        if (mem) {
-            mem->reset();
-            auto sm = extract_object<SrcModel>(m->m_gpu);
-            auto ctx = make_model(mem.get(), sm, m, v);
-            if (ctx) {
-                updateCuObject(obj, ctx);
-                return true;
-            }
-        }
-    }  else {
-        obj = makeModel(m, v);
         return bool(obj);
     }
     return false;
@@ -1043,18 +849,6 @@ bool makeCache(cache &c) {
     }
     return false;
 }
-Size eval_change_size(const change &g) {
-    Size sz = SIZEOFARR(LigandChange, g.ligands.size()) + SIZEOFARR(LigandChange, g.ligands.size());
-    for (auto i = 0u; i < g.ligands.size(); i++) {
-        auto &src = g.ligands[i];
-        sz += SIZEOFARR(Flt, src.torsions.size());
-    }
-    for (auto i = 0u; i < g.flex.size(); i++) {
-        auto &src  = g.flex[i];
-        sz += SIZEOFARR(Flt, src.torsions.size());
-    }
-    return sz;
-}
 Size eval_conf_size(const conf &c) {
     Size sz = 0;
     sz += SIZEOFARR(LigandConf, c.ligands.size());
@@ -1070,28 +864,9 @@ Size eval_conf_size(const conf &c) {
     return sz;
 }
 std::shared_ptr<Memory> create_bfgs_memory(const change &g, const conf &c) {
-    Size sz = SIZEOF(BFGSCtx) + eval_change_size(g) + eval_conf_size(c);
+    Size sz = SIZEOF(BFGSCtx) +  eval_conf_size(c);
     sz = (sz + 4096 -1) / 4096*4096;
     return makeMemory(sz);
-}
-bool make_change(Memory *mem, Change *c, const change &g) {
-    ALLOC_ARR(c->ligands, LigandChange, g.ligands.size());
-    ALLOC_ARR(c->flex, ResidueChange, g.flex.size());
-    for (auto i = 0u; i < g.ligands.size(); i++) {
-        auto &dst  = c->ligands[i];
-        auto &src = g.ligands[i];
-        DBG("Alloc ligand %u torsion size %lu", i, src.torsions.size());
-        ALLOC_ARR(dst.torsions, Flt, src.torsions.size());
-    }
-    for (auto i = 0u; i < g.flex.size(); i++) {
-        auto &dst  = c->flex[i];
-        auto &src = g.flex[i];
-        DBG("Alloc flex %u torsion size %lu", i, src.torsions.size());
-        ALLOC_ARR(dst.torsions, Flt, src.torsions.size());
-    }
-    return true;
-cleanup:
-    return false;
 }
 bool make_conf(Memory *mem, Conf *ret, const conf &c) {
     ALLOC_ARR(ret->ligands, LigandConf, c.ligands.size());
@@ -1121,7 +896,6 @@ cleanup:
 BFGSCtx *make_bfgs(Memory *mem, const model &m, const change &g, const conf &c, const vec &v, int evalcnt) {
     BFGSCtx *ctx;
     ALLOC(ctx, BFGSCtx);
-    if (!make_change(mem, &ctx->g, g)) goto cleanup;
     if (!make_conf(mem, &ctx->c, c)) goto cleanup;
     ALLOC_ARR(ctx->coords, Vec, m.coords.size());
     ctx->vs[0] = v.data[0], ctx->vs[1] = v.data[1], ctx->vs[2] = v.data[2];
@@ -1501,17 +1275,6 @@ bool makePrecalcByAtom(precalculate_byatom &p) {
     return false;
 }
 // bad
-void output_ligand_change(ligand_change &dst, LigandChange &src) {
-    vec_set(dst.rigid.position, src.rigid.position);
-    vec_set(dst.rigid.orientation, src.rigid.orientation);
-    DBG("torsion size %lu", dst.torsions.size());
-    DBG("src torsion %f %f %f", src.torsions[0], src.torsions[1], src.torsions[2]);
-    memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
-    DBG("dst torsion %f %f %f", dst.torsions[0], dst.torsions[1], dst.torsions[2]);
-}
-void output_flex_change(residue_change &dst, ResidueChange &src) {
-    memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
-}
 void output_ligand_conf(ligand_conf &dst, LigandConf &src) {
     vec_set(dst.rigid.position, src.rigid.position);
     qt_set(dst.rigid.orientation, src.rigid.orientation);
@@ -1523,79 +1286,6 @@ void output_ligand_conf(ligand_conf &dst, LigandConf &src) {
 void output_flex_conf(residue_conf &dst, ResidueConf &src) {
     memcpy(dst.torsions.data(), src.torsions, dst.torsions.size() * sizeof(dst.torsions[0]));
 }
-#if USE_CUDA_VINA
-void cuda_model_set_conf(Model &cpum, Model &m, Conf &c, cudaStream_t stream);
-void cuda_cache_eval_deriv(Model *cpum, Cache *c, Model *m, cudaStream_t stream);
-void cu_model_eval_deriv(Model *cpum, Model *m, PrecalculateByAtom *p, BFGSCtx *ctx, cudaStream_t stream);
-fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, 
-                        change &g, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj) {
-    submit_vina_server([&](cudaStream_t stream) {
-        auto &che = (const cache &)ig;
-        // const
-        auto ch = extract_cuda_object<Cache>(che.m_gpu);
-        auto pa = extract_cuda_object<PrecalculateByAtom>(p.m_gpu);
-        auto md = extract_cuda_object<Model>(mobj);
-        auto cpum = extract_object<Model>(mobj);
-        auto ctx = extract_cuda_object<BFGSCtx>(ctxobj);
-
-        cuda_model_set_conf(*cpum, *md, ctx->c, stream);
-        cuda_cache_eval_deriv(cpum, ch, md, stream);
-        cu_model_eval_deriv(cpum, md, pa, ctx, stream);
-
-        auto cpumem = extract_memory(ctxobj);
-        auto cudamem = extract_cuda_memory(ctxobj);
-        cudaMemcpyAsync(cpumem->ptr(), cudamem->ptr(), cpumem->size(), cudaMemcpyDeviceToHost, stream);
-        auto err = cudaStreamSynchronize(stream);
-        if (err != cudaSuccess) {
-            std::cerr << "vina eval fail, err: " << cudaGetErrorString(err) << std::endl;
-        }
-    }) ;
-
-    auto cpumem = extract_memory(ctxobj);
-    cpumem->restore();
-    auto ctx = extract_object<BFGSCtx>(ctxobj);
-    auto chg = &ctx->g;
-    // output changes
-    for (auto i = 0u; i < g.ligands.size(); i ++) {
-        output_ligand_change(g.ligands[i], chg->ligands[i]);
-    }
-    for (auto i = 0u; i < g.flex.size(); i ++) {
-        output_flex_change(g.flex[i], chg->flex[i]);
-    }
-
-    return ctx->e;
-
-}
-#else
-extern void model_eval_deriv(Model &m, PrecalculateByAtom &p, Cache &c, Change &g);
-extern void model_set_conf(Model &m, Conf &c);
-fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, 
-                        change &g, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj) {
-    auto &che = (const cache &)ig;
-
-    // const
-    auto ch = extract_object<Cache>(che.m_gpu);
-    auto pa = extract_object<PrecalculateByAtom>(p.m_gpu);
-    auto md = extract_object<Model>(mobj);
-    auto ctx = extract_object<BFGSCtx>(ctxobj);
-    auto chg = &ctx->g;
-    auto cf = &ctx->c;
-
-    model_set_conf(*md, *cf);
-    model_eval_deriv(*md, *pa, *ch, *chg);
-
-    // output changes
-    for (auto i = 0u; i < g.ligands.size(); i ++) {
-        output_ligand_change(g.ligands[0], chg->ligands[0]);
-    }
-    for (auto i = 0u; i < g.flex.size(); i ++) {
-        output_flex_change(g.flex[0], chg->flex[0]);
-    }
-
-    return md->e;
-
-}
-#endif
 
 extern void run_bfgs(ModelDesc *cpum, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx,
                      int max_steps, Flt average_required_improvement, Size over,

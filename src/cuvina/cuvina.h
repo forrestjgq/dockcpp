@@ -18,8 +18,6 @@ extern void comp_change(change &c1, change &c2) ;
 bool makePrecalcByAtom(precalculate_byatom &p);
 bool makeSrcModel(model *m, precalculate_byatom &p);
 bool makeCache(cache &c);
-std::shared_ptr<void> makeModel(model *m, const vec &v);
-bool makeModel(std::shared_ptr<void> &obj, model *m, const vec &v);
 bool makeModelDesc(std::shared_ptr<void> &obj, model *m, int nmc=1);
 bool makeBFGSCtx(std::shared_ptr<void> &obj, const model &m, const change &g, const conf &c, const vec &v, int evalcnt=0);
 

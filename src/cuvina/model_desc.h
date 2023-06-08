@@ -14,13 +14,13 @@ namespace dock {
         SegmentVars * ligands = (SegmentVars *)(m + d->ligands[idx_ligand]);
         return ligands + idx_segvar;
     }
-    ATTR SegmentVars *model_flex(const SrcModel *sm, const ModelDesc *d, Flt *m, int idx_flex = 0, int idx_segvar = 0) {
-        // m + d->flex[idx_flex] is the start point of flex
-        // it takes several trees, each contains some SegmentVars, the number of SegmentVars is defined in
-        // SrcModel.flex[idx_flex].nr_node
-        SegmentVars * flex = (SegmentVars *)(m + d->flex[idx_flex]);
-        return flex + idx_segvar;
-    }
+    // ATTR SegmentVars *model_flex(const SrcModel *sm, const ModelDesc *d, Flt *m, int idx_flex = 0, int idx_segvar = 0) {
+    //     // m + d->flex[idx_flex] is the start point of flex
+    //     // it takes several trees, each contains some SegmentVars, the number of SegmentVars is defined in
+    //     // SrcModel.flex[idx_flex].nr_node
+    //     SegmentVars * flex = (SegmentVars *)(m + d->flex[idx_flex]);
+    //     return flex + idx_segvar;
+    // }
     ATTR Vec *model_minus_forces(const SrcModel *sm, const ModelDesc *d, Flt *m, int idx = 0) {
         Vec * f = (Vec *)(m + d->minus_forces);
         return f + idx;
