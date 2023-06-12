@@ -223,6 +223,7 @@ public:
 
 	// SrcModel
 	std::shared_ptr<void> m_gpu;
+	void print() const;
 };
 
 #endif

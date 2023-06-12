@@ -26,7 +26,7 @@
 #include "cuvina/cuvina.h"
 #include "utils.h"
 
-
+#define QNDEBUG 0
 #define CUBFGS 1
 #define VINA_CUTEST 0 // 0: cpu, 1: gpu prefer 2: gpu & cpu & compare test
 struct quasi_newton_aux {
@@ -51,6 +51,9 @@ struct quasi_newton_aux {
         m->set(c);
         auto f = m->eval_deriv(*p, *ig, v, g);
         return f;
+    }
+    void print() {
+        m->print();
     }
     fl gpu(const conf& c, change& g) {
         // cnt++;
@@ -98,8 +101,21 @@ struct quasi_newton_aux {
 #endif
 };
 
+#ifdef BFGS_CPU
+#if BFGS_CPU == 1
+#define QNUSAGE 0 // 0-cpu, 1-gpu, 2-compare
+#else
+#define QNUSAGE 1 // 0-cpu, 1-gpu, 2-compare
+#endif
+#else
+#define QNUSAGE 1 // 0-cpu, 1-gpu, 2-compare
+#endif
 void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount) { // g must have correct size
-#if 1
+#if QNUSAGE == 0
+    cpu(m, p, ig, out, g, v, evalcount);
+#elif QNUSAGE == 1
+    gpu(m, p, ig, out, g, v, evalcount);
+#else 
     int cnt = evalcount;
     model m1(m);
     change g1(g);
@@ -121,9 +137,6 @@ void quasi_newton::operator()(model& m, const precalculate_byatom& p, const igri
         out.c.print();
     }
     // exit (0);
-#else
-    // cpu(m, p, ig, out, g, v, evalcount);
-    gpu(m, p, ig, out, g, v, evalcount);
 #endif
 }
 
@@ -146,14 +159,14 @@ void quasi_newton::gpu(model& m, const precalculate_byatom& p, const igrid& ig, 
 
         if (use_gpu) {
             // std::cerr << "use gpu" << std::endl;
-            dock::Clock clk;
-            clk.mark();
-            res = dock::run_cuda_bfgs(&m, p, ig, g, out.c, max_steps, average_required_improvement, 10, evalcount, m_gpu, m_bfgs_ctx);
-            auto du = clk.mark();
-            printf("gpu bfgs use %lu us\n", du);
+            // dock::Clock clk;
+            // clk.mark();
+            res = dock::run_cuda_bfgs(&m, p, ig, g, out.c, out.coords, max_steps, average_required_improvement, 10, evalcount, m_gpu, m_bfgs_ctx);
+            // auto du = clk.mark();
+            // printf("gpu bfgs use %lu us\n", du);
             // todo:
             // printf("gpu done, e: %f cnt %d\n", res, evalcount);
-            return;
+            // return;
         }
     }
 
@@ -174,9 +187,17 @@ void quasi_newton::gpu(model& m, const precalculate_byatom& p, const igrid& ig, 
     out.e = res;
 }
 void quasi_newton::cpu(model& m, const precalculate_byatom& p, const igrid& ig, output_type& out, change& g, const vec& v, int& evalcount) { // g must have correct size
+#if QNDEBUG
+    printf(">>>> before bfgs\n");
+    m.print();
+#endif
     // std::cerr << "use cpu" << std::endl;
     quasi_newton_aux aux(&m, &p, &ig, v, use_gpu);
     auto res = bfgs(aux, out.c, g, max_steps, average_required_improvement, 10, evalcount);
+#if QNDEBUG
+    printf(">>>> after bfgs\n");
+    m.print();
+#endif
     // printf("=========================\n");
 
     // Update model a last time after optimization

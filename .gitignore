@@ -1,4 +1,4 @@
-
+bk
 # IDE and temp files
 .cproject
 .project
@@ -7,6 +7,10 @@
 .vscode
 .idea
 *.log
+*.txt
+*.nsys-rep
+*.pdbqt
+*.sqlite
 
 # Compiled Object files
 *.slo

@@ -120,6 +120,19 @@ struct rigid_body : public atom_frame {
 		c.orientation  = force_torque.second;
 	}
 	vec axis; // add this just for better code in cuvina
+	void print() const {
+		printf("\trigid body begin %lu end %lu\n", begin, end);
+		printf("\t\taxis: %f %f %f\n", axis.data[0], axis.data[1], axis.data[2]);
+		printf("\t\torigin: %f %f %f\n", origin.data[0], origin.data[1], origin.data[2]);
+        printf("\t\torq: %f %f %f %f\n", orientation_q.R_component_1(),
+               orientation_q.R_component_2(), orientation_q.R_component_3(),
+               orientation_q.R_component_4());
+        ;
+        printf("\t\torm: %f %f %f %f %f %f %f %f %f\n", orientation_m.data[0],
+               orientation_m.data[1], orientation_m.data[2], orientation_m.data[3],
+               orientation_m.data[4], orientation_m.data[5], orientation_m.data[6],
+               orientation_m.data[7], orientation_m.data[8]);
+    }
 };
 
 struct axis_frame : public atom_frame {
@@ -187,6 +200,21 @@ struct segment : public axis_frame {
 	void count_torsions(sz& s) const {
 		++s;
 	}
+	void print() const {
+		printf("\tsegment begin %lu end %lu\n", begin, end);
+		printf("\t\taxis: %f %f %f\n", axis.data[0], axis.data[1], axis.data[2]);
+		printf("\t\trelative axis: %f %f %f\n", relative_axis.data[0], relative_axis.data[1], relative_axis.data[2]);
+		printf("\t\trelative origin: %f %f %f\n", relative_origin.data[0], relative_origin.data[1], relative_origin.data[2]);
+		printf("\t\torigin: %f %f %f\n", origin.data[0], origin.data[1], origin.data[2]);
+        printf("\t\torq: %f %f %f %f\n", orientation_q.R_component_1(),
+               orientation_q.R_component_2(), orientation_q.R_component_3(),
+               orientation_q.R_component_4());
+        ;
+        printf("\t\torm: %f %f %f %f %f %f %f %f %f\n", orientation_m.data[0],
+               orientation_m.data[1], orientation_m.data[2], orientation_m.data[3],
+               orientation_m.data[4], orientation_m.data[5], orientation_m.data[6],
+               orientation_m.data[7], orientation_m.data[8]);
+	}
 public:
 	vec relative_axis;
 	vec relative_origin;
@@ -251,6 +279,12 @@ struct tree {
 		// VDUMP("    forces", forces);
 		return force_torque;
 	}
+	void print() const {
+		for (auto &c : children) {
+			c.print();
+		}
+		node.print();
+	}
 };
 
 typedef tree<segment> branch;
@@ -290,6 +324,12 @@ struct heterotree {
 		branches_derivative(children, node.get_origin(), coords, forces, force_torque, p);
 		node.set_derivative(force_torque, d);
 		assert(p == c.torsions.end());
+	}
+	void print() const {
+		for (auto &b : children) {
+			b.print();
+		}
+		node.print();
 	}
 };
 

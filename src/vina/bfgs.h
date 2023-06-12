@@ -48,6 +48,16 @@ inline fl scalar_product(const Change& a, const Change& b, sz n) {
 		tmp += a(i) * b(i);
 	return tmp;
 }
+template<typename Change>
+inline fl scalar_product1(const Change& a, const Change& b, sz n) {
+	fl tmp = 0;
+	VINA_FOR(i, n) {
+		auto tmp1 = a(i) * b(i);
+		tmp+= tmp1;
+		// printf("scalar %lu %f * %f = %f, sum %f\n", i, a(i), b(i), tmp1, tmp);
+	}
+	return tmp;
+}
 
 template<typename Change>
 inline bool bfgs_update(flmat& h, const Change& p, const Change& y, const fl alpha) {
@@ -83,7 +93,7 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 	const fl multiplier = 0.5;
 	fl alpha = 1;
 
-	const fl pg = scalar_product(p, g, n);
+	const fl pg = scalar_product1(p, g, n);
 #if BFGSDEBUG
 		printf("step %d pg: %f\n", step, pg);
         printf("p:\n");
@@ -92,7 +102,7 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 
 	int t = 0;
 	VINA_U_FOR(trial, max_trials) {
-#if BFGSDEBUG
+#if 0//BFGSDEBUG
 		printf("step %d trial %d p:\n", step, trial);
 		p.print();
 		printf("before conf:\n");
@@ -109,7 +119,7 @@ fl line_search(F& f, sz n, const Conf& x, const Change& g, const fl f0, const Ch
 		evalcount++;
 		t++;
 #if BFGSDEBUG
-		printf("cpu line search step %d trial %d der %f\n", step, trial, f1);
+		printf("line search step %d trial %d der %f\n", step, trial, f1);
 #endif
 		if(f1 - f0 < c0 * alpha * pg) {// FIXME check - div by norm(p) ? no? 
 			// printf("breaks at trial %u\n", trial);
@@ -144,7 +154,7 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 	fl f0 = f(x, g);
 	evalcount++;
 #if BFGSDEBUG
-	printf("cpu f0 %f\n", f0);
+	printf("f0 %f\n", f0);
 	printf("c:\n");
 	x.print();
 	printf("g:\n");
@@ -173,8 +183,9 @@ fl bfgs(F& f, Conf& x, Change& g, const unsigned max_steps, const fl average_req
 #endif
 		const fl alpha = line_search(f, n, x, g, f0, p, x_new, g_new, f1, evalcount, step);
 
-		// printf("step %d alpha %f f1 %f\n", step, alpha, f1);
 #if BFGSDEBUG
+		printf("step %u alpha %f f1 %f\n", step, alpha, f1);
+		f.print();
 		printf("alpha %f f1 %f\n", alpha, f1);
 		printf("c_new:\n");
 		x_new.print();

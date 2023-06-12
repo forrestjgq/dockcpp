@@ -957,7 +957,9 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 	done(m_verbosity, 1);
 
 	// Docking post-processing and rescoring
+	printf("poses before removing redundant %lu\n", poses.size());
 	poses = remove_redundant(poses, min_rmsd);
+	printf("poses after removing redundant %lu\n", poses.size());
 
 	if (!poses.empty()) {
 		// For the Vina scoring function, we take the intramolecular energy from the best pose
@@ -974,6 +976,7 @@ void Vina::global_search(const int exhaustiveness, const int n_poses, const doub
 				const fl slope = 1e6;
 				m_non_cache.slope = slope;
 				quasi_newton_par.max_steps = unsigned((25 + m_model.num_movable_atoms()) / 3);
+				quasi_newton_par.use_gpu = false;
 
 				VINA_FOR_IN(i, poses){
 					// const fl slope_orig = m_non_cache.slope;

@@ -190,7 +190,9 @@ __device__ void dump_segvars(int line, ModelDesc *m, Flt *md) {
     }
     SYNC();
 }
-#define DUMP_SEGVARS(m, md) dump_segvars(__LINE__, m, md)
+
+#define DUMP_SEGVARS(m, md) 
+// #define DUMP_SEGVARS(m, md) dump_segvars(__LINE__, m, md)
 // single
 FORCE_INLINE void model_set_conf_ligand_1(ModelDesc *m, const Flt *c, Flt *md) {
     SrcModel *src = m->src;

@@ -268,7 +268,8 @@ __device__ void dump_es(int line, ModelDesc *m, Flt *md) {
     }
     SYNC();
 }
-#define DUMPES(m, md) dump_es(__LINE__, m, md)
+#define DUMPES(m, md) 
+// #define DUMPES(m, md) dump_es(__LINE__, m, md)
 COULD_INLINE void c_model_collect_deriv_e_xyz(ModelDesc *m, Flt *e, Flt *md, Flt *tmp) {
 	SrcModel *src = m->src;
 

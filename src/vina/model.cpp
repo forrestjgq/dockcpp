@@ -1155,3 +1155,16 @@ fl model::clash_penalty() const {
 	e += clash_penalty_aux(other_pairs);
 	return e;
 }
+void model::print() const {
+	printf("coords:\n");
+	for (auto i = 0u; i < coords.size(); i++) {
+		printf("\t%u: %f %f %f\n", i, coords[i].data[0], coords[i].data[1], coords[i].data[2]);
+	}
+	if (!ligands.empty())  {
+		for (auto i = 0u; i < ligands.size(); i++) {
+			auto &lg = ligands[i];
+			printf("==== ligand %u ====\n", i);
+			lg.print();
+		}
+	}
+}

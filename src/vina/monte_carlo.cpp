@@ -159,8 +159,8 @@ void monte_carlo::cpu(model& m, output_container& out, precalculate_byatom& p,
 	output_type tmp(s, 0);
 	tmp.c.randomize(corner1, corner2, generator);
 
-	printf("random conf:\n");
-	tmp.c.print();
+	// printf("random conf:\n");
+	// tmp.c.print();
 
 	fl best_e = max_fl;
 	quasi_newton quasi_newton_par;
@@ -168,16 +168,16 @@ void monte_carlo::cpu(model& m, output_container& out, precalculate_byatom& p,
     quasi_newton_par.max_steps = local_steps;
 	int bfgscnt = 0;
 	// printf("mc global steps %u max_evals %u\n", global_steps, max_evals);
-	sz last = 0;
-	dock::Clock clk;
-	clk.mark();
+	// sz last = 0;
+	// dock::Clock clk;
+	// clk.mark();
 	VINA_U_FOR(step, global_steps) {
-		if (step - last == 200) {
-			last = step;
-			auto us = clk.mark();
-			printf("batch 200 cost %lu us\n", us);
-		}
-		if(step == 20) exit(0);
+		// if (step - last == 200) {
+		// 	last = step;
+		// 	auto us = clk.mark();
+		// 	printf("batch 200 cost %lu us\n", us);
+		// }
+		// if(step == 20) exit(0); // for test
 		if(increment_me)
 			++(*increment_me);
 		if((max_evals > 0) & ((unsigned)evalcount > max_evals)) {
@@ -189,6 +189,7 @@ void monte_carlo::cpu(model& m, output_container& out, precalculate_byatom& p,
 		bfgscnt++;
 		// printf("mc calls bfgs %d\n", bfgscnt);
 		quasi_newton_par(m, p, ig, candidate, g, hunt_cap, evalcount);
+		// printf("step %u e %f coord %f %f %f\n", step, candidate.e, m.coords[0].data[0], m.coords[0].data[1], m.coords[0].data[2]);
 		if(step == 0 || metropolis_accept(tmp.e, candidate.e, temperature, generator)) {
 			tmp = candidate;
 
@@ -201,6 +202,7 @@ void monte_carlo::cpu(model& m, output_container& out, precalculate_byatom& p,
 				quasi_newton_par(m, p, ig, tmp, g, authentic_v, evalcount);
 				m.set(tmp.c); // FIXME? useless?
 				tmp.coords = m.get_heavy_atom_movable_coords();
+				printf("add step %u e %f coord %f %f %f\n", step, tmp.e, m.coords[0].data[0], m.coords[0].data[1], m.coords[0].data[2]);
 				add_to_output_container(out, tmp, min_rmsd, num_saved_mins); // 20 - max size
 				if(tmp.e < best_e)
 					best_e = tmp.e;

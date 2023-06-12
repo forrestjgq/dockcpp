@@ -14,7 +14,7 @@ namespace dock {
 struct threadids {
     int tid, blksz;
 };
-#define BFGSDEBUG 1
+#define BFGSDEBUG 0
 #if BFGSDEBUG
 #define REQUIRED() (threadIdx.z == 0 && IS_2DMAIN())
 #define MUSTED() (threadIdx.z == 0 && IS_2DMAIN())
@@ -427,6 +427,20 @@ FORCE_INLINE void scalar_product_array(const Flt *v, Flt *tmp, Flt *out,int n, c
 }
 // calc sum(v1[x] * v2[x]) for x in [0,n-1] and set to out, tmp should has same siz of v1 and v1, which is n
 // out requires n, tmp requires n
+FORCE_INLINE void scalar_product_array1(const Flt *v1, const Flt *v2, Flt *out,  Flt *tmp, int n, const threadids &tids) {
+    FOR_TID(idx, n) {
+        tmp[idx] = v1[idx] * v2[idx];
+    }
+    SYNC();
+    if (INMAIN()) {
+        Flt sum = 0;
+        for (int i = 0; i < n; i++) {
+            sum += tmp[i];
+            // printf("scalar %d %f * %f = %f, sum %f\n", i, v1[i], v2[i], tmp[i], sum);
+        }
+        *out = sum;
+    }
+}
 FORCE_INLINE void scalar_product_array(const Flt *v1, const Flt *v2, Flt *out,  Flt *tmp, int n, const threadids &tids) {
     FOR_TID(idx, n) {
         tmp[idx] = v1[idx] * v2[idx];
@@ -889,12 +903,12 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
 
     Flt *active_md = md + m->active *m->szflt;
 
-    scalar_product_array(p, g, pg, tmp, ng, TIDS); // tmp require ng
+    scalar_product_array1(p, g, pg, tmp, ng, TIDS); // tmp require ng
     SYNC();
 
 #if BFGSDEBUG
     if(REQUIRED()) {
-        printf("gpu step %d pg: %f\n", step, *pg);
+        printf("step %d pg: %f\n", step, *pg);
         printf("p:\n");
         printg(m->src, p);
     }
@@ -941,7 +955,12 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
         model_eval_deriv_e_xy(m, pa, ch, tc,  &e, mdz, vs, cs);
 #if BFGSDEBUG
         SYNC();
-        if(IS_2DMAIN()) printf("gpu line search step %d trial %d der e %f\n",step, dz, e);
+        if (ZIS(0)) {
+            for(int zidx = 0; zidx < blockDim.z; zidx++) {
+                int trialIdx = zidx + dz;
+                printf("line search step %d trial %d der e %f\n",step, trialIdx, es[trialIdx]);
+            }
+        }
         // if(REQUIRED()) printf("\n\n\n");
         SYNC();
 #endif
@@ -986,6 +1005,50 @@ __device__ void line_search(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, Flt
 
     copy_conf(outc, tmp + lsblk * m->active);
     model_update_xyz(m, outg, md + m->active * m->szflt);
+}
+__device__ int seg_begins[] = {
+    17, 11, 9, 33, 32, 26, 22,0
+};
+__device__ void bfgs_print(ModelDesc *m) {
+    
+    auto data = m->data + m->active * m->szflt;
+    auto coords = model_coords(m->src, m, data);
+	printf("coords:\n");
+	for (auto i = 0u; i < m->ncoords; i++) {
+		printf("\t%u: %f %f %f\n", i, coords[i].d[0], coords[i].d[1], coords[i].d[2]);
+	}
+    auto src = m->src;
+    for (auto i = 0; i < src->nligand; i++) {
+        auto &lg = src->ligands[i];
+        printf("==== ligand %d ====\n", i);
+        for (auto k = 0; k < lg.nr_node; k++) {
+            auto begin = seg_begins[k];
+            int j = 0;
+            while(lg.tree[j].begin != begin) j++;
+
+            auto &seg = lg.tree[j];
+            auto &segvar = *model_ligand(src, m, data, i, j);
+            if (seg.parent < 0) {
+                printf("\trigid body begin %d end %d\n", seg.begin, seg.end);
+            } else {
+                printf("\tsegment begin %d end %d\n", seg.begin, seg.end);
+            }
+            printf("\t\taxis: %f %f %f\n", segvar.axis.d[0], segvar.axis.d[1], segvar.axis.d[2]);
+            if (seg.parent >= 0) {
+                printf("\t\trelative axis: %f %f %f\n", seg.relative_axis.d[0], seg.relative_axis.d[1],
+                    seg.relative_axis.d[2]);
+                printf("\t\trelative origin: %f %f %f\n", seg.relative_origin.d[0],
+                    seg.relative_origin.d[1], seg.relative_origin.d[2]);
+            }
+            printf("\t\torigin: %f %f %f\n", segvar.origin.d[0], segvar.origin.d[1], segvar.origin.d[2]);
+            printf("\t\torq: %f %f %f %f\n", segvar.orq.d[0],segvar.orq.d[1],segvar.orq.d[2],segvar.orq.d[3]);
+            ;
+            printf("\t\torm: %f %f %f %f %f %f %f %f %f\n", segvar.orm[0],
+                   segvar.orm[1], segvar.orm[2], segvar.orm[3],
+                   segvar.orm[4], segvar.orm[5], segvar.orm[6],
+                   segvar.orm[7], segvar.orm[8]);
+        }
+    }
 }
 #define BFGSIDX threadIdx.z
 // mem requirement
@@ -1064,7 +1127,7 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
     if (INMAIN()) {
         *f_orig = *f0;
         fs[0]   = *f0;
-        // printf("gpu f0 %f\n", *f0);
+        // printf("f0 %f\n", *f0);
     }
 
     // require max(ng * ng, MAX_TRIALS * (nc+ng+1) + 2, ng * ng + 4)
@@ -1103,8 +1166,13 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
             printf("g_new\n");
             printg(srcm, g_new);
             printf("\n\n\n\n");
+            // auto cc = model_coords(srcm, m, m->data + m->szflt * m->active);
+            // printf("step %d alpha %f f1 %f coord %f %f %f\n", step, *alpha, *f1, cc->d[0], cc->d[1], cc->d[2]);
+            printf("step %d alpha %f f1 %f\n", step, *alpha, *f1);
+            bfgs_print(m);
         }
 #endif
+        SYNC();
         copy_conf(c, c_new);
         sqrt_product_array(g, ng, gg, TIDS);
         SYNC();
@@ -1139,7 +1207,7 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
 #endif                    
                 }
                 SYNC();
-#if BFGSDEBUG
+#if 0//BFGSDEBUG
                 if (INMAIN()) {
                     printf("H before diag:\n");
                     printh(ng, h);
@@ -1152,7 +1220,7 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
         }
 
         copy_change(g, g_new);
-#if BFGSDEBUG
+#if 0//BFGSDEBUG
         SYNC();
         if (INMAIN()) {
             printf("H before update:\n");
@@ -1161,7 +1229,7 @@ __device__ void bfgs(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, int max_st
         SYNC();
 #endif                    
         bfgs_update3(h, p, y, tmp, *alpha, ng, TIDS);
-#if BFGSDEBUG
+#if 0//BFGSDEBUG
         SYNC();
         if (INMAIN()) {
             printf("H after update:\n");
@@ -1477,7 +1545,11 @@ GLOBAL void bfgs_kernel(ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx
     bfgs(m, pa, ch, max_steps, average_required_improvement, over, c, f0, ctx->eval_cnt, ctx->vs, mem);
     SYNC();
 
-    // todo
+    auto data = m->data + m->szflt * m->active;
+    auto cds = model_coords(m->src, m, data);
+    CU_FOR3(i, m->ncoords) {
+        vec_set(ctx->coords[i], cds[i]);
+    }
     convert_conf(m->src, &ctx->c, c);
     if (INMAIN()) {
         ctx->e = *f0;
@@ -1534,5 +1606,13 @@ void run_mc(SrcModel *srcm, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, MCC
     printf("nmc %d ng %d nc %d sm size %d\n", nmc, ng, nc, sm);
 #endif
     mc_kernel<<<grid, block, sm, stream>>>(m, pa, ch, ctx, ins, outs, steps);
+}
+GLOBAL void bfgs_debug(ModelDesc *m) {
+    bfgs_print(m);
+}
+void dump_bfgs(ModelDesc *m, BFGSCtx *ctx, cudaStream_t stream) {
+    dim3 block(1);
+    dim3 grid(1);
+    bfgs_debug<<<grid, block, 0, stream>>>(m);
 }
 };

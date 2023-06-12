@@ -348,7 +348,7 @@ int seg_tree_nodes_copy(int parent, int idx, Segment *segs, struct tree<segment>
     make_vec(seg.relative_axis, axis.data[0], axis.data[1], axis.data[2]);
     make_vec(seg.relative_origin, origin.data[0], origin.data[1], origin.data[2]);
     tree.idx = myidx;
-    DBG("COPY HSubTree, my idx %d parent %d child %d begin %d end %d", myidx, parent, tree.nr_nodes, seg.begin, seg.end);
+    printf("COPY HSubTree, my idx %d parent %d child %d begin %d end %d\n", myidx, parent, tree.nr_nodes, seg.begin, seg.end);
     return layers + 1;
 }
 void segvar_tree_nodes_restore(int parent, int idx, const SegmentVars *segs, struct tree<segment> &tree) {
@@ -400,7 +400,7 @@ int htree_nodes_copy(Segment *segs, struct heterotree<T> &tree) {
     seg.end = tree.node.end;
     seg.parent = -1;
     seg.layer = 0;
-    DBG("COPY HTree, my idx %d child %d begin %d end %d", myidx, tree.nr_nodes, seg.begin, seg.end);
+    printf("COPY HTree, my idx %d child %d begin %d end %d\n", myidx, tree.nr_nodes, seg.begin, seg.end);
     return layers+1;
 }
 template<typename T>
@@ -1600,7 +1600,9 @@ fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig,
 extern void run_bfgs(ModelDesc *cpum, ModelDesc *m, PrecalculateByAtom *pa, Cache *ch, BFGSCtx *ctx,
                      int max_steps, Flt average_required_improvement, Size over,
                      cudaStream_t stream);
-fl run_cuda_bfgs(model *m, const precalculate_byatom &p, const igrid &ig, change &g, conf &c,
+void dump_bfgs(ModelDesc *m, BFGSCtx *ctx, cudaStream_t stream);
+#define QNDEBUG 0
+fl run_cuda_bfgs(model *m, const precalculate_byatom &p, const igrid &ig, change &g, conf &c, vecv &coords,
                  const unsigned max_steps, const fl average_required_improvement, const sz over,
                  int &evalcount, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj) {
     submit_vina_server([&](cudaStream_t stream) {
@@ -1611,9 +1613,19 @@ fl run_cuda_bfgs(model *m, const precalculate_byatom &p, const igrid &ig, change
         auto md = extract_cuda_object<ModelDesc>(mobj);
         auto cpum = extract_object<ModelDesc>(mobj);
         auto ctx = extract_cuda_object<BFGSCtx>(ctxobj);
-
+#if QNDEBUG
         PRINT("RUN BFGS CUDA");
+        printf(">>>> before bfgs\n");
+        dump_bfgs(md, ctx, stream);
+        cudaStreamSynchronize(stream);
+#endif
         run_bfgs(cpum, md, pa, ch, ctx, max_steps, average_required_improvement, over, stream);
+#if QNDEBUG
+        cudaStreamSynchronize(stream);
+        printf(">>>> after bfgs\n");
+        dump_bfgs(md, ctx, stream);
+        cudaStreamSynchronize(stream);
+#endif
 
         // copy output from cuda to host
         auto cpumem = extract_memory(ctxobj);
@@ -1641,6 +1653,10 @@ fl run_cuda_bfgs(model *m, const precalculate_byatom &p, const igrid &ig, change
     }
     for (auto i = 0u; i < c.flex.size(); i ++) {
         output_flex_conf(c.flex[i], cf->flex[i]);
+    }
+    for (auto i = 0u; i < m->coords.size();i++) {
+        auto &src = ctx->coords[i];
+        coords.emplace_back(src.d[0], src.d[1], src.d[2]);
     }
     evalcount = ctx->eval_cnt;
 

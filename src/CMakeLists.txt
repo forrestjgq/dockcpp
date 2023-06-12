@@ -1,4 +1,5 @@
 option(OPT_USE_DOUBLE "using double instead of float in calc" ON)
+option(DBG_BFGS_USE_CPU "using double instead of float in calc" ON)
 # finds all files with a given extension
 macro (append_files files ext)
   foreach (dir ${ARGN})
@@ -84,6 +85,7 @@ list(APPEND LBFGS_SRC
 set(VINA_DIR ${SRC}/vina)
 set(CUVINA_DIR ${SRC}/cuvina)
 list(APPEND VINA_SRC
+    ${CUVINA_DIR}/dbg.cu
     ${CUVINA_DIR}/model.cu
     ${CUVINA_DIR}/grid.cu
     ${CUVINA_DIR}/conf.cu
@@ -136,6 +138,11 @@ if (OPT_USE_DOUBLE)
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DOUBLE=1)
 else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_DOUBLE=0)
+endif()
+if (DBG_BFGS_USE_CPU)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE BFGS_CPU=1)
+else()
+    target_compile_definitions(${PROJECT_NAME} PRIVATE BFGS_CPU=0)
 endif()
 target_compile_definitions(${PROJECT_NAME} PRIVATE USE_CUDA_VINA=1)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)

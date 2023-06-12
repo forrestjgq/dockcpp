@@ -33,7 +33,7 @@ bool makeMC(std::shared_ptr<void> &pmd, std::shared_ptr<void> &pctx, std::shared
             std::function<void (int i, fl *c)> init);
 fl run_model_eval_deriv(const precalculate_byatom &p, const igrid &ig, 
                         change &g, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj);
-fl run_cuda_bfgs(model *m, const precalculate_byatom &p, const igrid &ig, change &g, conf &c,
+fl run_cuda_bfgs(model *m, const precalculate_byatom &p, const igrid &ig, change &g, conf &c, vecv &coords,
                  const unsigned max_steps, const fl average_required_improvement, const sz over,
                  int &evalcount, std::shared_ptr<void> mobj, std::shared_ptr<void> ctxobj);
 std::vector<std::vector<output_type>> run_cuda_mc(std::shared_ptr<void> &pmd, std::shared_ptr<void> &pctx,
